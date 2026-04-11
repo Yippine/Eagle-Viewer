@@ -1,0 +1,171 @@
+/* ── 桌面沉浸式播放器（Desktop Player）──────────────────────────── */
+#dplayer-backdrop {
+  display: none; position: fixed; inset: 0; z-index: 9190;
+  background: rgba(0,0,0,.82); animation: fade-in .18s ease;
+}
+#dplayer-backdrop.open { display: block; }
+
+#dplayer {
+  display: none; flex-direction: column;
+  position: fixed; z-index: 9200;
+  top: 50%; left: 50%; transform: translate(-50%,-50%);
+  width: min(1280px, 94vw);
+  background: #000;
+  border-radius: 12px; overflow: hidden;
+  box-shadow: 0 32px 96px rgba(0,0,0,.72), 0 4px 24px rgba(0,0,0,.4);
+  outline: none; user-select: none;
+}
+#dplayer.open { display: flex; animation: dp-open .2s cubic-bezier(.34,1.1,.64,1); }
+
+#dplayer.dp-fullscreen {
+  top: 0; left: 0; transform: none;
+  width: 100vw; height: 100vh; border-radius: 0;
+}
+
+@keyframes dp-open {
+  from { opacity: 0; transform: translate(-50%,-50%) scale(.94); }
+  to   { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+}
+
+.dp-topbar {
+  height: 48px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px; padding: 0 12px;
+  background: rgba(10,10,10,.85);
+  border-bottom: 1px solid rgba(255,255,255,.07);
+  transition: opacity .3s;
+}
+#dplayer.dp-fullscreen .dp-topbar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+}
+#dplayer.ui-hidden .dp-topbar { opacity: 0; pointer-events: none; }
+
+.dp-close-btn {
+  width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%;
+  background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.12);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  transition: background .15s;
+}
+.dp-close-btn:hover { background: rgba(220,53,43,.75); }
+
+.dp-counter {
+  font-size: 13px; font-weight: 600; color: rgba(255,255,255,.6);
+  background: rgba(255,255,255,.1); padding: 3px 10px;
+  border-radius: 20px; white-space: nowrap; flex-shrink: 0;
+}
+
+.dp-title-wrap { flex: 1; min-width: 0; }
+.dp-title  {
+  font-size: 14px; font-weight: 700; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3;
+}
+.dp-domain { font-size: 12px; color: rgba(255,255,255,.45); }
+
+.dp-icon-btn {
+  width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%;
+  background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.12);
+  color: #fff; display: flex; align-items: center; justify-content: center;
+  transition: background .15s;
+}
+.dp-icon-btn:hover { background: rgba(255,255,255,.24); }
+
+.dp-video-wrap {
+  flex: 1; position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; cursor: pointer;
+}
+#dplayer.dp-fullscreen .dp-video-wrap {
+  aspect-ratio: unset;
+  position: absolute; top: 48px; left: 0; right: 0; bottom: 70px;
+}
+.dp-video-wrap video {
+  width: 100%; height: 100%; object-fit: contain; display: block;
+  transform-origin: center center;
+}
+
+.dp-play-flash {
+  position: absolute;
+  top: calc(48px + (100% - 48px - 70px) / 2); left: 50%;
+  transform: translate(-50%,-50%);
+  font-size: 60px; pointer-events: none;
+  opacity: 0; transition: opacity .28s; z-index: 5;
+  filter: drop-shadow(0 2px 12px rgba(0,0,0,.5));
+}
+.dp-play-flash.show { opacity: 1; }
+#dplayer.dp-fullscreen .dp-play-flash { top: 50%; }
+
+.dp-zoom-ind {
+  position: absolute; top: 58px; right: 14px; z-index: 6;
+  background: rgba(0,0,0,.65); color: rgba(255,255,255,.9);
+  font-size: 14px; font-weight: 700; border-radius: 8px;
+  padding: 4px 12px; pointer-events: none;
+  opacity: 0; transition: opacity .25s;
+  backdrop-filter: blur(8px);
+}
+.dp-zoom-ind.show { opacity: 1; }
+
+.dp-hints {
+  position: absolute; bottom: 80px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; gap: 5px; flex-wrap: wrap; justify-content: center;
+  opacity: 0; transition: opacity .4s; pointer-events: none; z-index: 6;
+}
+.dp-hints.show { opacity: 1; }
+.dp-hints span {
+  font-size: 12px; color: rgba(255,255,255,.75);
+  background: rgba(0,0,0,.5); border-radius: 4px;
+  padding: 2px 8px; backdrop-filter: blur(4px); white-space: nowrap;
+}
+
+.dp-controls {
+  height: 70px; flex-shrink: 0;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  padding: 0 16px 10px;
+  background: rgba(10,10,10,.85);
+  border-top: 1px solid rgba(255,255,255,.07);
+  transition: opacity .3s;
+}
+#dplayer.dp-fullscreen .dp-controls {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 10;
+}
+#dplayer.ui-hidden .dp-controls { opacity: 0; pointer-events: none; }
+
+.dp-progress-wrap { padding: 5px 0 3px; }
+.dp-range {
+  width: 100%; height: 4px;
+  -webkit-appearance: none; appearance: none;
+  border-radius: 2px; outline: none; cursor: pointer;
+  transition: height .12s;
+  background: linear-gradient(
+    to right, rgba(255,255,255,.95) var(--pct,0%), rgba(255,255,255,.28) var(--pct,0%)
+  );
+}
+.dp-range:hover { height: 6px; }
+.dp-range::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff; cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  opacity: 0; transition: opacity .15s;
+}
+.dp-range:hover::-webkit-slider-thumb { opacity: 1; }
+.dp-range::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; border: none; cursor: pointer;
+}
+
+.dp-ctrl-row {
+  display: flex; align-items: center; gap: 2px; color: #fff;
+}
+.dp-ctrl-btn {
+  background: none; color: #fff; font-size: 20px; border: none;
+  min-width: 36px; min-height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; transition: background .12s; cursor: pointer;
+}
+.dp-ctrl-btn:hover { background: rgba(255,255,255,.15); }
+.dp-time-disp {
+  font-size: 13px; color: rgba(255,255,255,.8);
+  font-variant-numeric: tabular-nums; margin-left: 4px; white-space: nowrap;
+}
+.dp-ctrl-spacer { flex: 1; }

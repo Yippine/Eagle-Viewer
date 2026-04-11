@@ -182,9 +182,9 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#  and can be added to the global gitignore or merged into this file. However, if you prefer,
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 
@@ -205,3 +205,54 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# 使用者任務清單
+.ai-core/notes/work/resources/Work.xmind
+
+# Data files
+data/
+!data/config.example.json
+
+# --- BEGIN AI-CORE MANAGED (gitignore-sync) ---
+# ============================================================
+# AI Core .gitignore 模板
+# 維護：.claude/skills/gitignore-sync/references/gitignore.template
+# ============================================================
+
+# ── Claude Code：完全忽略 ────────────────────────────────
+.claude/
+
+# ── AI Core：忽略任務執行與對話狀態 ────────────────────────
+.ai-core/tasks/
+.ai-core/sessions/
+
+# ── AI Core Entity Cache ────────────────────────────────────
+.ai-core/projects/*/.cache/
+.ai-core/repos/*/.cache/
+
+# ── Obsidian App Config ─────────────────────────────────────
+.obsidian/
+
+# ── Resources：忽略媒體，保留 HTML Canvas ───────────────────
+**/resources/*
+!**/resources/*.html
+# 未來擴增格式加在此處（e.g. !**/resources/*.canvas）
+
+# ── External References（根目錄錨定）───────────────────────
+/references/
+
+# ── 圖片 / 影片 ─────────────────────────────────────────────
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.webm
+*.mov
+
+# ── 二進位文件格式 ──────────────────────────────────────────
+*.xmind
+
+# ── 暫存檔 ──────────────────────────────────────────────────
+.tmp_xmind*/
+# --- END AI-CORE MANAGED ---

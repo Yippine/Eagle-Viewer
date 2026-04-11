@@ -1,0 +1,69 @@
+/* ── Lightbox Modal（桌面）────────────────────────────────────────── */
+#modal {
+  display: none; position: fixed; inset: 0; z-index: 9000;
+  background: rgba(0,0,0,.88);
+  align-items: center; justify-content: center;
+}
+#modal.open { display: flex; animation: fade-in .18s ease; }
+
+@keyframes fade-in  { from { opacity: 0 } to { opacity: 1 } }
+@keyframes scale-in { from { transform: scale(.93); opacity: 0 }
+                      to   { transform: scale(1);   opacity: 1 } }
+
+#mbox {
+  position: relative;
+  max-width: 96vw; max-height: 96vh;
+  display: flex; align-items: center; justify-content: center;
+}
+#mbody img {
+  max-width: 92vw; max-height: 90vh;
+  object-fit: contain; border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.7);
+  animation: scale-in .2s ease;
+}
+#mbody video {
+  max-width: 92vw; max-height: 90vh;
+  border-radius: 8px; box-shadow: 0 24px 80px rgba(0,0,0,.7);
+}
+
+/* ── 圖片縮放模式（桌面）─────────────────────────────────────────── */
+#mbox.img-mode {
+  width: 92vw; height: 90vh;
+  display: block;       /* 讓 #mbody 可以 height: 100% */
+}
+#mbox.img-mode #mbody {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  border-radius: 8px;
+}
+#mbox.img-mode #mbody img {
+  max-width: 100%; max-height: 100%;
+  box-shadow: 0 24px 80px rgba(0,0,0,.7);
+  transform-origin: center center;
+  will-change: transform;
+  cursor: zoom-in;
+  border-radius: 0;
+  user-select: none; -webkit-user-drag: none;
+}
+#mbox.img-mode #mbody img.iz-zoomed  { cursor: grab; animation: none; }
+#mbox.img-mode #mbody img.iz-dragging { cursor: grabbing; }
+
+/* ── 縮放倍率指示器 ──────────────────────────────────────────────── */
+#m-zoom-ind {
+  position: absolute; top: 12px; right: 12px; z-index: 1;
+  background: rgba(0,0,0,.65); color: rgba(255,255,255,.9);
+  font-size: 14px; font-weight: 700; border-radius: 8px;
+  padding: 4px 12px; pointer-events: none;
+  opacity: 0; transition: opacity .25s;
+  backdrop-filter: blur(8px);
+}
+#m-zoom-ind.show { opacity: 1; }
+#m-close {
+  position: absolute; top: -48px; right: -2px;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(255,255,255,.15); color: #fff;
+  font-size: 17px; display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(8px); transition: background .15s;
+}
+#m-close:hover { background: rgba(255,255,255,.3); }

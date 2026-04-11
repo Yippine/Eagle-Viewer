@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Eagle Viewer</title>
+<meta name="theme-color" content="#007aff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="EagleLib">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ HEADER ═══ -->
+<header id="hdr">
+  <div class="hdr-inner">
+
+    <div class="logo">🦅&nbsp;Eagle<em>Lib</em></div>
+
+    <select id="lib-select" onchange="switchLibrary(this.value)" title="切換資源庫"></select>
+    <button class="icon-btn" id="btn-add-lib" title="新增資源庫" onclick="_addLibrary()">＋</button>
+
+    <div class="srch-box">
+      <span class="srch-ic">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+      </span>
+      <input id="search" type="text" placeholder='搜尋  tag:標籤  -domain:x.com  "完整詞"' autocomplete="off"
+             title="搜尋語法：預設AND  word  排除-word  &quot;phrase&quot;  完整詞  name: tag: domain: url: kind: 欄位搜尋">
+    </div>
+
+    <div class="type-pills">
+      <button class="tpill" data-t="bookmark">🔖&thinsp;書籤</button>
+      <button class="tpill" data-t="video">🎬&thinsp;影片</button>
+      <button class="tpill" data-t="gif">🖼&thinsp;動圖</button>
+      <button class="tpill" data-t="image">🌅&thinsp;圖片</button>
+    </div>
+
+    <div class="hdr-actions">
+      <button class="icon-btn seed-nav" id="btn-seed-prev" title="上一個排列" onclick="prevSeed()" disabled>‹</button>
+      <button class="icon-btn" id="btn-shuffle" title="重新隨機排列" onclick="newShuffle()">🔀</button>
+      <span id="seed-idx-lbl" class="seed-lbl"></span>
+      <button class="icon-btn seed-nav" id="btn-seed-next" title="下一個排列" onclick="nextSeed()" disabled>›</button>
+      <button class="icon-btn" id="btn-stats" title="觀看統計" onclick="openStats()">📊</button>
+    </div>
+
+    <p class="stats-row" id="stats-row"></p>
+
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════ DOMAIN FILTER BAR（展開/收合） ══ -->
+<nav id="fbar">
+  <!-- 永遠可見的切換列 -->
+  <div class="fbar-toggle" id="fbar-toggle" onclick="toggleFbar()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="3" y1="6"  x2="21" y2="6"/>
+      <line x1="7" y1="12" x2="21" y2="12"/>
+      <line x1="11" y1="18" x2="21" y2="18"/>
+    </svg>
+    <span id="fbar-label">全部網域</span>
+    <span class="fbar-count" id="fbar-count"></span>
+    <span class="fbar-arrow" id="fbar-arrow">▾</span>
+    <button id="tag-tog-inline" class="fbar-tag-btn" onclick="event.stopPropagation();toggleTagPanel()">
+      標籤&thinsp;<span class="arrow">▾</span>
+    </button>
+  </div>
+  <!-- 收合的 chip 區域 -->
+  <div class="fbar-chips" id="fbar-chips">
+    <div class="fbar-inner" id="dchips">
+      <!-- domain chips injected by app.js -->
+    </div>
+  </div>
+</nav>
+
+<!-- ══════════════════════════════════════════════════════ TAG PANEL ══════ -->
+<section id="tag-panel">
+  <div class="tp-inner" id="tchips"></div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ MAIN ═════ -->
+<main id="wrap">
+  <p id="ibar"></p>
+  <div id="grid"></div>
+  <div id="sentinel"></div>
+  <div id="loader"><div class="spin"></div></div>
+</main>
+
+<!-- ════════════════════════════════════════════════════ STATS PANEL ══════ -->
+<aside id="stats-panel">
+  <div class="sp-header">
+    <h2 class="sp-title">📊 觀看統計</h2>
+    <button class="sp-close" onclick="closeStats()">✕</button>
+  </div>
+  <!-- 分頁 Tab -->
+  <div class="sp-tabs">
+    <button class="sp-tab on" data-tab="history" onclick="switchStatsTab('history')">歷史紀錄</button>
+    <button class="sp-tab"    data-tab="stats"   onclick="switchStatsTab('stats')">統計分析</button>
+  </div>
+  <div id="sp-body" class="sp-body">
+    <div class="sp-loading"><div class="spin"></div><span>載入中…</span></div>
+  </div>
+</aside>
+<div id="stats-backdrop" onclick="closeStats()"></div>
+
+<!-- ══════════════════════════════════════ LIGHTBOX MODAL（桌面用）═════════ -->
+<div id="modal" onclick="closeModal()">
+  <div id="mbox" onclick="event.stopPropagation()">
+    <button id="m-close" onclick="closeModal()">✕</button>
+    <div id="mbody"></div>
+    <div id="m-zoom-ind"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ 手機沉浸式播放器（TikTok 風格）══════════ -->
+<div id="mplayer">
+  <!-- 頂部列：返回 + 計數器 + 外部連結 -->
+  <div class="mp-topbar">
+    <button class="mp-back" onclick="closeMobilePlayer()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+    </button>
+    <div class="mp-counter" id="mp-counter"></div>
+    <!-- 以標籤搜尋按鈕 -->
+    <button class="mp-link-btn" id="mp-tag-btn" title="以此影片標籤搜尋" style="display:none" onclick="_mpSearchByTags()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+        <line x1="7" y1="7" x2="7.01" y2="7"/>
+      </svg>
+    </button>
+    <!-- 影片控制按鈕 -->
+    <button class="mp-link-btn" id="mp-vc-btn" title="影片控制">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+        <path d="M17 12a5 5 0 0 1-5 5M7 12a5 5 0 0 1 5-5"/>
+      </svg>
+    </button>
+    <!-- 開啟原始連結按鈕（x.com 會喚起 X App） -->
+    <button class="mp-link-btn" id="mp-link-btn" title="開啟原始連結" style="display:none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+        <polyline points="15 3 21 3 21 9"/>
+        <line x1="10" y1="14" x2="21" y2="3"/>
+      </svg>
+    </button>
+  </div>
+  <!-- 影片容器（手勢區） -->
+  <div class="mp-video-wrap" id="mp-wrap"></div>
+  <!-- 拖曳進度指示（手勢 seek 時顯示） -->
+  <div class="mp-seek-indicator" id="mp-seek"></div>
+  <!-- 播放/暫停閃示（雙擊時顯示） -->
+  <div class="mp-play-flash" id="mp-flash"></div>
+  <!-- 切換方向動畫 -->
+  <div class="mp-swipe-ov" id="mp-swipe-ov"></div>
+
+  <!-- 底部漸層覆蓋：資訊 + 控制列 -->
+  <div class="mp-overlay">
+    <!-- 標題資訊 -->
+    <div class="mp-info">
+      <div class="mp-title"  id="mp-title"></div>
+      <div class="mp-domain" id="mp-domain"></div>
+      <div class="mp-hints"  id="mp-hints">
+        <span>← → 拖動快退/快進</span>
+        <span>↑ ↓ 切換影片</span>
+        <span>雙擊 暫停/播放</span>
+        <span>左緣右滑 返回列表</span>
+      </div>
+    </div>
+    <!-- 播放控制列 -->
+    <div class="mp-controls" id="mp-controls">
+      <div class="mp-progress-wrap">
+        <input type="range" class="mp-range" id="mp-prog-range"
+               min="0" max="100" value="0" step="0.1"
+               oninput="_mpSeekTo(this.value)">
+      </div>
+      <div class="mp-ctrl-row">
+        <button class="mp-ctrl-btn" id="mp-btn-play" onclick="_mpTogglePlay()">
+          <!-- icon injected by JS -->
+          ▶
+        </button>
+        <span class="mp-time-disp" id="mp-time">0:00 / –:––</span>
+        <div class="mp-ctrl-spacer"></div>
+        <button class="mp-ctrl-btn" onclick="_mpSwitch(-1)" title="上一部">⏮</button>
+        <button class="mp-ctrl-btn" onclick="_mpSwitch(1)"  title="下一部">⏭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════ 桌面沉浸式播放器 ═══ -->
+<div id="dplayer-backdrop" onclick="closeDesktopPlayer()"></div>
+<div id="dplayer" tabindex="-1">
+  <!-- 頂部列 -->
+  <div class="dp-topbar" id="dp-topbar">
+    <button class="dp-close-btn" onclick="closeDesktopPlayer()" title="關閉 (Esc)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+    <div class="dp-counter" id="dp-counter"></div>
+    <div class="dp-title-wrap">
+      <div class="dp-title"  id="dp-title"></div>
+      <div class="dp-domain" id="dp-domain"></div>
+    </div>
+    <button class="dp-icon-btn" id="dp-tag-btn" title="以此影片標籤搜尋" style="display:none" onclick="_dpSearchByTags()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+        <line x1="7" y1="7" x2="7.01" y2="7"/>
+      </svg>
+    </button>
+    <button class="dp-icon-btn" id="dp-link-btn" title="開啟原始連結" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+        <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+      </svg>
+    </button>
+    <button class="dp-icon-btn" id="dp-vc-btn" onclick="toggleVcPanel()" title="影片控制 (C)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+        <path d="M17 12a5 5 0 0 1-5 5M7 12a5 5 0 0 1 5-5"/>
+      </svg>
+    </button>
+    <button class="dp-icon-btn" id="dp-fs-btn" onclick="_dpCycleWindowMode()" title="最大化 (F)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+        <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- 影片區 -->
+  <div class="dp-video-wrap" id="dp-wrap"></div>
+
+  <!-- 播放/暫停閃示 -->
+  <div class="dp-play-flash" id="dp-flash"></div>
+
+  <!-- 縮放倍率提示 -->
+  <div class="dp-zoom-ind" id="dp-zoom-ind"></div>
+
+  <!-- 鍵盤操作提示 -->
+  <div class="dp-hints" id="dp-hints">
+    <span>Space 播放/暫停</span><span>← → ±5s</span>
+    <span>↑ ↓ 切換影片</span><span>滾輪 縮放</span>
+    <span>F 全螢幕</span><span>C 影片控制</span><span>Esc 關閉</span>
+  </div>
+
+  <!-- 底部控制列 -->
+  <div class="dp-controls" id="dp-controls">
+    <div class="dp-progress-wrap">
+      <input type="range" class="dp-range" id="dp-prog-range"
+             min="0" max="100" value="0" step="0.1"
+             oninput="_dpSeekTo(this.value)">
+    </div>
+    <div class="dp-ctrl-row">
+      <button class="dp-ctrl-btn" id="dp-btn-play" onclick="_dpTogglePlay()" title="播放/暫停 (Space)">▶</button>
+      <span class="dp-time-disp" id="dp-time">0:00 / –:––</span>
+      <div class="dp-ctrl-spacer"></div>
+      <button class="dp-ctrl-btn" onclick="_dpSwitch(-1)" title="上一部 (↑)">⏮</button>
+      <button class="dp-ctrl-btn" onclick="_dpSwitch(1)"  title="下一部 (↓)">⏭</button>
+      <button class="dp-ctrl-btn" id="dp-vol-btn" onclick="_dpToggleMute()" title="靜音 (M)">🔊</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════ VIDEO CONTROLS PANEL ══════════ -->
+<div id="vc-panel">
+  <div class="vc-header">
+    <span class="vc-title">影片控制</span>
+    <button class="vc-close-btn" onclick="closeVcPanel()">✕</button>
+  </div>
+  <div class="vc-content">
+
+    <!-- AB 循環播放 -->
+    <div class="vc-section">
+      <div class="vc-section-label">⟲ AB 循環播放</div>
+      <div class="vc-ab-points">
+        <div class="vc-ab-point">
+          <button class="vc-point-btn" id="vc-btn-a" onclick="_vcSetA()">A</button>
+          <span class="vc-a-time" id="vc-a-time">–</span>
+        </div>
+        <span class="vc-ab-sep">→</span>
+        <div class="vc-ab-point">
+          <button class="vc-point-btn" id="vc-btn-b" onclick="_vcSetB()">B</button>
+          <span class="vc-b-time" id="vc-b-time">–</span>
+        </div>
+      </div>
+      <div class="vc-ab-row">
+        <button class="vc-toggle-btn" id="vc-ab-toggle" onclick="_vcToggleAb()">AB 關閉</button>
+        <button class="vc-text-btn" onclick="_vcClearAb()">清除</button>
+      </div>
+    </div>
+
+    <!-- 濾鏡 -->
+    <div class="vc-section">
+      <div class="vc-section-label">◐ 濾鏡</div>
+      <div class="vc-slider-row">
+        <span class="vc-label">亮度</span>
+        <input type="range" id="vc-brightness" min="0" max="3" step="0.05" value="1"
+               oninput="_vcFilter('brightness',+this.value)">
+        <span class="vc-val" id="vc-brightness-v">1.00</span>
+      </div>
+      <div class="vc-slider-row">
+        <span class="vc-label">對比</span>
+        <input type="range" id="vc-contrast" min="0" max="3" step="0.05" value="1"
+               oninput="_vcFilter('contrast',+this.value)">
+        <span class="vc-val" id="vc-contrast-v">1.00</span>
+      </div>
+      <div class="vc-slider-row">
+        <span class="vc-label">飽和</span>
+        <input type="range" id="vc-saturate" min="0" max="3" step="0.05" value="1"
+               oninput="_vcFilter('saturate',+this.value)">
+        <span class="vc-val" id="vc-saturate-v">1.00</span>
+      </div>
+      <div class="vc-slider-row">
+        <span class="vc-label">色調</span>
+        <input type="range" id="vc-hue" min="0" max="360" step="1" value="0"
+               oninput="_vcFilter('hueRotate',+this.value)">
+        <span class="vc-val" id="vc-hue-v">0°</span>
+      </div>
+    </div>
+
+    <!-- 單軸縮放 -->
+    <div class="vc-section">
+      <div class="vc-section-label">⤢ 單軸縮放</div>
+      <div class="vc-slider-row">
+        <span class="vc-label">水平</span>
+        <input type="range" id="vc-scalex" min="0.1" max="3" step="0.05" value="1"
+               oninput="_vcTx('scaleX',+this.value)">
+        <span class="vc-val" id="vc-scalex-v">1.00×</span>
+      </div>
+      <div class="vc-slider-row">
+        <span class="vc-label">垂直</span>
+        <input type="range" id="vc-scaley" min="0.1" max="3" step="0.05" value="1"
+               oninput="_vcTx('scaleY',+this.value)">
+        <span class="vc-val" id="vc-scaley-v">1.00×</span>
+      </div>
+    </div>
+
+    <!-- 位移 -->
+    <div class="vc-section">
+      <div class="vc-section-label">↔ 位移</div>
+      <div class="vc-slider-row">
+        <span class="vc-label">X</span>
+        <input type="range" id="vc-tx" min="-500" max="500" step="1" value="0"
+               oninput="_vcTx('translateX',+this.value)">
+        <span class="vc-val" id="vc-tx-v">0px</span>
+      </div>
+      <div class="vc-slider-row">
+        <span class="vc-label">Y</span>
+        <input type="range" id="vc-ty" min="-500" max="500" step="1" value="0"
+               oninput="_vcTx('translateY',+this.value)">
+        <span class="vc-val" id="vc-ty-v">0px</span>
+      </div>
+    </div>
+
+    <!-- 翻轉 / 旋轉 -->
+    <div class="vc-section">
+      <div class="vc-section-label">↺ 翻轉 / 旋轉</div>
+      <div class="vc-btn-group">
+        <button class="vc-geo-btn" id="vc-flip-h" onclick="_vcFlip('H')">⇔ 水平翻轉</button>
+        <button class="vc-geo-btn" id="vc-flip-v" onclick="_vcFlip('V')">⇕ 垂直翻轉</button>
+      </div>
+      <div class="vc-btn-group">
+        <button class="vc-geo-btn" onclick="_vcRotateBy(-90)">↺ -90°</button>
+        <button class="vc-geo-btn" onclick="_vcRotateBy(90)">↻ +90°</button>
+        <button class="vc-geo-btn" onclick="_vcRotateBy(180)">↻ 180°</button>
+        <button class="vc-geo-btn" onclick="_vcSetRotate(0)">⊙ 歸零</button>
+      </div>
+      <div class="vc-rotate-row">
+        <span style="font-size:11px;color:rgba(255,255,255,.3)">旋轉角度：</span>
+        <span class="vc-rotate-val" id="vc-rotate-v">0°</span>
+      </div>
+    </div>
+
+    <!-- 重置 -->
+    <div class="vc-reset-section">
+      <button class="vc-reset-btn" onclick="_vcResetAll()">↺ 重置全部</button>
+    </div>
+
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

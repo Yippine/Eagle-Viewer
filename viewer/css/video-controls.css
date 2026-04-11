@@ -1,0 +1,254 @@
+/* ── Video Controls Panel（PotPlayer 風格）─────────────────────────── */
+
+/* ── 面板主體 ──────────────────────────────────────────────────────── */
+#vc-panel {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  width: 310px;
+  background: rgba(16, 16, 16, 0.97);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-left: 1px solid rgba(255,255,255,.1);
+  z-index: 9600;  /* 高於 #mplayer(9500) 與 #dplayer(9200) */
+  display: flex; flex-direction: column;
+  transform: translateX(100%);
+  transition: transform .25s cubic-bezier(.4,0,.2,1);
+  color: #e5e5ea;
+  font-size: 15px;
+  user-select: none;
+  overscroll-behavior: contain;
+}
+#vc-panel.open { transform: translateX(0); }
+
+/* ── Header ────────────────────────────────────────────────────────── */
+.vc-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  flex-shrink: 0;
+}
+.vc-title {
+  font-size: 17px; font-weight: 700; color: #fff; letter-spacing: .01em;
+}
+.vc-close-btn {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: rgba(255,255,255,.12); color: rgba(255,255,255,.8);
+  font-size: 15px; display: flex; align-items: center; justify-content: center;
+  transition: background .15s;
+}
+.vc-close-btn:hover { background: rgba(255,255,255,.22); }
+
+/* ── Scrollable content ────────────────────────────────────────────── */
+.vc-content {
+  flex: 1; overflow-y: auto; padding: 4px 0 20px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,.15) transparent;
+}
+.vc-content::-webkit-scrollbar { width: 4px; }
+.vc-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 2px; }
+
+/* ── Section ───────────────────────────────────────────────────────── */
+.vc-section {
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+.vc-section:last-child { border-bottom: none; }
+
+.vc-section-label {
+  font-size: 13px; font-weight: 700; letter-spacing: .04em;
+  color: rgba(255,255,255,.55);
+  margin-bottom: 12px;
+}
+
+/* ── AB Loop ───────────────────────────────────────────────────────── */
+.vc-ab-points {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.vc-ab-point {
+  display: flex; align-items: center; gap: 7px; flex: 1;
+}
+.vc-ab-sep {
+  color: rgba(255,255,255,.3); font-size: 16px;
+}
+.vc-point-btn {
+  width: 38px; height: 34px; border-radius: 8px;
+  background: rgba(255,255,255,.1); color: rgba(255,255,255,.7);
+  font-size: 14px; font-weight: 700;
+  transition: background .15s, color .15s;
+  flex-shrink: 0;
+}
+.vc-point-btn.vc-on { background: #007aff; color: #fff; }
+.vc-point-btn:hover  { background: rgba(255,255,255,.18); }
+.vc-point-btn.vc-on:hover { background: #0066d4; }
+
+.vc-a-time, .vc-b-time {
+  font-size: 14px; color: rgba(255,255,255,.55);
+  font-variant-numeric: tabular-nums; min-width: 40px;
+}
+
+.vc-ab-row {
+  display: flex; gap: 8px; align-items: center;
+}
+.vc-toggle-btn {
+  flex: 1; height: 36px; border-radius: 9px;
+  background: rgba(255,255,255,.1); color: rgba(255,255,255,.8);
+  font-size: 14px; font-weight: 600;
+  transition: background .15s, color .15s;
+}
+.vc-toggle-btn.vc-on  { background: #30d158; color: #fff; }
+.vc-toggle-btn:hover  { background: rgba(255,255,255,.16); }
+.vc-toggle-btn.vc-on:hover { background: #25b04a; }
+
+.vc-text-btn {
+  height: 36px; padding: 0 16px; border-radius: 9px;
+  background: rgba(255,255,255,.08); color: rgba(255,255,255,.6);
+  font-size: 14px;
+  transition: background .15s;
+}
+.vc-text-btn:hover { background: rgba(255,255,255,.14); }
+
+/* ── Slider row ────────────────────────────────────────────────────── */
+.vc-slider-row {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px;
+}
+.vc-slider-row:last-child { margin-bottom: 0; }
+
+.vc-label {
+  width: 28px; font-size: 14px; color: rgba(255,255,255,.55);
+  flex-shrink: 0; text-align: right;
+}
+
+.vc-slider-row input[type="range"] {
+  flex: 1; height: 4px; cursor: pointer;
+  -webkit-appearance: none; appearance: none;
+  background: rgba(255,255,255,.18); border-radius: 2px; outline: none;
+}
+.vc-slider-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #007aff; cursor: pointer;
+  box-shadow: 0 1px 6px rgba(0,0,0,.5);
+  transition: transform .1s;
+}
+.vc-slider-row input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+.vc-slider-row input[type="range"]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #007aff; cursor: pointer; border: none;
+}
+
+.vc-val {
+  width: 46px; font-size: 14px; color: rgba(255,255,255,.65);
+  font-variant-numeric: tabular-nums; text-align: right; flex-shrink: 0;
+}
+
+/* ── Button groups（翻轉/旋轉）───────────────────────────────────── */
+.vc-btn-group {
+  display: flex; gap: 6px; margin-bottom: 7px;
+}
+.vc-btn-group:last-child { margin-bottom: 0; }
+
+.vc-geo-btn {
+  flex: 1; height: 36px; border-radius: 9px;
+  background: rgba(255,255,255,.1); color: rgba(255,255,255,.8);
+  font-size: 13px; font-weight: 500;
+  transition: background .15s, color .15s;
+}
+.vc-geo-btn.vc-on { background: #ff9f0a; color: #fff; }
+.vc-geo-btn:hover { background: rgba(255,255,255,.18); }
+.vc-geo-btn.vc-on:hover { background: #e58e09; }
+
+.vc-rotate-row {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; margin-top: 6px;
+}
+.vc-rotate-val {
+  font-size: 14px; color: rgba(255,255,255,.45);
+  font-variant-numeric: tabular-nums; min-width: 32px; text-align: center;
+}
+
+/* ── Reset ─────────────────────────────────────────────────────────── */
+.vc-reset-section { padding: 14px 18px; }
+.vc-reset-btn {
+  width: 100%; height: 40px; border-radius: 10px;
+  background: rgba(255,59,48,.15); color: #ff6961;
+  font-size: 15px; font-weight: 600;
+  transition: background .15s, color .15s;
+}
+.vc-reset-btn:hover { background: rgba(255,59,48,.28); color: #ff3b30; }
+
+/* ── Toggle button（桌面/手機播放器 topbar 用）──────────────────── */
+#dp-vc-btn.vc-active,
+#mp-vc-btn.vc-active {
+  color: #007aff !important;
+}
+
+/* ── 防捲動觸發 slider：pan-y 讓垂直滑動穿透至 scroll container ─── */
+#vc-panel input[type="range"] {
+  touch-action: pan-y;
+}
+
+/* ═══════════════════════════════ Mobile ═══════════════════════════ */
+@media (max-width: 768px) {
+  #vc-panel {
+    top: auto; right: 0; bottom: 0; left: 0;
+    width: 100%; height: auto;
+    /* max-height 由 JS 動態控制（預設 55vh，可拖動調整）*/
+    max-height: 55vh;
+    border-left: none;
+    border-top: 1px solid rgba(255,255,255,.12);
+    border-radius: 18px 18px 0 0;
+    transform: translateY(100%);
+    /* 拖動時關閉高度過渡，避免卡頓 */
+    transition: transform .25s cubic-bezier(.4,0,.2,1), max-height .18s ease;
+  }
+  #vc-panel.open  { transform: translateY(0); }
+  #vc-panel.dragging { transition: transform .25s cubic-bezier(.4,0,.2,1); }
+
+  /* ── 拖動把手 ─────────────────────────────────────────────────── */
+  .vc-header {
+    position: relative;
+    padding-top: 22px;
+    cursor: grab;
+  }
+  .vc-header::before {
+    content: '';
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    width: 44px; height: 5px; border-radius: 3px;
+    background: rgba(255,255,255,.35);
+    transition: background .15s, width .15s;
+  }
+  .vc-header:active::before {
+    background: rgba(255,255,255,.6);
+    width: 56px;
+  }
+
+  /* ── 字體偏大（手機版整體略增） ────────────────────────────── */
+  #vc-panel            { font-size: 16px; }
+  .vc-title            { font-size: 19px; }
+  .vc-section-label    { font-size: 15px; }
+  .vc-label            { font-size: 15px; width: 32px; }
+  .vc-val              { font-size: 15px; width: 52px; }
+  .vc-a-time,
+  .vc-b-time           { font-size: 15px; }
+  .vc-rotate-val       { font-size: 15px; }
+  .vc-geo-btn,
+  .vc-point-btn,
+  .vc-toggle-btn,
+  .vc-text-btn         { min-height: 46px; height: 46px; font-size: 15px; }
+  .vc-reset-btn        { height: 50px; font-size: 17px; }
+
+  .vc-slider-row input[type="range"]::-webkit-slider-thumb {
+    width: 24px; height: 24px;
+  }
+}
+
+/* ── 容器黑底（translate 超出時顯示）────────────────────────────── */
+.dp-zoom-wrapper, .mp-zoom-wrapper {
+  width: 100%; height: 100%;
+  transform-origin: center center;
+  will-change: transform;
+}

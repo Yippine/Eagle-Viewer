@@ -1,0 +1,36 @@
+/* ── Design tokens ───────────────────────────────────────────────── */
+:root {
+  --bg:       #f2f2f7;
+  --card:     #ffffff;
+  --hdr-bg:   rgba(255,255,255,.93);
+  --border:   #e5e5ea;
+  --text:     #1c1c1e;
+  --text2:    #636366;
+  --text3:    #aeaeb2;
+  --accent:   #007aff;
+  --accent-r: #ff3b30;
+  --tag-bg:   #f2f2f7;
+  --sh-sm:    0 1px 3px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
+  --sh:       0 4px 16px rgba(0,0,0,.08), 0 1px 4px rgba(0,0,0,.04);
+  --sh-lg:    0 12px 40px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.06);
+  --r:        16px;
+  --r-sm:     9px;
+  --gap:      14px;
+  --col:      4;
+}
+
+/* ── Reset ────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, 'Microsoft JhengHei UI', 'PingFang TC',
+               'Noto Sans TC', 'Helvetica Neue', sans-serif;
+  font-size: 18px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+a { text-decoration: none; color: inherit; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; }

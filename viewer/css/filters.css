@@ -1,0 +1,110 @@
+/* ── Filter bar（展開/收合）────────────────────────────────────────── */
+#fbar {
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0;
+  z-index: 190;
+}
+
+.fbar-toggle {
+  max-width: 1920px; margin: 0 auto;
+  padding: 10px 24px;
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer;
+  font-size: 15px; color: var(--text2);
+  user-select: none;
+  transition: background .12s;
+}
+.fbar-toggle:hover { background: var(--bg); }
+.fbar-toggle svg   { flex-shrink: 0; color: var(--text3); }
+
+#fbar-label {
+  font-weight: 600; color: var(--text);
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fbar-count {
+  font-size: 13px; color: #fff; background: var(--accent);
+  border-radius: 10px; padding: 1px 7px; font-weight: 600;
+  flex-shrink: 0;
+}
+.fbar-count:empty { display: none; }
+
+.fbar-arrow {
+  font-size: 14px; color: var(--text3); flex-shrink: 0;
+  transition: transform .22s;
+}
+#fbar.open .fbar-arrow { transform: rotate(180deg); }
+
+.fbar-tag-btn {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: none; border: 1.5px solid var(--border);
+  border-radius: 20px; color: var(--text3); font-size: 14px;
+  padding: 4px 11px; flex-shrink: 0; font-weight: 500;
+  transition: all .15s; margin-left: 4px;
+}
+.fbar-tag-btn:hover { border-color: var(--accent); color: var(--accent); }
+.fbar-tag-btn .arrow { display: inline-block; transition: transform .2s; }
+#tag-tog-inline.open .arrow { transform: rotate(180deg); }
+
+.fbar-chips {
+  max-height: 0; overflow: hidden;
+  transition: max-height .28s cubic-bezier(.4,0,.2,1);
+  border-top: 0px solid var(--border);
+}
+#fbar.open .fbar-chips {
+  max-height: 400px; overflow-y: auto;
+  border-top: 1px solid var(--border);
+}
+
+.fbar-inner {
+  max-width: 1920px; margin: 0 auto;
+  padding: 12px 24px 16px;
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+}
+
+.dchip {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--tag-bg); border: 1.5px solid var(--border);
+  border-radius: 20px; color: var(--text2); font-weight: 500;
+  padding: 5px 13px; font-size: 15px; flex-shrink: 0;
+  transition: all .15s; white-space: nowrap;
+  cursor: pointer;
+}
+.dchip:hover { border-color: var(--accent); color: var(--accent); }
+.dchip.on    { background: var(--accent); border-color: transparent; color: #fff; }
+.dchip .n {
+  font-size: 13px; background: rgba(0,0,0,.09);
+  border-radius: 9px; padding: 0 5px; line-height: 1.7;
+}
+.dchip.on .n { background: rgba(255,255,255,.28); }
+
+/* ── Tag panel ────────────────────────────────────────────────────── */
+#tag-panel {
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  max-height: 0; overflow: hidden;
+  transition: max-height .28s cubic-bezier(.4,0,.2,1);
+}
+#tag-panel.open { max-height: 320px; overflow-y: auto; }
+
+.tp-inner {
+  max-width: 1920px; margin: 0 auto;
+  padding: 14px 24px 16px;
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.ftag {
+  background: var(--tag-bg); border: 1.5px solid var(--border);
+  border-radius: 6px; color: var(--text2); font-size: 15px; font-weight: 500;
+  padding: 4px 12px; transition: all .15s; cursor: pointer;
+}
+.ftag:hover { border-color: var(--accent); color: var(--accent); }
+.ftag.on    { background: var(--accent); border-color: transparent; color: #fff; }
+
+.ftag-clear {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: rgba(255,59,48,.1); border: 1.5px solid rgba(255,59,48,.3);
+  color: var(--accent-r); font-size: 14px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: all .15s; cursor: pointer;
+}
+.ftag-clear:hover { background: rgba(255,59,48,.2); border-color: var(--accent-r); }

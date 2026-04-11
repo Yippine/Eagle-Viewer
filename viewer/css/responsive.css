@@ -1,0 +1,46 @@
+/* ── Responsive Breakpoints ───────────────────────────────────────── */
+@media (max-width: 1400px) { :root { --col: 3; } }
+@media (max-width: 760px)  { :root { --col: 2; } }
+
+/* ── 手機版（≤ 768px）────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  :root { --col: 1; --gap: 10px; }
+
+  .mob-play-hint { display: block; }
+
+  #stats-panel {
+    top: auto; left: 0; right: 0; bottom: 0; width: 100%;
+    max-height: 92vh; border-radius: 20px 20px 0 0;
+    border-left: none; border-top: 1px solid var(--border);
+    box-shadow: 0 -8px 40px rgba(0,0,0,.18);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @keyframes slide-in-right {
+    from { transform: translateY(80px); opacity: 0 }
+    to   { transform: translateY(0);    opacity: 1 }
+  }
+  .sp-tabs { top: 61px; }
+
+  .sp-hist-thumb, .sp-hist-thumb-ph { width: 90px; height: 51px; }
+  .sp-summary { grid-template-columns: repeat(3,1fr); gap: 8px; }
+}
+
+@media (max-width: 580px) {
+  .hdr-inner   { gap: 7px; padding: 10px 14px 8px; }
+  .logo        { font-size: 20px; }
+  #search      { font-size: 17px; padding: 7px 14px 7px 34px; }
+  .tpill       { padding: 5px 13px; font-size: 16px; }
+  .icon-btn    { padding: 5px 10px; font-size: 17px; }
+  #wrap        { padding: 14px 12px 40px; }
+  .cbody       { padding: 11px 13px 14px; }
+  .cdomain     { font-size: 14px; }
+  .ctitle      { font-size: 16px; }
+  .tg          { font-size: 14px; }
+  .seed-lbl    { display: none; }
+  .fbar-toggle { padding: 8px 13px; font-size: 15px; }
+  .dchip       { font-size: 16px; }
+  .dchip .n    { font-size: 14px; }
+  .ftag        { font-size: 16px; }
+  #ibar        { font-size: 16px; }
+  .sp-body     { padding: 12px 16px 32px; }
+}
