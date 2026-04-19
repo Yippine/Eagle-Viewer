@@ -12,12 +12,14 @@ export const state = {
   activeLib: '',
 
   // ── 篩選條件 ──
-  curDomain: 'all',
-  curType:   'all',
-  curTags:   new Set(),
-  curQ:      '',
+  curDomain:  'all',
+  curType:    'all',
+  curTags:    new Set(),
+  curQ:       '',
+  curPreset:  null,
 
   // ── UI 狀態 ──
-  tagsOpen:  false,
-  fbarOpen:  false,
+  tagsOpen:   false,
+  fbarOpen:   false,
+  presetOpen: false,
 };

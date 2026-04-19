@@ -72,6 +72,9 @@
     <button id="tag-tog-inline" class="fbar-tag-btn" onclick="event.stopPropagation();toggleTagPanel()">
       標籤&thinsp;<span class="arrow">▾</span>
     </button>
+    <button id="preset-tog-inline" class="fbar-tag-btn" onclick="event.stopPropagation();togglePresetPanel()">
+      濾鏡&thinsp;<span class="arrow">▾</span>
+    </button>
   </div>
   <!-- 收合的 chip 區域 -->
   <div class="fbar-chips" id="fbar-chips">
@@ -84,6 +87,11 @@
 <!-- ══════════════════════════════════════════════════════ TAG PANEL ══════ -->
 <section id="tag-panel">
   <div class="tp-inner" id="tchips"></div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ PRESET PANEL ══════ -->
+<section id="preset-panel">
+  <div class="tp-inner" id="pchips"></div>
 </section>
 
 <!-- ═══════════════════════════════════════════════════════════ MAIN ═════ -->
@@ -339,6 +347,12 @@
       </div>
     </div>
 
+    <!-- 濾鏡預設 -->
+    <div class="vc-section">
+      <div class="vc-section-label">🔖 濾鏡預設</div>
+      <div id="vc-presets"></div>
+    </div>
+
     <!-- 單軸縮放 -->
     <div class="vc-section">
       <div class="vc-section-label">⤢ 單軸縮放</div>
@@ -399,6 +413,8 @@
 
   </div>
 </div>
+
+<div id="vc-toast" class="vc-toast"></div>
 
 <script type="module" src="js/main.js"></script>
 </body>

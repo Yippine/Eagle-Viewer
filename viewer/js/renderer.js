@@ -2,7 +2,7 @@
 /* ── renderer.js  ▸  HTML 片段建構（buildCard、統計列、錯誤畫面）─────── */
 
 import { state } from './state.js';
-import { h, KIND_ICON, HIDE_TAGS } from './utils.js';
+import { h, KIND_ICON, HIDE_TAGS, encodePath } from './utils.js';
 
 /** 建立單張卡片 HTML */
 export function buildCard(i) {
@@ -22,18 +22,21 @@ export function buildCard(i) {
     ? `<button class="ov-tags" data-item-id="${idSafe}" onclick="event.stopPropagation();_filterByItemTags(this)" title="以此項目所有標籤搜尋">🏷</button>`
     : '';
 
+  const fileSrc  = i.file  ? '/' + encodePath(i.file)  : '';
+  const thumbSrc = i.thumb ? '/' + encodePath(i.thumb) : '';
+
   let media = '';
   if (i.file && i.media_type === 'image') {
     media = `<div class="cmedia">${badge}${eagle}${tagSearchBtn}
-      <img class="nat" src="/${h(i.file)}" loading="lazy" alt="${h(title)}"
-           onclick="event.stopPropagation();_imgClick('${idSafe}','/${h(i.file)}')">
+      <img class="nat" src="${h(fileSrc)}" loading="lazy" alt="${h(title)}"
+           onclick="event.stopPropagation();_imgClick('${idSafe}','${h(fileSrc)}')">
     </div>`;
   } else if (i.file && i.media_type === 'video') {
-    const tAttr = i.thumb ? `style="background:url('/${h(i.thumb)}') center/cover no-repeat"` : '';
+    const tAttr = thumbSrc ? `style="background:url('${h(thumbSrc)}') center/cover no-repeat"` : '';
     const ratioStyle = (i.width && i.height) ? ` style="aspect-ratio:${i.width}/${i.height}"` : '';
     media = `<div class="cmedia">${badge}${eagle}${tagSearchBtn}
       <div class="ratio-box"${ratioStyle}>
-        <div class="vid-lazy" data-vsrc="/${h(i.file)}"${i.width ? ` data-vw="${i.width}"` : ''}${i.height ? ` data-vh="${i.height}"` : ''}${i.thumb ? ` data-vposter="/${h(i.thumb)}"` : ''}${tAttr ? ' ' + tAttr : ''}></div>
+        <div class="vid-lazy" data-vsrc="${h(fileSrc)}"${i.width ? ` data-vw="${i.width}"` : ''}${i.height ? ` data-vh="${i.height}"` : ''}${thumbSrc ? ` data-vposter="${h(thumbSrc)}"` : ''}${tAttr ? ' ' + tAttr : ''}></div>
         <div class="play-ov"><div class="play-circle">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21"/></svg>
         </div></div>
@@ -42,7 +45,7 @@ export function buildCard(i) {
     </div>`;
   } else if (i.thumb) {
     media = `<div class="cmedia">${badge}${eagle}${tagSearchBtn}
-      <div class="ratio-box"><img src="/${h(i.thumb)}" loading="lazy" alt="${h(title)}"></div>
+      <div class="ratio-box"><img src="${h(thumbSrc)}" loading="lazy" alt="${h(title)}"></div>
     </div>`;
   } else {
     media = `<div class="cmedia">${eagle}${tagSearchBtn}

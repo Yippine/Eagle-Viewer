@@ -108,3 +108,29 @@
   flex-shrink: 0; transition: all .15s; cursor: pointer;
 }
 .ftag-clear:hover { background: rgba(255,59,48,.2); border-color: var(--accent-r); }
+
+/* ── Preset Filter Panel ─────────────────────────────────────────── */
+#preset-panel {
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  max-height: 0; overflow: hidden;
+  transition: max-height .28s cubic-bezier(.4,0,.2,1);
+}
+#preset-panel.open { max-height: 320px; overflow-y: auto; }
+
+.fpreset {
+  background: var(--tag-bg); border: 1.5px solid var(--border);
+  border-radius: 6px; color: var(--text2); font-size: 15px; font-weight: 500;
+  padding: 4px 12px; transition: all .15s; cursor: pointer;
+}
+.fpreset:hover { border-color: var(--accent); color: var(--accent); }
+.fpreset.on    { background: var(--accent); border-color: transparent; color: #fff; }
+
+.fpreset-clear {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: rgba(255,59,48,.1); border: 1.5px solid rgba(255,59,48,.3);
+  color: var(--accent-r); font-size: 14px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: all .15s; cursor: pointer;
+}
+.fpreset-clear:hover { background: rgba(255,59,48,.2); border-color: var(--accent-r); }

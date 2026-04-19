@@ -7,7 +7,7 @@
 import { state }                    from './state.js';
 import { seededShuffle, currentSeed } from './shuffle.js';
 import { trackView }                from './api.js';
-import { fmtTime, HIDE_TAGS }       from './utils.js';
+import { fmtTime, HIDE_TAGS, encodePath } from './utils.js';
 import { applyTagSet }              from './ui-filters.js';
 import { vcInitVid, vcAbTimeUpdate, closeVcPanel, toggleVcPanel }
   from './video-controls.js';
@@ -104,15 +104,15 @@ function _mpLoad() {
   const vid = document.createElement('video');
   vid.playsInline = true; vid.autoplay = true; vid.preload = 'auto'; vid.loop = true;
   vid.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;transform-origin:center center;';
-  if (item.file)  vid.src = `/${item.file}`;
-  if (item.thumb) vid.poster = `/${item.thumb}`;
+  if (item.file)  vid.src    = '/' + encodePath(item.file);
+  if (item.thumb) vid.poster = '/' + encodePath(item.thumb);
 
   zoomWrapper.appendChild(vid);
   wrap.innerHTML = ''; wrap.appendChild(zoomWrapper);
   _MP.vid = vid; _MP.zoomWrapper = zoomWrapper;
 
-  /* video-controls：保留 filter/tx 設定，重設 AB loop */
-  vcInitVid(vid);
+  /* video-controls：載入此影片的濾鏡預設，重設 AB loop */
+  vcInitVid(vid, item.id);
 
   document.getElementById('mp-title').textContent   = item.name || item.id;
   document.getElementById('mp-domain').textContent  = item.domain || '';

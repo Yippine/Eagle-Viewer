@@ -256,3 +256,7 @@ data/
 # ── 暫存檔 ──────────────────────────────────────────────────
 .tmp_xmind*/
 # --- END AI-CORE MANAGED ---
+
+# ── Eagle Tags Sync Diff ──────────────────────────────────────
+.ai-core/notes/eagle/references/eagle-tags-sync-diff.md
+.ai-core/notes/eagle/references/eagle-items-tags-sync-diff.md

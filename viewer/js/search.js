@@ -77,6 +77,14 @@ export function computeFiltered() {
     }
 
     if (state.curTags.size && ![...state.curTags].every(t => (i.tags || []).includes(t))) return false;
+
+    if (state.curPreset) {
+      try {
+        const vd = JSON.parse(localStorage.getItem(`eagle-video-${i.id}`) || '{}');
+        if (!(vd.presetIds || []).includes(state.curPreset)) return false;
+      } catch { return false; }
+    }
+
     return matchItem(i, terms);
   });
 }

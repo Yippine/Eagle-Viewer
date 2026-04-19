@@ -8,13 +8,15 @@
 ═══════════════════════════════════════════════════════════════════════════*/
 
 import { state }                    from './state.js';
-import { h, HIDE_TAGS, isMobile }   from './utils.js';
+import { h, HIDE_TAGS, isMobile, encodePath } from './utils.js';
 import { newSeed, updateSeedNav, setSeedIdx } from './shuffle.js';
 import * as Shuffle from './shuffle.js';
 import { applyFilter }              from './grid.js';
 import { buildDomainChips, buildTagChips, setDomain, toggleFbar,
          toggleTagPanel, closeTagPanel, toggleTag, filterByTag, filterByItemTags,
-         applyTagSet, clearAllTags }  from './ui-filters.js';
+         applyTagSet, clearAllTags,
+         buildPresetChips, togglePresetPanel, closePresetPanel,
+         setPresetFilter, clearPresetFilter }  from './ui-filters.js';
 import { trackView }                from './api.js';
 import { renderStatsRow, showLoadError } from './renderer.js';
 import { openModal, closeModal }    from './modal.js';
@@ -29,8 +31,11 @@ import { openItemInDesktopPlayer, closeDesktopPlayer,
          isDesktopPlayerOpen, getDPVid, getDPResetUITimer } from './player-desktop.js';
 import { vcSetFilter, vcSetTx, vcFlip, vcRotateBy, vcSetRotate,
          vcSetAbPoint, vcToggleAbLoop, vcClearAb, vcResetAll,
-         vcGetVid, toggleVcPanel, closeVcPanel,
-         vcInitDragHandle } from './video-controls.js';
+         vcGetVid, toggleVcPanel, closeVcPanel, vcInitDragHandle,
+         vcApplyPreset, vcToggleVideoPreset, vcSaveCurrentAsPreset,
+         vcUpdateCurrentPreset, vcRenamePresetPrompt, vcDeletePreset, vcDismissToast,
+         vcLinkPresetToCurrentVideo,
+         vcRenderPresetPanel } from './video-controls.js';
 
 /* ── X.com / Twitter deep link ───────────────────────────────────── */
 function _buildXDeepLink(url) {
@@ -102,11 +107,24 @@ function _cbodyClick(event, itemId, url) {
 function _playVideoItem(itemId) {
   const item = state.ALL.find(x => x.id === itemId); if (!item) return;
   closeStats();
-  if (isMobile()) { openItemInMobilePlayer(itemId); }
-  else {
-    if (item.file) openItemInDesktopPlayer(itemId);
-    else if (item.url) { trackView(item); _openUrl(item.url); }
-  }
+  // defer until history.back() popstate fires, avoiding race condition
+  setTimeout(() => {
+    if (isMobile()) { openItemInMobilePlayer(itemId); }
+    else {
+      if (item.file) openItemInDesktopPlayer(itemId);
+      else if (item.url) { trackView(item); _openUrl(item.url); }
+    }
+  }, 50);
+}
+
+/** 從統計面板開啟圖片（Modal Lightbox） */
+function _openImageItem(itemId) {
+  const item = state.ALL.find(x => x.id === itemId); if (!item?.file) return;
+  closeStats();
+  setTimeout(() => {
+    trackView(item);
+    openModal('/' + encodePath(item.file), 'image');
+  }, 50);
 }
 
 /** shuffle 按鈕（需協調 shuffle + grid） */
@@ -251,6 +269,9 @@ async function _loadLibraryData(libName) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     state.ALL = data.items || [];
+    // Deduplicate by ID (guard against urls_data.json having duplicate Eagle IDs)
+    const _seenIds = new Set();
+    state.ALL = state.ALL.filter(i => _seenIds.has(i.id) ? false : (_seenIds.add(i.id), true));
     renderStatsRow(data.stats);
   } catch (_) { showLoadError(); return; }
 
@@ -452,13 +473,27 @@ window._showSetupForm   = _showSetupForm;
 window._addLibrary      = _addLibrary;
 
 // UI Filters
-window.setDomain        = setDomain;
-window.toggleFbar       = toggleFbar;
-window.toggleTagPanel   = toggleTagPanel;
-window.toggleTag        = toggleTag;
-window._filterByTag     = filterByTag;
-window._filterByItemTags = filterByItemTags;
-window.clearAllTags     = clearAllTags;
+window.setDomain          = setDomain;
+window.toggleFbar         = toggleFbar;
+window.toggleTagPanel     = toggleTagPanel;
+window.toggleTag          = toggleTag;
+window._filterByTag       = filterByTag;
+window._filterByItemTags  = filterByItemTags;
+window.clearAllTags       = clearAllTags;
+window.togglePresetPanel  = togglePresetPanel;
+window.setPresetFilter    = setPresetFilter;
+window.clearPresetFilter  = clearPresetFilter;
+window.buildPresetChips   = buildPresetChips;
+
+// Video Preset
+window.vcApplyPreset          = vcApplyPreset;
+window.vcToggleVideoPreset    = vcToggleVideoPreset;
+window.vcSaveCurrentAsPreset  = vcSaveCurrentAsPreset;
+window.vcUpdateCurrentPreset  = vcUpdateCurrentPreset;
+window.vcRenamePresetPrompt   = vcRenamePresetPrompt;
+window.vcDeletePreset             = vcDeletePreset;
+window.vcLinkPresetToCurrentVideo = vcLinkPresetToCurrentVideo;
+window.vcDismissToast             = vcDismissToast;
 
 // Shuffle
 window.newShuffle       = _newShuffle;
@@ -472,6 +507,7 @@ window.switchStatsTab   = switchStatsTab;
 window.clearAllHistory  = clearAllHistory;
 window._delHistItem     = delHistItem;
 window._playVideoItem   = _playVideoItem;
+window._openImageItem   = _openImageItem;
 window.trackView        = trackView;
 
 // Mobile player

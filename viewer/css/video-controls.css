@@ -170,6 +170,100 @@
   font-variant-numeric: tabular-nums; min-width: 32px; text-align: center;
 }
 
+/* ── Preset Panel（vc-panel 內）────────────────────────────────────── */
+.vc-preset-group {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  color: rgba(255,255,255,.3); text-transform: uppercase;
+  padding: 6px 0 4px; margin-top: 2px;
+}
+.vc-preset-group.sep { margin-top: 10px; border-top: 1px solid rgba(255,255,255,.07); padding-top: 10px; }
+
+.vc-preset-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 0; border-radius: 8px;
+  transition: background .12s;
+}
+.vc-preset-row.active .vc-preset-name { color: #007aff; font-weight: 700; }
+
+.vc-preset-bm {
+  width: 28px; flex-shrink: 0; font-size: 15px;
+  background: none; color: rgba(255,255,255,.35);
+  transition: color .15s;
+}
+.vc-preset-bm:hover { color: rgba(255,255,255,.7); }
+.vc-preset-bm.on    { color: #ffd60a; }
+
+.vc-preset-name {
+  flex: 1; text-align: left; font-size: 14px; color: rgba(255,255,255,.85);
+  background: none; padding: 2px 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: color .15s;
+}
+.vc-preset-name:hover { color: #007aff; }
+
+.vc-preset-edit, .vc-preset-del {
+  width: 26px; flex-shrink: 0; font-size: 13px;
+  background: none; opacity: 0; transition: opacity .15s;
+}
+.vc-preset-row:hover .vc-preset-edit,
+.vc-preset-row:hover .vc-preset-del { opacity: 1; }
+
+@media (min-width: 769px) {
+  .vc-preset-del { filter: invert(1); }
+}
+
+@media (max-width: 768px) {
+  .vc-preset-edit, .vc-preset-del { opacity: 0.5; }
+}
+
+.vc-preset-empty {
+  font-size: 13px; color: rgba(255,255,255,.3);
+  padding: 8px 0 4px; text-align: center;
+}
+
+.vc-preset-actions {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 10px;
+}
+.vc-preset-save, .vc-preset-upd {
+  width: 100%; height: 34px; border-radius: 8px;
+  font-size: 13px; font-weight: 600; transition: background .15s;
+}
+.vc-preset-save {
+  background: rgba(0,122,255,.2); color: #007aff;
+}
+.vc-preset-save:hover { background: rgba(0,122,255,.35); }
+.vc-preset-upd {
+  background: rgba(255,159,10,.15); color: #ff9f0a;
+}
+.vc-preset-upd:hover { background: rgba(255,159,10,.28); }
+
+/* ── Toast ────────────────────────────────────────────────────────── */
+.vc-toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: rgba(30,30,30,.96); backdrop-filter: blur(16px);
+  border-radius: 14px; padding: 12px 16px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 14px; color: #e5e5ea;
+  box-shadow: 0 4px 24px rgba(0,0,0,.5);
+  z-index: 9999; min-width: min(300px, calc(100vw - 32px)); max-width: 90vw;
+  opacity: 0; pointer-events: none;
+  transition: opacity .22s, transform .22s;
+}
+.vc-toast.show {
+  opacity: 1; transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+.vc-toast span { flex: 1; min-width: 100px; }
+.vc-toast button {
+  padding: 5px 14px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  background: rgba(255,255,255,.15); color: #fff;
+  flex-shrink: 0; transition: background .15s;
+}
+.vc-toast button:first-of-type { background: #007aff; }
+.vc-toast button:first-of-type:hover { background: #0066d4; }
+.vc-toast button:hover { background: rgba(255,255,255,.25); }
+
 /* ── Reset ─────────────────────────────────────────────────────────── */
 .vc-reset-section { padding: 14px 18px; }
 .vc-reset-btn {

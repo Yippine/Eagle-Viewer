@@ -64,6 +64,7 @@ export function applyFilter() {
 export function appendPage() {
   const start = state.page * PAGE;
   if (start >= state.filtered.length) return;
+  state.page++;                              // 立即遞增，封鎖 IO 競態重入
   const loader = document.getElementById('loader');
   loader.classList.add('visible');
   requestAnimationFrame(() => {
@@ -75,7 +76,6 @@ export function appendPage() {
       while (tmp.firstChild) frag.appendChild(tmp.firstChild);
     });
     document.getElementById('grid').appendChild(frag);
-    state.page++;
     loader.classList.remove('visible');
     document.querySelectorAll('.vid-lazy[data-vsrc]:not([data-obs])').forEach(el => {
       el.dataset.obs = '1'; vidObs.observe(el);

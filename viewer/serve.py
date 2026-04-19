@@ -21,6 +21,7 @@ Routes:
 """
 
 import json
+import os
 import re
 import socket
 import sys
@@ -232,6 +233,17 @@ def _run_one(lib_name: str) -> bool:
             "height":     h if isinstance(h, int) and h > 0 else None,
         })
 
+    # Deduplicate by Eagle item ID (guard against library having duplicate metadata IDs)
+    seen_ids: set = set()
+    deduped = []
+    for item in items:
+        if item["id"] and item["id"] not in seen_ids:
+            seen_ids.add(item["id"])
+            deduped.append(item)
+    if len(deduped) < len(items):
+        print(f"  [警告] 移除 {len(items) - len(deduped)} 筆重複 ID 項目")
+    items = deduped
+
     total_local = sum(1 for i in items if i["domain"] == "local")
     print(f"有效項目：{len(items)} 筆（含 {total_local} 筆無 URL 本地項目）")
 
@@ -273,8 +285,176 @@ def _run_one(lib_name: str) -> bool:
         ],
     }
     json_file = output_dir / "urls_data.json"
-    json_file.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = json_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps(json_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(json_file)
     print(f"  JSON：{json_file}（網域數 {len(sorted_domains)}，影片 {total_video}，貼文 {total_post}，其他 {total_other}）")
+    _images = lib_path / "images"
+    _manifest_items = {}
+    with os.scandir(_images) as _it:
+        for _e in _it:
+            if _e.is_dir() and _e.name.endswith(".info"):
+                try:
+                    _manifest_items[_e.name] = _e.stat().st_mtime
+                except OSError:
+                    pass
+    _save_manifest(lib_name, _manifest_items, _images.stat().st_mtime)
+    return True
+
+# ---------------------------------------------------------------------------
+# Manifest helpers  (mtime-based incremental index)
+# ---------------------------------------------------------------------------
+
+def _load_manifest(lib_name: str) -> dict:
+    p = DATA_DIR / lib_name / ".index_manifest.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_manifest(lib_name: str, items_mtime: dict, dir_mtime: float = 0.0) -> None:
+    p = DATA_DIR / lib_name / ".index_manifest.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps({
+            "indexed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "dir_mtime":  dir_mtime,
+            "items":      items_mtime,
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    tmp.replace(p)
+
+
+def _run_incremental(lib_name: str) -> bool:
+    """mtime 增量索引：兩層檢查，僅重建有異動的項目。"""
+    lib_path = LIBRARY_PATHS.get(lib_name)
+    if lib_path is None:
+        return False
+
+    library_dir = lib_path / "images"
+    output_dir  = DATA_DIR / lib_name
+    json_file   = output_dir / "urls_data.json"
+
+    if not library_dir.exists():
+        return False
+
+    # 載入 manifest
+    manifest = _load_manifest(lib_name)
+    prev: dict = manifest.get("items", {})
+
+    # Level 1：images/ 目錄 mtime 快速檢查（1 stat call）
+    dir_mtime = library_dir.stat().st_mtime
+    if dir_mtime == manifest.get("dir_mtime") and len(prev) > 0:
+        print(f"  [{lib_name}] 無異動，跳過（{len(prev)} 項目）")
+        return True
+
+    # Level 2：os.scandir 取 .info dir mtime（Windows FindFirstFile 快取，免額外 syscall）
+    current: dict = {}
+    with os.scandir(library_dir) as it:
+        for entry in it:
+            if entry.is_dir() and entry.name.endswith(".info"):
+                try:
+                    current[entry.name] = entry.stat().st_mtime
+                except OSError:
+                    pass
+
+    # 3. Diff
+    current_set = set(current)
+    prev_set    = set(prev)
+    added    = current_set - prev_set
+    deleted  = prev_set - current_set
+    modified = {k for k in current_set & prev_set if current[k] != prev.get(k, 0)}
+    changed  = added | modified | deleted
+
+    if not changed:
+        _save_manifest(lib_name, current, dir_mtime)   # 補寫 dir_mtime，下次 Level 1 才能命中
+        print(f"  [{lib_name}] 無異動，跳過（{len(current)} 項目）")
+        return True
+
+    print(f"  [{lib_name}] 異動：+{len(added)} 新增 / ~{len(modified)} 修改 / -{len(deleted)} 刪除，重建中...")
+
+    # 4. 載入現有 items，過濾掉 deleted + modified
+    existing: list = []
+    if json_file.exists():
+        try:
+            existing = json.loads(json_file.read_text(encoding="utf-8")).get("items", [])
+        except Exception:
+            existing = []
+
+    remove_ids = {Path(k).stem for k in (deleted | modified)}
+    surviving  = [item for item in existing if item.get("id") not in remove_ids]
+
+    # 5. 重新解析 added + modified
+    new_items: list = []
+    for dir_name in sorted(added | modified):
+        info_dir  = library_dir / dir_name
+        meta_path = info_dir / "metadata.json"
+        if not meta_path.exists():
+            continue
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            continue
+
+        url   = meta.get("url", "").strip()
+        local = _find_local_files(info_dir, lib_name)
+        if not url and not local["file"] and not local["thumb"]:
+            continue
+
+        if url:
+            domain = _get_domain(url)
+            kind   = _classify_url(url)
+        else:
+            domain = "local"
+            kind   = "video" if local["media_type"] == "video" else "other"
+
+        w = meta.get("width")
+        h = meta.get("height")
+        new_items.append({
+            "id":         meta.get("id", ""),
+            "name":       meta.get("name", ""),
+            "url":        url,
+            "domain":     domain,
+            "kind":       kind,
+            "tags":       meta.get("tags", []),
+            "thumb":      local["thumb"],
+            "file":       local["file"],
+            "media_type": local["media_type"],
+            "width":      w if isinstance(w, int) and w > 0 else None,
+            "height":     h if isinstance(h, int) and h > 0 else None,
+        })
+
+    # 6. 合併 + 重算統計
+    all_items = surviving + new_items
+    domains   = len({item["domain"] for item in all_items})
+    total_video = sum(1 for i in all_items if i["kind"] == "video")
+    total_post  = sum(1 for i in all_items if i["kind"] == "post")
+    total_other = sum(1 for i in all_items if i["kind"] == "other")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tmp = json_file.with_suffix(".tmp")
+    tmp.write_text(json.dumps({
+        "library": lib_name,
+        "stats": {
+            "total":   len(all_items),
+            "video":   total_video,
+            "post":    total_post,
+            "other":   total_other,
+            "domains": domains,
+        },
+        "items": all_items,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(json_file)
+
+    # 7. 更新 manifest
+    _save_manifest(lib_name, current, dir_mtime)
+    print(f"  [{lib_name}] 完成（共 {len(all_items)} 項，video {total_video} post {total_post} other {total_other}）")
     return True
 
 # ---------------------------------------------------------------------------
@@ -483,6 +663,43 @@ def _index_library(lib_name: str) -> dict:
             return {"ok": False, "error": str(e)}
 
 # ---------------------------------------------------------------------------
+# User data (preset sync)
+# ---------------------------------------------------------------------------
+_USER_DATA_PATH = DATA_DIR / "user_data.json"
+_EMPTY_USER_DATA = {"version": 0, "presets": [], "videoPresets": {}}
+
+def _load_user_data() -> dict:
+    try:
+        if _USER_DATA_PATH.exists():
+            with open(_USER_DATA_PATH, encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return dict(_EMPTY_USER_DATA)
+
+def _save_user_data(obj: dict) -> None:
+    DATA_DIR.mkdir(exist_ok=True)
+    tmp = _USER_DATA_PATH.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+    tmp.replace(_USER_DATA_PATH)
+
+def _merge_user_data(server: dict, client: dict) -> dict:
+    import time
+    s_map = {p["id"]: p for p in server.get("presets", []) if "id" in p}
+    for cp in client.get("presets", []):
+        cid = cp.get("id")
+        if not cid:
+            continue
+        if cid not in s_map or cp.get("modifiedAt", 0) > s_map[cid].get("modifiedAt", 0):
+            s_map[cid] = cp
+    s_vp = dict(server.get("videoPresets", {}))
+    for vid, cvd in client.get("videoPresets", {}).items():
+        if vid not in s_vp or cvd.get("modifiedAt", 0) > s_vp[vid].get("modifiedAt", 0):
+            s_vp[vid] = cvd
+    return {"version": int(time.time() * 1000), "presets": list(s_map.values()), "videoPresets": s_vp}
+
+# ---------------------------------------------------------------------------
 # CORS headers
 # ---------------------------------------------------------------------------
 _CORS = {
@@ -645,6 +862,11 @@ class _Handler(BaseHTTPRequestHandler):
             with _lib_locks[lib_name]:
                 data = _load_views(lib_name)
             self._json(200, data)
+            return
+
+        # GET /api/user-data → 回傳濾鏡 preset 資料（含 version）
+        if url_path == "/api/user-data":
+            self._json(200, _load_user_data())
             return
 
         fs, mime = self.translate_path(url_path)
@@ -825,6 +1047,21 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True})
             return
 
+        # POST /api/user-data  body: {clientData, clientVersion}
+        if url_path == "/api/user-data":
+            cl = int(self.headers.get("Content-Length", 0))
+            if cl > 1_048_576:
+                self._err(413, "Payload too large"); return
+            try:
+                body = json.loads(self.rfile.read(cl).decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                self._err(400, "Invalid JSON"); return
+            client_data = body.get("clientData", {})
+            merged = _merge_user_data(_load_user_data(), client_data)
+            _save_user_data(merged)
+            self._json(200, {"merged": merged})
+            return
+
         self._err(404, "Not found")
 
 
@@ -850,6 +1087,17 @@ def _local_ip() -> str:
 
 def main():
     _load_config()
+
+    if LIBRARY_PATHS:
+        print("自動索引中（mtime 增量模式）...")
+        for lib_name in sorted(LIBRARY_PATHS):
+            has_data     = (DATA_DIR / lib_name / "urls_data.json").exists()
+            has_manifest = (DATA_DIR / lib_name / ".index_manifest.json").exists()
+            if has_data and has_manifest:
+                _run_incremental(lib_name)
+            else:
+                _run_one(lib_name)
+        print("索引完成。")
 
     port = 8080
     if len(sys.argv) > 1:

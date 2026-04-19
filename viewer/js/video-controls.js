@@ -16,19 +16,413 @@ const _VCS = {
   filter: { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0 },
   tx:     { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0,
             rotate: 0, flipH: false, flipV: false },
-  ab:     { a: null, b: null, active: false },
-  _vid:   null,
+  ab:          { a: null, b: null, active: false },
+  _vid:        null,
+  _itemId:     null,
+  _activePresetId: null,
 };
 
 export function vcGetVid() { return _VCS._vid; }
 
-/* ── 新影片載入時呼叫（保留 filter/tx 設定、重設 AB） ───────────── */
-export function vcInitVid(vid) {
-  _VCS._vid = vid;
-  _VCS.ab   = { a: null, b: null, active: false };
+/* ── Preset System ─────────────────────────────────────────────────── */
+const _PRESETS_KEY = 'eagle-presets';
+
+/* ── Server Sync（Union Merge + LWW by modifiedAt）─────────────────── */
+const _CACHE = { presets: [], videoPresets: {}, version: 0, loaded: false };
+let _debounceTimer = null;
+
+async function _syncLoad() {
+  try {
+    const res  = await fetch('/api/user-data');
+    const data = await res.json();
+    if (data.presets?.length || Object.keys(data.videoPresets || {}).length) {
+      _CACHE.presets      = data.presets      || [];
+      _CACHE.videoPresets = data.videoPresets || {};
+      _CACHE.version      = data.version      || 0;
+      localStorage.setItem(_PRESETS_KEY, JSON.stringify(_CACHE.presets));
+      Object.entries(_CACHE.videoPresets).forEach(([id, vd]) => localStorage.setItem(`eagle-video-${id}`, JSON.stringify(vd)));
+    } else {
+      const local = JSON.parse(localStorage.getItem(_PRESETS_KEY) || '[]');
+      if (local.length) {
+        _CACHE.presets  = local;
+        _CACHE.version  = data.version || 0;
+        _syncSave();
+      }
+    }
+  } catch (e) {
+    console.warn('[VCS] server sync unavailable, using localStorage:', e.message);
+  }
+  _CACHE.loaded = true;
+  vcRenderPresetPanel();
+  if (window.buildPresetChips) window.buildPresetChips();
+}
+
+async function _syncPoll() {
+  try {
+    const res  = await fetch('/api/user-data');
+    const data = await res.json();
+    if ((data.version || 0) > _CACHE.version) {
+      _CACHE.presets      = data.presets      || [];
+      _CACHE.videoPresets = data.videoPresets || {};
+      _CACHE.version      = data.version;
+      localStorage.setItem(_PRESETS_KEY, JSON.stringify(_CACHE.presets));
+      Object.entries(_CACHE.videoPresets).forEach(([id, vd]) => localStorage.setItem(`eagle-video-${id}`, JSON.stringify(vd)));
+      vcRenderPresetPanel();
+      if (window.buildPresetChips) window.buildPresetChips();
+    }
+  } catch (_) {}
+}
+setInterval(_syncPoll, 10000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) _syncPoll(); });
+
+function _syncSave() {
+  clearTimeout(_debounceTimer);
+  _debounceTimer = setTimeout(async () => {
+    try {
+      const res    = await fetch('/api/user-data', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ clientData: _CACHE, clientVersion: _CACHE.version }),
+      });
+      const { merged } = await res.json();
+      if (merged) {
+        _CACHE.presets      = merged.presets      || [];
+        _CACHE.videoPresets = merged.videoPresets || {};
+        _CACHE.version      = merged.version      || _CACHE.version;
+        vcRenderPresetPanel();
+      }
+    } catch (e) {
+      console.warn('[VCS] sync save failed:', e.message);
+    }
+  }, 300);
+}
+
+function _loadPresets() {
+  if (_CACHE.loaded) return _CACHE.presets;
+  try { return JSON.parse(localStorage.getItem(_PRESETS_KEY) || '[]'); }
+  catch { return []; }
+}
+function _savePresets(arr) {
+  arr.forEach(p => { if (!p.modifiedAt) p.modifiedAt = Date.now(); });
+  _CACHE.presets = arr;
+  localStorage.setItem(_PRESETS_KEY, JSON.stringify(arr));
+  _syncSave();
+}
+
+function _loadVideoData(itemId) {
+  if (_CACHE.loaded) return _CACHE.videoPresets[itemId] || { presetIds: [], lastUsed: null };
+  try { return JSON.parse(localStorage.getItem(`eagle-video-${itemId}`) || '{"presetIds":[],"lastUsed":null}'); }
+  catch { return { presetIds: [], lastUsed: null }; }
+}
+function _saveVideoData(itemId, data) {
+  data.modifiedAt = Date.now();
+  _CACHE.videoPresets[itemId] = data;
+  localStorage.setItem(`eagle-video-${itemId}`, JSON.stringify(data));
+  _syncSave();
+}
+
+function _isDefault(f, t) {
+  return f.brightness === 1 && f.contrast === 1 && f.saturate === 1 && f.hueRotate === 0 &&
+         t.scaleX === 1 && t.scaleY === 1 && t.translateX === 0 && t.translateY === 0 &&
+         t.rotate === 0 && !t.flipH && !t.flipV;
+}
+
+function _filterTxEqual(f1, t1, f2, t2) {
+  return f1.brightness === f2.brightness && f1.contrast === f2.contrast &&
+         f1.saturate   === f2.saturate   && f1.hueRotate === f2.hueRotate &&
+         t1.scaleX     === t2.scaleX     && t1.scaleY    === t2.scaleY    &&
+         t1.translateX === t2.translateX && t1.translateY === t2.translateY &&
+         t1.rotate     === t2.rotate     && t1.flipH      === t2.flipH     &&
+         t1.flipV      === t2.flipV;
+}
+
+function _findMatchingPreset(f, t) {
+  return _loadPresets().find(p => _filterTxEqual(f, t, p.filter, p.tx)) || null;
+}
+
+function _autoName(f) {
+  const parts = [];
+  if      (f.brightness > 1.3)             parts.push('偏亮');
+  else if (f.brightness < 0.7)             parts.push('偏暗');
+  if      (f.contrast > 1.4)               parts.push('高對比');
+  if      (f.saturate > 1.6)               parts.push('高飽和');
+  else if (f.saturate < 0.6)               parts.push('褪色');
+  const h = f.hueRotate;
+  if      (h >= 20  && h <= 80)            parts.push('暖色調');
+  else if (h >= 160 && h <= 260)           parts.push('冷色調');
+  return parts.length ? parts.join('・') : '原色';
+}
+
+function _uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+_syncLoad();
+
+let _toastTimer = null;
+function _showToast(html) {
+  const el = document.getElementById('vc-toast');
+  if (!el) return;
+  el.innerHTML = html;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 8000);
+}
+
+export function vcDismissToast() {
+  const el = document.getElementById('vc-toast');
+  if (el) el.classList.remove('show');
+  clearTimeout(_toastTimer);
+}
+
+function _showCarryOverToast(prevPresetId) {
+  if (prevPresetId) {
+    const name = (_loadPresets().find(p => p.id === prevPresetId)?.name) || '上一部的濾鏡';
+    _showToast(
+      `<span>套用了「${name}」，要連結到此影片嗎？</span>` +
+      `<button onclick="vcLinkPresetToCurrentVideo('${prevPresetId}')">儲存</button>` +
+      `<button onclick="vcDismissToast()">略過</button>`
+    );
+  } else {
+    _showToast(
+      `<span>套用了上一部影片的濾鏡，要存到此影片嗎？</span>` +
+      `<button onclick="vcSaveCurrentAsPreset()">儲存</button>` +
+      `<button onclick="vcDismissToast()">略過</button>`
+    );
+  }
+}
+
+function _showDuplicateToast(match) {
+  _showToast(
+    `<span>此濾鏡與「${match.name}」相同，要連結到此影片嗎？</span>` +
+    `<button onclick="vcLinkPresetToCurrentVideo('${match.id}')">連結</button>` +
+    `<button onclick="vcSaveCurrentAsPreset(true)">另存新</button>` +
+    `<button onclick="vcDismissToast()">取消</button>`
+  );
+}
+
+export function vcLinkPresetToCurrentVideo(presetId) {
+  vcDismissToast();
+  if (!_VCS._itemId) return;
+  const vdata = _loadVideoData(_VCS._itemId);
+  if (!vdata.presetIds) vdata.presetIds = [];
+  if (!vdata.presetIds.includes(presetId)) vdata.presetIds.push(presetId);
+  vdata.lastUsed       = presetId;
+  _VCS._activePresetId = presetId;
+  _saveVideoData(_VCS._itemId, vdata);
+  vcRenderPresetPanel();
+  if (window.buildPresetChips) window.buildPresetChips();
+}
+
+/* ── 新影片載入時呼叫 ────────────────────────────────────────────── */
+export function vcInitVid(vid, itemId) {
+  const prevItemId        = _VCS._itemId;
+  const prevActivePresetId = _VCS._activePresetId;
+  const hadNonDefault     = !_isDefault(_VCS.filter, _VCS.tx);
+
+  _VCS._vid            = vid;
+  _VCS._itemId         = itemId || null;
+  _VCS.ab              = { a: null, b: null, active: false };
+  _VCS._activePresetId = null;
+
+  if (itemId) {
+    const vdata   = _loadVideoData(itemId);
+    const presets = _loadPresets();
+
+    if (vdata.lastUsed) {
+      const preset = presets.find(p => p.id === vdata.lastUsed);
+      if (preset) {
+        _VCS.filter          = { ...preset.filter };
+        _VCS.tx              = { ...preset.tx };
+        _VCS._activePresetId = preset.id;
+      } else {
+        const surviving = (vdata.presetIds || []).filter(pid => presets.find(p => p.id === pid));
+        vdata.presetIds = surviving;
+        vdata.lastUsed  = surviving[0] || null;
+        _saveVideoData(itemId, vdata);
+        if (!vdata.lastUsed && hadNonDefault && prevItemId && prevItemId !== itemId) {
+          _showCarryOverToast(prevActivePresetId || null);
+        }
+      }
+    } else if (hadNonDefault && prevItemId && prevItemId !== itemId) {
+      // 前一部影片有濾鏡（named preset 或自由調整）時均提示
+      _showCarryOverToast(prevActivePresetId || null);
+    }
+  }
+
   vcApplyFilter(vid);
   vcApplyTransform(vid);
   vcSyncPanel();
+  vcRenderPresetPanel();
+}
+
+/* ── Preset 操作 ─────────────────────────────────────────────────── */
+export function vcApplyPreset(id) {
+  const presets = _loadPresets();
+  const preset  = presets.find(p => p.id === id);
+  if (!preset) return;
+  _VCS.filter          = { ...preset.filter };
+  _VCS.tx              = { ...preset.tx };
+  _VCS._activePresetId = id;
+  if (_VCS._itemId) {
+    const vdata = _loadVideoData(_VCS._itemId);
+    vdata.lastUsed = id;
+    _saveVideoData(_VCS._itemId, vdata);
+  }
+  vcApplyFilter(_VCS._vid);
+  vcApplyTransform(_VCS._vid);
+  vcSyncPanel();
+  vcRenderPresetPanel();
+  vcDismissToast();
+}
+
+export function vcToggleVideoPreset(presetId) {
+  if (!_VCS._itemId) return;
+  const vdata = _loadVideoData(_VCS._itemId);
+  const idx   = (vdata.presetIds || []).indexOf(presetId);
+  if (idx >= 0) {
+    vdata.presetIds.splice(idx, 1);
+    if (vdata.lastUsed === presetId) vdata.lastUsed = vdata.presetIds[0] || null;
+  } else {
+    if (!vdata.presetIds) vdata.presetIds = [];
+    vdata.presetIds.push(presetId);
+    vdata.lastUsed = presetId;
+    _VCS._activePresetId = presetId;
+  }
+  _saveVideoData(_VCS._itemId, vdata);
+  vcRenderPresetPanel();
+  if (window.buildPresetChips) window.buildPresetChips();
+}
+
+export function vcSaveCurrentAsPreset(force = false) {
+  vcDismissToast();
+  if (!force) {
+    const match = _findMatchingPreset(_VCS.filter, _VCS.tx);
+    if (match) { _showDuplicateToast(match); return; }
+  }
+  const suggestName = _autoName(_VCS.filter);
+  const name        = prompt('濾鏡名稱：', suggestName);
+  if (name === null) return;
+  const presets = _loadPresets();
+  const id      = _uid();
+  presets.push({
+    id, name: name.trim() || suggestName,
+    filter:    { ..._VCS.filter },
+    tx:        { ..._VCS.tx },
+    createdAt:  new Date().toISOString(),
+    modifiedAt: Date.now(),
+  });
+  _savePresets(presets);
+  _VCS._activePresetId = id;
+  if (_VCS._itemId) {
+    const vdata = _loadVideoData(_VCS._itemId);
+    if (!vdata.presetIds) vdata.presetIds = [];
+    if (!vdata.presetIds.includes(id)) vdata.presetIds.push(id);
+    vdata.lastUsed = id;
+    _saveVideoData(_VCS._itemId, vdata);
+  }
+  vcRenderPresetPanel();
+  if (window.buildPresetChips) window.buildPresetChips();
+}
+
+export function vcUpdateCurrentPreset() {
+  if (!_VCS._activePresetId) return;
+  const presets = _loadPresets();
+  const idx     = presets.findIndex(p => p.id === _VCS._activePresetId);
+  if (idx < 0) return;
+  presets[idx].filter      = { ..._VCS.filter };
+  presets[idx].tx          = { ..._VCS.tx };
+  presets[idx].modifiedAt  = Date.now();
+  _savePresets(presets);
+  vcRenderPresetPanel();
+  if (window.buildPresetChips) window.buildPresetChips();
+}
+
+export function vcRenamePresetPrompt(id) {
+  const presets = _loadPresets();
+  const preset  = presets.find(p => p.id === id);
+  if (!preset) return;
+  const name = prompt('重新命名：', preset.name);
+  if (name === null) return;
+  preset.name = name.trim() || preset.name;
+  _savePresets(presets);
+  vcRenderPresetPanel();
+  if (window.buildPresetChips) window.buildPresetChips();
+}
+
+export function vcDeletePreset(id) {
+  const presets = _loadPresets();
+  const preset  = presets.find(p => p.id === id);
+  if (!preset) return;
+  if (!confirm(`刪除濾鏡「${preset.name}」？`)) return;
+  preset.deleted    = true;
+  preset.modifiedAt = Date.now();
+  _savePresets(presets);
+  if (_VCS._activePresetId === id) _VCS._activePresetId = null;
+  vcRenderPresetPanel();
+  if (window.buildPresetChips) window.buildPresetChips();
+}
+
+export function vcRenderPresetPanel() {
+  const el = document.getElementById('vc-presets');
+  if (!el) return;
+
+  const presets  = _loadPresets().filter(p => !p.deleted);
+  const vdata    = _VCS._itemId ? _loadVideoData(_VCS._itemId) : { presetIds: [], lastUsed: null };
+  const vidSet   = new Set(vdata.presetIds || []);
+  const activeId = _VCS._activePresetId;
+
+  const videoPresets = presets.filter(p => vidSet.has(p.id));
+  const otherPresets = presets.filter(p => !vidSet.has(p.id));
+
+  function rowLinked(p) {
+    const isActive = p.id === activeId;
+    return `<div class="vc-preset-row${isActive ? ' active' : ''}">` +
+      `<button class="vc-preset-bm on" onclick="vcToggleVideoPreset('${p.id}')" title="從此影片移除">🔖</button>` +
+      `<button class="vc-preset-name" onclick="vcApplyPreset('${p.id}')">${p.name}</button>` +
+      `<button class="vc-preset-edit" onclick="vcRenamePresetPrompt('${p.id}')" title="重新命名">✏️</button>` +
+      `<button class="vc-preset-del" onclick="vcDeletePreset('${p.id}')" title="刪除濾鏡">🗑</button>` +
+    `</div>`;
+  }
+
+  function rowOther(p) {
+    const isActive = p.id === activeId;
+    return `<div class="vc-preset-row${isActive ? ' active' : ''}">` +
+      `<button class="vc-preset-name" onclick="vcApplyPreset('${p.id}')">${p.name}</button>` +
+      `<button class="vc-preset-edit" onclick="vcRenamePresetPrompt('${p.id}')" title="重新命名">✏️</button>` +
+      `<button class="vc-preset-del" onclick="vcDeletePreset('${p.id}')" title="刪除濾鏡">🗑</button>` +
+    `</div>`;
+  }
+
+  let html = '';
+  if (videoPresets.length) {
+    html += `<div class="vc-preset-group">此影片已存</div>`;
+    html += videoPresets.map(p => rowLinked(p)).join('');
+  }
+  if (otherPresets.length) {
+    html += `<div class="vc-preset-group${videoPresets.length ? ' sep' : ''}">濾鏡庫（其他）</div>`;
+    html += otherPresets.map(p => rowOther(p)).join('');
+  }
+  if (!presets.length) {
+    html = `<div class="vc-preset-empty">尚無濾鏡，調整後點「另存為新濾鏡」</div>`;
+  }
+
+  const nonDefault = !_isDefault(_VCS.filter, _VCS.tx);
+  const activeName = activeId ? (presets.find(p => p.id === activeId)?.name || '') : '';
+  const activeIsOther = activeId && !vidSet.has(activeId);
+  html += `<div class="vc-preset-actions">` +
+    (nonDefault
+      ? `<button class="vc-preset-save" onclick="vcSaveCurrentAsPreset()">＋ 另存為新濾鏡</button>`
+      : '') +
+    (activeId && nonDefault
+      ? `<button class="vc-preset-upd" onclick="vcUpdateCurrentPreset()">更新「${activeName}」</button>`
+      : '') +
+    (activeIsOther
+      ? `<button class="vc-preset-upd" onclick="vcToggleVideoPreset('${activeId}')">🔖 加入此影片</button>`
+      : '') +
+  `</div>`;
+
+  el.innerHTML = html;
 }
 
 /* ── Apply ──────────────────────────────────────────────────────── */
@@ -136,9 +530,12 @@ export function toggleVcPanel() {
   const panel = document.getElementById('vc-panel');
   if (!panel) return;
   const opening = !panel.classList.contains('open');
-  if (opening && window.innerWidth <= 768) {
-    // 每次開啟重置為預設高度
-    panel.style.maxHeight = Math.round(window.innerHeight * _VC_DEFAULT_H) + 'px';
+  if (opening) {
+    if (window.innerWidth <= 768) {
+      // 每次開啟重置為預設高度
+      panel.style.maxHeight = Math.round(window.innerHeight * _VC_DEFAULT_H) + 'px';
+    }
+    vcRenderPresetPanel();
   }
   panel.classList.toggle('open');
 }
@@ -321,4 +718,6 @@ export function vcSyncPanel() {
   }
   if (btnA) btnA.classList.toggle('vc-on', ab.a !== null);
   if (btnB) btnB.classList.toggle('vc-on', ab.b !== null);
+
+  vcRenderPresetPanel();
 }

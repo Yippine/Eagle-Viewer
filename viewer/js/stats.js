@@ -2,7 +2,7 @@
 /* ── stats.js  ▸  觀看統計面板（歷史紀錄 Tab + 統計分析 Tab）───────────── */
 
 import { state }                        from './state.js';
-import { h, KIND_ICON, fmtDuration }    from './utils.js';
+import { h, KIND_ICON, fmtDuration, encodePath } from './utils.js';
 import { deleteHistoryEntry, clearAllViews } from './api.js';
 import { mpCommitDuration }             from './player-mobile.js';
 import { dpCommitDuration }             from './player-desktop.js';
@@ -24,7 +24,7 @@ export async function openStats() {
   try {
     const ctrl = new AbortController();
     const tid  = setTimeout(() => ctrl.abort(), 4000);
-    const res  = await fetch('/api/views', { signal: ctrl.signal });
+    const res  = await fetch(`/api/views?lib=${encodeURIComponent(state.activeLib)}`, { signal: ctrl.signal });
     clearTimeout(tid);
     if (res.ok) state.VIEWS = await res.json();
   } catch (_) {}
@@ -100,15 +100,20 @@ function _renderHistoryTab(viewList) {
       const isVideo = e.item?.file && e.item?.media_type === 'video';
       const total   = e.views || 0;
       const durStr  = fmtDuration(e.dur);
+      const thumbSrc = e.item?.thumb ? `/${encodePath(e.item.thumb)}`
+                     : (e.item?.file && e.item?.media_type === 'image') ? `/${encodePath(e.item.file)}`
+                     : null;
       let thumb;
-      if (e.item?.thumb) {
-        thumb = `<div class="sp-hist-thumb"><img src="/${h(e.item.thumb)}" alt="" loading="lazy">
+      if (thumbSrc) {
+        thumb = `<div class="sp-hist-thumb"><img src="${thumbSrc}" alt="" loading="lazy">
           ${isVideo ? `<div class="play-badge"><svg width="16" height="16" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21"/></svg></div>` : ''}
         </div>`;
       } else { thumb = `<div class="sp-hist-thumb-ph">${KIND_ICON[e.item?.kind || 'other']}</div>`; }
 
+      const isImage = e.item?.file && e.item?.media_type === 'image';
       let clickAttr = '';
-      if (isVideo) clickAttr = `onclick="_playVideoItem('${h(e.id)}')"`;
+      if (isVideo)        clickAttr = `onclick="_playVideoItem('${h(e.id)}')"`;
+      else if (isImage)   clickAttr = `onclick="_openImageItem('${h(e.id)}')"`;
       else if (e.item?.url) clickAttr = `onclick="trackView(_lookupItem('${h(e.id)}'));_openUrl('${h(e.item.url)}')"`;
 
       html += `<div class="sp-hist-item" ${clickAttr} style="${clickAttr ? '' : 'cursor:default'}"
@@ -209,17 +214,22 @@ function _renderStatsTab(viewList) {
 }
 
 function _spItem(v, rank) {
-  const thumb  = v.item?.thumb
-    ? `<img class="sp-thumb" src="/${h(v.item.thumb)}" alt="" loading="lazy">`
+  const _tSrc  = v.item?.thumb ? `/${encodePath(v.item.thumb)}`
+               : (v.item?.file && v.item?.media_type === 'image') ? `/${encodePath(v.item.file)}`
+               : null;
+  const thumb  = _tSrc
+    ? `<img class="sp-thumb" src="${_tSrc}" alt="" loading="lazy">`
     : `<div class="sp-thumb-ph">${KIND_ICON[v.item?.kind || 'other']}</div>`;
   const del    = v.deleted ? `<span class="badge-del">已刪除</span>` : '';
   const isVideo = v.item?.file && v.item?.media_type === 'video';
+  const isImage = v.item?.file && v.item?.media_type === 'image';
   const durStr  = v.total_watch_time > 0
     ? `<div style="font-size:11px;color:var(--text3)">⏱ ${fmtDuration(v.total_watch_time)}</div>` : '';
   let ca;
-  if (isVideo)       ca = `onclick="_playVideoItem('${h(v.id)}')" style="cursor:pointer"`;
+  if (isVideo)          ca = `onclick="_playVideoItem('${h(v.id)}')" style="cursor:pointer"`;
+  else if (isImage)     ca = `onclick="_openImageItem('${h(v.id)}')" style="cursor:pointer"`;
   else if (v.item?.url) ca = `onclick="_openUrl('${h(v.item.url)}');trackView(_lookupItem('${h(v.id)}'))" style="cursor:pointer"`;
-  else               ca = 'style="cursor:default"';
+  else                  ca = 'style="cursor:default"';
   return `<div class="sp-item" ${ca}>
     <div class="sp-rank">${rank}</div>${thumb}
     <div class="sp-info">

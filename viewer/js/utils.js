@@ -34,3 +34,8 @@ export function fmtDuration(s) {
 export function isMobile() {
   return window.matchMedia('(max-width: 768px)').matches;
 }
+
+/** 將檔案路徑轉為安全的 URL（處理 # 等特殊字元） */
+export function encodePath(p) {
+  return p.split('/').map(seg => encodeURIComponent(seg)).join('/');
+}

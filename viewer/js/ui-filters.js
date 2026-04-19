@@ -125,3 +125,43 @@ export function filterByItemTags(btn) {
   const tags = (item.tags || []).filter(t => !HIDE_TAGS.has(t));
   applyTagSet(tags);
 }
+
+/* ── Preset Filter Panel ─────────────────────────────────────────── */
+export function buildPresetChips() {
+  const el = document.getElementById('pchips');
+  if (!el) return;
+  let presets = [];
+  try { presets = JSON.parse(localStorage.getItem('eagle-presets') || '[]'); } catch {}
+  presets = presets.filter(p => !p.deleted);
+  const clearBtn = `<button class="fpreset-clear" onclick="clearPresetFilter()" title="清除濾鏡篩選">✕</button>`;
+  el.innerHTML = clearBtn + presets.map(p =>
+    `<button class="fpreset${state.curPreset === p.id ? ' on' : ''}" data-pid="${h(p.id)}" ` +
+    `onclick="setPresetFilter('${h(p.id)}')">${h(p.name)}</button>`
+  ).join('');
+}
+
+export function togglePresetPanel() {
+  state.presetOpen = !state.presetOpen;
+  document.getElementById('preset-panel').classList.toggle('open', state.presetOpen);
+  document.getElementById('preset-tog-inline')?.classList.toggle('open', state.presetOpen);
+  if (state.presetOpen) buildPresetChips();
+}
+
+export function closePresetPanel() {
+  if (!state.presetOpen) return;
+  state.presetOpen = false;
+  document.getElementById('preset-panel').classList.remove('open');
+  document.getElementById('preset-tog-inline')?.classList.remove('open');
+}
+
+export function setPresetFilter(id) {
+  state.curPreset = state.curPreset === id ? null : id;
+  buildPresetChips();
+  applyFilter();
+}
+
+export function clearPresetFilter() {
+  state.curPreset = null;
+  buildPresetChips();
+  applyFilter();
+}
