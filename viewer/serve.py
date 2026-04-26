@@ -1099,7 +1099,7 @@ def main():
                 _run_one(lib_name)
         print("索引完成。")
 
-    port = 8080
+    port = 8765
     if len(sys.argv) > 1:
         try:
             port = int(sys.argv[1])

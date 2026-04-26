@@ -213,6 +213,9 @@ __marimo__/
 data/
 !data/config.example.json
 
+# Logs
+logs/
+
 # --- BEGIN AI-CORE MANAGED (gitignore-sync) ---
 # ============================================================
 # AI Core .gitignore 模板
