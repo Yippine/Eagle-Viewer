@@ -63,6 +63,9 @@
   width: 100%; height: 100%;
   position: absolute; inset: 0;
 }
+.snap-thumb {
+  transform-origin: center center;
+}
 
 .play-ov {
   position: absolute; inset: 0; pointer-events: none; z-index: 2;

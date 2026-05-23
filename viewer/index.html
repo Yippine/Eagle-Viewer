@@ -8,7 +8,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="EagleLib">
+<meta name="apple-mobile-web-app-title" content="Eagle Viewer">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
@@ -16,11 +16,14 @@
 </head>
 <body>
 
+<!-- ═══════════════════════════════════ STICKY TOP ZONE（header + filters）══ -->
+<div id="sticky-top">
+
 <!-- ═══════════════════════════════════════════════════════ HEADER ═══ -->
 <header id="hdr">
   <div class="hdr-inner">
 
-    <div class="logo">🦅&nbsp;Eagle<em>Lib</em></div>
+    <div class="logo">🦅&nbsp;Eagle<em>Viewer</em></div>
 
     <select id="lib-select" onchange="switchLibrary(this.value)" title="切換資源庫"></select>
     <button class="icon-btn" id="btn-add-lib" title="新增資源庫" onclick="_addLibrary()">＋</button>
@@ -48,6 +51,19 @@
       <button class="icon-btn" id="btn-shuffle" title="重新隨機排列" onclick="newShuffle()">🔀</button>
       <span id="seed-idx-lbl" class="seed-lbl"></span>
       <button class="icon-btn seed-nav" id="btn-seed-next" title="下一個排列" onclick="nextSeed()" disabled>›</button>
+      <div class="sort-wrap" id="sort-wrap">
+        <button class="icon-btn" id="btn-sort" title="排列方式" onclick="toggleSortMenu()">
+          <span id="sort-icon">⇅</span>
+        </button>
+        <div id="sort-menu" class="sort-menu" role="menu">
+          <button class="sort-opt" data-sort="shuffle"   onclick="setSort('shuffle')">🔀&thinsp;隨機</button>
+          <button class="sort-opt" data-sort="date-desc" onclick="setSort('date-desc')">🕐&thinsp;最新加入</button>
+          <button class="sort-opt" data-sort="date-asc"  onclick="setSort('date-asc')">🕙&thinsp;最早加入</button>
+          <button class="sort-opt" data-sort="name-asc"  onclick="setSort('name-asc')">Az&thinsp;名稱 A→Z</button>
+          <button class="sort-opt" data-sort="name-desc" onclick="setSort('name-desc')">Az&thinsp;名稱 Z→A</button>
+          <button class="sort-opt" data-sort="tags-asc"  onclick="setSort('tags-asc')">🏷&thinsp;標籤 A→Z</button>
+        </div>
+      </div>
       <button class="icon-btn" id="btn-stats" title="觀看統計" onclick="openStats()">📊</button>
     </div>
 
@@ -93,6 +109,9 @@
 <section id="preset-panel">
   <div class="tp-inner" id="pchips"></div>
 </section>
+
+<!-- ／sticky-top -->
+</div>
 
 <!-- ═══════════════════════════════════════════════════════════ MAIN ═════ -->
 <main id="wrap">
@@ -296,120 +315,182 @@
     <span class="vc-title">影片控制</span>
     <button class="vc-close-btn" onclick="closeVcPanel()">✕</button>
   </div>
+
+  <!-- Tab 導覽 -->
+  <div class="vc-tabs">
+    <button class="vc-tab-btn active" data-tab="playback"  onclick="vcSwitchTab('playback')">播放</button>
+    <button class="vc-tab-btn"        data-tab="filters"   onclick="vcSwitchTab('filters')">濾鏡</button>
+    <button class="vc-tab-btn"        data-tab="transform" onclick="vcSwitchTab('transform')">幾何</button>
+  </div>
+
   <div class="vc-content">
 
-    <!-- AB 循環播放 -->
-    <div class="vc-section">
-      <div class="vc-section-label">⟲ AB 循環播放</div>
-      <div class="vc-ab-points">
-        <div class="vc-ab-point">
-          <button class="vc-point-btn" id="vc-btn-a" onclick="_vcSetA()">A</button>
-          <span class="vc-a-time" id="vc-a-time">–</span>
-        </div>
-        <span class="vc-ab-sep">→</span>
-        <div class="vc-ab-point">
-          <button class="vc-point-btn" id="vc-btn-b" onclick="_vcSetB()">B</button>
-          <span class="vc-b-time" id="vc-b-time">–</span>
+    <!-- ════════════ TAB：播放 ════════════ -->
+    <div class="vc-tab-pane active" id="vc-pane-playback">
+
+      <!-- 播放模式 -->
+      <div class="vc-section">
+        <div class="vc-section-label">↻ 播放模式</div>
+        <div class="vc-seg-ctrl">
+          <button class="vc-seg-btn active" id="vc-loop-single"   onclick="vcSetLoopMode('single')">單部循環</button>
+          <button class="vc-seg-btn"        id="vc-loop-autoplay" onclick="vcSetLoopMode('autoplay')">自動下一部</button>
         </div>
       </div>
-      <div class="vc-ab-row">
-        <button class="vc-toggle-btn" id="vc-ab-toggle" onclick="_vcToggleAb()">AB 關閉</button>
-        <button class="vc-text-btn" onclick="_vcClearAb()">清除</button>
-      </div>
-    </div>
 
-    <!-- 濾鏡 -->
-    <div class="vc-section">
-      <div class="vc-section-label">◐ 濾鏡</div>
-      <div class="vc-slider-row">
-        <span class="vc-label">亮度</span>
-        <input type="range" id="vc-brightness" min="0" max="3" step="0.05" value="1"
-               oninput="_vcFilter('brightness',+this.value)">
-        <span class="vc-val" id="vc-brightness-v">1.00</span>
+      <!-- 播放速度 -->
+      <div class="vc-section">
+        <div class="vc-section-label">⚡ 播放速度</div>
+        <div class="vc-slider-row">
+          <span class="vc-label">速度</span>
+          <input type="range" id="vc-speed" min="0" max="200" step="1" value="100"
+                 oninput="vcSetSpeed(Math.pow(10,+this.value/100-1))">
+          <span class="vc-val" id="vc-speed-v">1×</span>
+        </div>
+        <button class="vc-text-btn" onclick="vcSetSpeed(1)" style="width:100%;margin-top:6px">恢復 1×</button>
       </div>
-      <div class="vc-slider-row">
-        <span class="vc-label">對比</span>
-        <input type="range" id="vc-contrast" min="0" max="3" step="0.05" value="1"
-               oninput="_vcFilter('contrast',+this.value)">
-        <span class="vc-val" id="vc-contrast-v">1.00</span>
-      </div>
-      <div class="vc-slider-row">
-        <span class="vc-label">飽和</span>
-        <input type="range" id="vc-saturate" min="0" max="3" step="0.05" value="1"
-               oninput="_vcFilter('saturate',+this.value)">
-        <span class="vc-val" id="vc-saturate-v">1.00</span>
-      </div>
-      <div class="vc-slider-row">
-        <span class="vc-label">色調</span>
-        <input type="range" id="vc-hue" min="0" max="360" step="1" value="0"
-               oninput="_vcFilter('hueRotate',+this.value)">
-        <span class="vc-val" id="vc-hue-v">0°</span>
-      </div>
-    </div>
 
-    <!-- 濾鏡預設 -->
-    <div class="vc-section">
-      <div class="vc-section-label">🔖 濾鏡預設</div>
-      <div id="vc-presets"></div>
-    </div>
+      <!-- AB 循環播放 -->
+      <div class="vc-section">
+        <div class="vc-section-label">⟲ AB 循環</div>
+        <div class="vc-ab-points">
+          <div class="vc-ab-point">
+            <button class="vc-point-btn" id="vc-btn-a" onclick="_vcSetA()">A</button>
+            <span class="vc-a-time" id="vc-a-time">–</span>
+          </div>
+          <span class="vc-ab-sep">→</span>
+          <div class="vc-ab-point">
+            <button class="vc-point-btn" id="vc-btn-b" onclick="_vcSetB()">B</button>
+            <span class="vc-b-time" id="vc-b-time">–</span>
+          </div>
+        </div>
+        <div class="vc-ab-row">
+          <button class="vc-toggle-btn" id="vc-ab-toggle" onclick="_vcToggleAb()">AB 關閉</button>
+          <button class="vc-text-btn" onclick="_vcClearAb()">清除</button>
+        </div>
+      </div>
 
-    <!-- 單軸縮放 -->
-    <div class="vc-section">
-      <div class="vc-section-label">⤢ 單軸縮放</div>
-      <div class="vc-slider-row">
-        <span class="vc-label">水平</span>
-        <input type="range" id="vc-scalex" min="0.1" max="3" step="0.05" value="1"
-               oninput="_vcTx('scaleX',+this.value)">
-        <span class="vc-val" id="vc-scalex-v">1.00×</span>
-      </div>
-      <div class="vc-slider-row">
-        <span class="vc-label">垂直</span>
-        <input type="range" id="vc-scaley" min="0.1" max="3" step="0.05" value="1"
-               oninput="_vcTx('scaleY',+this.value)">
-        <span class="vc-val" id="vc-scaley-v">1.00×</span>
-      </div>
-    </div>
+    </div><!-- /vc-pane-playback -->
 
-    <!-- 位移 -->
-    <div class="vc-section">
-      <div class="vc-section-label">↔ 位移</div>
-      <div class="vc-slider-row">
-        <span class="vc-label">X</span>
-        <input type="range" id="vc-tx" min="-500" max="500" step="1" value="0"
-               oninput="_vcTx('translateX',+this.value)">
-        <span class="vc-val" id="vc-tx-v">0px</span>
-      </div>
-      <div class="vc-slider-row">
-        <span class="vc-label">Y</span>
-        <input type="range" id="vc-ty" min="-500" max="500" step="1" value="0"
-               oninput="_vcTx('translateY',+this.value)">
-        <span class="vc-val" id="vc-ty-v">0px</span>
-      </div>
-    </div>
+    <!-- ════════════ TAB：濾鏡 ════════════ -->
+    <div class="vc-tab-pane" id="vc-pane-filters">
 
-    <!-- 翻轉 / 旋轉 -->
-    <div class="vc-section">
-      <div class="vc-section-label">↺ 翻轉 / 旋轉</div>
-      <div class="vc-btn-group">
-        <button class="vc-geo-btn" id="vc-flip-h" onclick="_vcFlip('H')">⇔ 水平翻轉</button>
-        <button class="vc-geo-btn" id="vc-flip-v" onclick="_vcFlip('V')">⇕ 垂直翻轉</button>
+      <!-- 色彩調整 -->
+      <div class="vc-section">
+        <div class="vc-section-header">
+          <span class="vc-section-label">◐ 色彩調整</span>
+          <button class="vc-icon-btn" onclick="vcResetFilters()" title="重置色彩">↺</button>
+        </div>
+        <div class="vc-slider-row">
+          <span class="vc-label">亮度</span>
+          <input type="range" id="vc-brightness" min="0" max="3" step="0.05" value="1"
+                 oninput="_vcFilter('brightness',+this.value)">
+          <span class="vc-val" id="vc-brightness-v">1.00</span>
+        </div>
+        <div class="vc-slider-row">
+          <span class="vc-label">對比</span>
+          <input type="range" id="vc-contrast" min="0" max="3" step="0.05" value="1"
+                 oninput="_vcFilter('contrast',+this.value)">
+          <span class="vc-val" id="vc-contrast-v">1.00</span>
+        </div>
+        <div class="vc-slider-row">
+          <span class="vc-label">飽和</span>
+          <input type="range" id="vc-saturate" min="0" max="3" step="0.05" value="1"
+                 oninput="_vcFilter('saturate',+this.value)">
+          <span class="vc-val" id="vc-saturate-v">1.00</span>
+        </div>
+        <div class="vc-slider-row">
+          <span class="vc-label">色調</span>
+          <input type="range" id="vc-hue" min="0" max="360" step="1" value="0"
+                 oninput="_vcFilter('hueRotate',+this.value)">
+          <span class="vc-val" id="vc-hue-v">0°</span>
+        </div>
+        <button class="vc-filter-save-btn" onclick="vcSaveFilterPreset()">＋ 儲存為濾鏡</button>
       </div>
-      <div class="vc-btn-group">
-        <button class="vc-geo-btn" onclick="_vcRotateBy(-90)">↺ -90°</button>
-        <button class="vc-geo-btn" onclick="_vcRotateBy(90)">↻ +90°</button>
-        <button class="vc-geo-btn" onclick="_vcRotateBy(180)">↻ 180°</button>
-        <button class="vc-geo-btn" onclick="_vcSetRotate(0)">⊙ 歸零</button>
-      </div>
-      <div class="vc-rotate-row">
-        <span style="font-size:11px;color:rgba(255,255,255,.3)">旋轉角度：</span>
-        <span class="vc-rotate-val" id="vc-rotate-v">0°</span>
-      </div>
-    </div>
 
-    <!-- 重置 -->
-    <div class="vc-reset-section">
-      <button class="vc-reset-btn" onclick="_vcResetAll()">↺ 重置全部</button>
-    </div>
+      <!-- 濾鏡庫 -->
+      <div class="vc-section">
+        <div class="vc-section-label">🔖 濾鏡庫</div>
+        <div id="vc-filter-presets"></div>
+      </div>
+
+    </div><!-- /vc-pane-filters -->
+
+    <!-- ════════════ TAB：幾何 ════════════ -->
+    <div class="vc-tab-pane" id="vc-pane-transform">
+
+      <!-- 縮放 -->
+      <div class="vc-section">
+        <div class="vc-section-header">
+          <span class="vc-section-label">⤢ 縮放</span>
+          <button class="vc-icon-btn" onclick="vcResetTransform()" title="重置幾何">↺</button>
+        </div>
+        <div class="vc-slider-row">
+          <span class="vc-label">水平</span>
+          <input type="range" id="vc-scalex" min="0.1" max="3" step="0.05" value="1"
+                 oninput="_vcTx('scaleX',+this.value)">
+          <span class="vc-val" id="vc-scalex-v">1.00×</span>
+        </div>
+        <div class="vc-slider-row">
+          <span class="vc-label">垂直</span>
+          <input type="range" id="vc-scaley" min="0.1" max="3" step="0.05" value="1"
+                 oninput="_vcTx('scaleY',+this.value)">
+          <span class="vc-val" id="vc-scaley-v">1.00×</span>
+        </div>
+      </div>
+
+      <!-- 位移 -->
+      <div class="vc-section">
+        <div class="vc-section-label">↔ 位移</div>
+        <div class="vc-slider-row">
+          <span class="vc-label">X</span>
+          <input type="range" id="vc-tx" min="-500" max="500" step="1" value="0"
+                 oninput="_vcTx('translateX',+this.value)">
+          <span class="vc-val" id="vc-tx-v">0px</span>
+        </div>
+        <div class="vc-slider-row">
+          <span class="vc-label">Y</span>
+          <input type="range" id="vc-ty" min="-500" max="500" step="1" value="0"
+                 oninput="_vcTx('translateY',+this.value)">
+          <span class="vc-val" id="vc-ty-v">0px</span>
+        </div>
+      </div>
+
+      <!-- 翻轉 / 旋轉 -->
+      <div class="vc-section">
+        <div class="vc-section-label">↺ 翻轉 / 旋轉</div>
+        <div class="vc-btn-group">
+          <button class="vc-geo-btn" id="vc-flip-h" onclick="_vcFlip('H')">⇔ 水平翻轉</button>
+          <button class="vc-geo-btn" id="vc-flip-v" onclick="_vcFlip('V')">⇕ 垂直翻轉</button>
+        </div>
+        <div class="vc-btn-group">
+          <button class="vc-geo-btn" onclick="_vcRotateBy(-90)">↺ -90°</button>
+          <button class="vc-geo-btn" onclick="_vcRotateBy(90)">↻ +90°</button>
+          <button class="vc-geo-btn" onclick="_vcRotateBy(180)">↻ 180°</button>
+          <button class="vc-geo-btn" onclick="_vcSetRotate(0)">⊙ 歸零</button>
+        </div>
+        <div class="vc-rotate-row">
+          <span style="font-size:11px;color:rgba(255,255,255,.3)">旋轉角度：</span>
+          <span class="vc-rotate-val" id="vc-rotate-v">0°</span>
+        </div>
+      </div>
+
+      <!-- 手動裁切 -->
+      <div class="vc-section">
+        <div class="vc-section-label">✂ 手動裁切</div>
+        <button class="vc-text-btn" id="vc-crop-toggle" onclick="vcToggleCropMode()" style="width:100%">✂ 開始手動裁切</button>
+      </div>
+
+      <!-- 智慧裁切 + 快照 -->
+      <div class="vc-section">
+        <div class="vc-section-label">✦ 智慧裁切</div>
+        <button class="vc-smart-crop-btn" onclick="vcSmartCrop()">✦ 偵測並裁切黑邊</button>
+        <div id="vc-transform-actions"></div>
+      </div>
+
+    </div><!-- /vc-pane-transform -->
+
+  </div>
+</div>
 
   </div>
 </div>

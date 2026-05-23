@@ -31,11 +31,13 @@ import { openItemInDesktopPlayer, closeDesktopPlayer,
          isDesktopPlayerOpen, getDPVid, getDPResetUITimer } from './player-desktop.js';
 import { vcSetFilter, vcSetTx, vcFlip, vcRotateBy, vcSetRotate,
          vcSetAbPoint, vcToggleAbLoop, vcClearAb, vcResetAll,
-         vcGetVid, toggleVcPanel, closeVcPanel, vcInitDragHandle,
-         vcApplyPreset, vcToggleVideoPreset, vcSaveCurrentAsPreset,
-         vcUpdateCurrentPreset, vcRenamePresetPrompt, vcDeletePreset, vcDismissToast,
-         vcLinkPresetToCurrentVideo,
-         vcRenderPresetPanel } from './video-controls.js';
+         vcResetFilters, vcResetTransform,
+         vcGetVid, toggleVcPanel, closeVcPanel, vcInitDragHandle, vcSwitchTab,
+         vcSaveFilterPreset, vcApplyFilterPreset, vcDeleteFilterPreset, vcRenameFilterPreset, vcToggleVideoFilterPreset,
+         vcSaveTransformSnapshot, vcResetTransformSnapshot,
+         vcSmartCrop, vcToggleCropMode, vcCancelCrop, vcApplyCrop, vcSetLoopMode, vcSetSpeed,
+         vcRegisterAutoplayNext,
+         vcDismissToast } from './video-controls.js';
 
 /* ── X.com / Twitter deep link ───────────────────────────────────── */
 function _buildXDeepLink(url) {
@@ -125,6 +127,35 @@ function _openImageItem(itemId) {
     trackView(item);
     openModal('/' + encodePath(item.file), 'image');
   }, 50);
+}
+
+/* ── 排序選單 ────────────────────────────────────────────────────── */
+const _SORT_ICONS = {
+  shuffle: '⇅', 'date-desc': '🕐', 'date-asc': '🕙',
+  'name-asc': 'Az', 'name-desc': 'Az', 'tags-asc': '🏷',
+};
+
+function _updateSortUI() {
+  const isShuf = state.curSort === 'shuffle';
+  ['btn-seed-prev', 'btn-shuffle', 'seed-idx-lbl', 'btn-seed-next']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = isShuf ? '' : 'none'; });
+  const icon = document.getElementById('sort-icon');
+  if (icon) icon.textContent = _SORT_ICONS[state.curSort] ?? '⇅';
+  document.getElementById('btn-sort')?.classList.toggle('on', !isShuf);
+  document.querySelectorAll('.sort-opt').forEach(b =>
+    b.classList.toggle('on', b.dataset.sort === state.curSort)
+  );
+}
+
+function toggleSortMenu() {
+  document.getElementById('sort-menu')?.classList.toggle('open');
+}
+
+function setSort(mode) {
+  state.curSort = mode;
+  document.getElementById('sort-menu')?.classList.remove('open');
+  _updateSortUI();
+  applyFilter();
 }
 
 /** shuffle 按鈕（需協調 shuffle + grid） */
@@ -441,8 +472,22 @@ function wireEvents() {
     }
   });
 
+  // 排序選單：點外部關閉
+  document.addEventListener('click', e => {
+    const wrap = document.getElementById('sort-wrap');
+    const menu = document.getElementById('sort-menu');
+    if (menu?.classList.contains('open') && !wrap?.contains(e.target))
+      menu.classList.remove('open');
+  });
+
   wireDesktopPlayer();
   vcInitDragHandle();
+
+  // 註冊 Autoplay Next：依目前開啟的播放器切換下一部
+  vcRegisterAutoplayNext(() => {
+    if (isDesktopPlayerOpen()) dpSwitch(1);
+    else mpSwitch(1);
+  });
 }
 
 /* ── window.* 曝露（供 HTML inline onclick 使用）────────────────── */
@@ -485,15 +530,32 @@ window.setPresetFilter    = setPresetFilter;
 window.clearPresetFilter  = clearPresetFilter;
 window.buildPresetChips   = buildPresetChips;
 
-// Video Preset
-window.vcApplyPreset          = vcApplyPreset;
-window.vcToggleVideoPreset    = vcToggleVideoPreset;
-window.vcSaveCurrentAsPreset  = vcSaveCurrentAsPreset;
-window.vcUpdateCurrentPreset  = vcUpdateCurrentPreset;
-window.vcRenamePresetPrompt   = vcRenamePresetPrompt;
-window.vcDeletePreset             = vcDeletePreset;
-window.vcLinkPresetToCurrentVideo = vcLinkPresetToCurrentVideo;
-window.vcDismissToast             = vcDismissToast;
+// Video Controls — Filter Presets
+window.vcSaveFilterPreset          = vcSaveFilterPreset;
+window.vcApplyFilterPreset         = vcApplyFilterPreset;
+window.vcDeleteFilterPreset        = vcDeleteFilterPreset;
+window.vcRenameFilterPreset        = vcRenameFilterPreset;
+window.vcToggleVideoFilterPreset   = vcToggleVideoFilterPreset;
+// Video Controls — Transform Snapshot
+window.vcSaveTransformSnapshot  = vcSaveTransformSnapshot;
+window.vcResetTransformSnapshot = vcResetTransformSnapshot;
+window.vcSmartCrop              = vcSmartCrop;
+window.vcToggleCropMode         = vcToggleCropMode;
+window.vcCancelCrop             = vcCancelCrop;
+window.vcApplyCrop              = vcApplyCrop;
+// Video Controls — Playback
+window.vcSetLoopMode  = vcSetLoopMode;
+window.vcSetSpeed     = vcSetSpeed;
+// Video Controls — Tab
+window.vcSwitchTab    = vcSwitchTab;
+// Video Controls — Reset
+window.vcResetFilters   = vcResetFilters;
+window.vcResetTransform = vcResetTransform;
+window.vcDismissToast   = vcDismissToast;
+
+// Sort
+window.toggleSortMenu   = toggleSortMenu;
+window.setSort          = setSort;
 
 // Shuffle
 window.newShuffle       = _newShuffle;
@@ -511,14 +573,14 @@ window._openImageItem   = _openImageItem;
 window.trackView        = trackView;
 
 // Mobile player
-window.closeMobilePlayer = closeMobilePlayer;
+window.closeMobilePlayer = () => { vcCancelCrop(); closeMobilePlayer(); };
 window._mpTogglePlay    = mpTogglePlay;
 window._mpSeekTo        = mpSeekTo;
 window._mpSwitch        = mpSwitch;
 window._mpSearchByTags  = mpSearchByTags;
 
 // Desktop player
-window.closeDesktopPlayer = closeDesktopPlayer;
+window.closeDesktopPlayer = () => { vcCancelCrop(); closeDesktopPlayer(); };
 window._dpSeekTo        = dpSeekTo;
 window._dpTogglePlay    = dpTogglePlay;
 window._dpSwitch        = dpSwitch;

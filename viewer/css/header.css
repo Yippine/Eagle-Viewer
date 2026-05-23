@@ -1,6 +1,10 @@
+/* ── Sticky wrapper（header + filter bar 一起貼頂）────────────────── */
+#sticky-top {
+  position: sticky; top: 0; z-index: 200;
+}
+
 /* ── Header ──────────────────────────────────────────────────────── */
 #hdr {
-  position: sticky; top: 0; z-index: 200;
   background: var(--hdr-bg);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -138,6 +142,30 @@
   font-size: 13px; color: var(--text3); white-space: nowrap;
   min-width: 28px; text-align: center;
 }
+
+/* ── Sort popover ────────────────────────────────────────────────── */
+.sort-wrap { position: relative; }
+
+.sort-menu {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  background: var(--hdr-bg); border: 1.5px solid var(--border);
+  border-radius: 14px; padding: 6px; min-width: 152px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.18);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  display: none; flex-direction: column; gap: 2px;
+  z-index: 300;
+}
+.sort-menu.open { display: flex; }
+
+.sort-opt {
+  background: none; border: none; border-radius: 9px;
+  padding: 9px 14px; font-size: 15px; font-family: inherit;
+  color: var(--text2); cursor: pointer; text-align: left;
+  transition: background .12s, color .12s; white-space: nowrap;
+}
+.sort-opt:hover { background: var(--tag-bg); color: var(--text); }
+.sort-opt.on    { background: var(--accent); color: #fff; }
 
 .stats-row {
   width: 100%; font-size: 15px; color: var(--text3);

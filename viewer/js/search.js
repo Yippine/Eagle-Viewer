@@ -80,7 +80,7 @@ export function computeFiltered() {
 
     if (state.curPreset) {
       try {
-        const vd = JSON.parse(localStorage.getItem(`eagle-video-${i.id}`) || '{}');
+        const vd = JSON.parse(localStorage.getItem(`eagle-video-filter-${i.id}`) || '{}');
         if (!(vd.presetIds || []).includes(state.curPreset)) return false;
       } catch { return false; }
     }

@@ -1,6 +1,6 @@
 {
   "name": "Eagle Viewer",
-  "short_name": "EagleLib",
+  "short_name": "Eagle Viewer",
   "description": "Eagle 媒體資源庫瀏覽器",
   "start_url": "/",
   "display": "standalone",

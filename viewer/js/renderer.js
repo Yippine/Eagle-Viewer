@@ -4,6 +4,20 @@
 import { state } from './state.js';
 import { h, KIND_ICON, HIDE_TAGS, encodePath } from './utils.js';
 
+function _readSnapTx(itemId) {
+  try {
+    const raw = localStorage.getItem('eagle-transform-' + itemId);
+    if (!raw) return null;
+    const snap = JSON.parse(raw);
+    if (!snap || snap.deleted) return null;
+    const tx = snap.tx;
+    if (!tx) return null;
+    if (tx.scaleX === 1 && tx.scaleY === 1 && tx.translateX === 0 && tx.translateY === 0
+        && tx.rotate === 0 && !tx.flipH && !tx.flipV) return null;
+    return tx;
+  } catch { return null; }
+}
+
 /** 建立單張卡片 HTML */
 export function buildCard(i) {
   const title    = i.name || i.id;
@@ -32,11 +46,16 @@ export function buildCard(i) {
            onclick="event.stopPropagation();_imgClick('${idSafe}','${h(fileSrc)}')">
     </div>`;
   } else if (i.file && i.media_type === 'video') {
-    const tAttr = thumbSrc ? `style="background:url('${h(thumbSrc)}') center/cover no-repeat"` : '';
+    const snapTx = (i.id && i.width && i.height) ? _readSnapTx(i.id) : null;
+    const tAttr = (!snapTx && thumbSrc) ? `style="background:url('${h(thumbSrc)}') center/cover no-repeat"` : '';
     const ratioStyle = (i.width && i.height) ? ` style="aspect-ratio:${i.width}/${i.height}"` : '';
+    const snapAttrs = i.id
+      ? ` data-snap-id="${idSafe}"${i.width ? ` data-snap-nw="${i.width}"` : ''}${i.height ? ` data-snap-nh="${i.height}"` : ''}`
+      : '';
+    const snapContent = (snapTx && thumbSrc) ? `<img class="snap-thumb" src="${h(thumbSrc)}" alt="" loading="lazy">` : '';
     media = `<div class="cmedia">${badge}${eagle}${tagSearchBtn}
       <div class="ratio-box"${ratioStyle}>
-        <div class="vid-lazy" data-vsrc="${h(fileSrc)}"${i.width ? ` data-vw="${i.width}"` : ''}${i.height ? ` data-vh="${i.height}"` : ''}${thumbSrc ? ` data-vposter="${h(thumbSrc)}"` : ''}${tAttr ? ' ' + tAttr : ''}></div>
+        <div class="vid-lazy${snapTx ? ' vid-snap' : ''}" data-vsrc="${h(fileSrc)}"${i.width ? ` data-vw="${i.width}"` : ''}${i.height ? ` data-vh="${i.height}"` : ''}${thumbSrc ? ` data-vposter="${h(thumbSrc)}"` : ''}${tAttr ? ' ' + tAttr : ''}${snapAttrs}>${snapContent}</div>
         <div class="play-ov"><div class="play-circle">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21"/></svg>
         </div></div>

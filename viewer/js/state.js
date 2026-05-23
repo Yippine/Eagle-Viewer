@@ -18,6 +18,9 @@ export const state = {
   curQ:       '',
   curPreset:  null,
 
+  // ── 排序模式 ── shuffle / date-desc / date-asc / name-asc / name-desc / tags-asc
+  curSort: 'shuffle',
+
   // ── UI 狀態 ──
   tagsOpen:   false,
   fbarOpen:   false,

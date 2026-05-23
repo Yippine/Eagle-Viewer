@@ -131,7 +131,7 @@ export function buildPresetChips() {
   const el = document.getElementById('pchips');
   if (!el) return;
   let presets = [];
-  try { presets = JSON.parse(localStorage.getItem('eagle-presets') || '[]'); } catch {}
+  try { presets = JSON.parse(localStorage.getItem('eagle-filter-presets') || '[]'); } catch {}
   presets = presets.filter(p => !p.deleted);
   const clearBtn = `<button class="fpreset-clear" onclick="clearPresetFilter()" title="清除濾鏡篩選">✕</button>`;
   el.innerHTML = clearBtn + presets.map(p =>

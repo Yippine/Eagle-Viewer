@@ -1,4 +1,4 @@
-/* ── Video Controls Panel（PotPlayer 風格）─────────────────────────── */
+/* ── Video Controls Panel（三模組：Playback / Filters / Transform）── */
 
 /* ── 面板主體 ──────────────────────────────────────────────────────── */
 #vc-panel {
@@ -23,8 +23,8 @@
 /* ── Header ────────────────────────────────────────────────────────── */
 .vc-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 18px 14px;
-  border-bottom: 1px solid rgba(255,255,255,.08);
+  padding: 18px 18px 10px;
+  border-bottom: none;
   flex-shrink: 0;
 }
 .vc-title {
@@ -37,6 +37,26 @@
   transition: background .15s;
 }
 .vc-close-btn:hover { background: rgba(255,255,255,.22); }
+
+/* ── Tab Navigation ────────────────────────────────────────────────── */
+.vc-tabs {
+  display: flex; gap: 4px;
+  padding: 0 14px 10px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  flex-shrink: 0;
+}
+.vc-tab-btn {
+  flex: 1; height: 32px; border-radius: 8px;
+  background: rgba(255,255,255,.07); color: rgba(255,255,255,.5);
+  font-size: 13px; font-weight: 600; letter-spacing: .02em;
+  transition: background .15s, color .15s;
+}
+.vc-tab-btn:hover { background: rgba(255,255,255,.12); color: rgba(255,255,255,.75); }
+.vc-tab-btn.active { background: #007aff; color: #fff; }
+
+/* ── Tab Panes ─────────────────────────────────────────────────────── */
+.vc-tab-pane { display: none; }
+.vc-tab-pane.active { display: block; }
 
 /* ── Scrollable content ────────────────────────────────────────────── */
 .vc-content {
@@ -60,6 +80,76 @@
   color: rgba(255,255,255,.55);
   margin-bottom: 12px;
 }
+
+/* 帶 Reset 按鈕的區塊標題列 */
+.vc-section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px;
+}
+.vc-section-header .vc-section-label { margin-bottom: 0; }
+.vc-icon-btn {
+  width: 26px; height: 26px; border-radius: 7px;
+  background: rgba(255,255,255,.08); color: rgba(255,255,255,.45);
+  font-size: 14px; display: flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s;
+  flex-shrink: 0;
+}
+.vc-icon-btn:hover { background: rgba(255,59,48,.25); color: #ff6961; }
+
+/* ── Segment Control（Loop Mode）──────────────────────────────────── */
+.vc-seg-ctrl {
+  display: flex; gap: 4px; width: 100%;
+}
+.vc-seg-btn {
+  flex: 1; height: 36px; border-radius: 9px;
+  background: rgba(255,255,255,.08); color: rgba(255,255,255,.6);
+  font-size: 13px; font-weight: 600;
+  transition: background .15s, color .15s;
+}
+.vc-seg-btn.active { background: #007aff; color: #fff; }
+.vc-seg-btn:hover:not(.active) { background: rgba(255,255,255,.14); color: rgba(255,255,255,.85); }
+
+/* ── Smart Crop Button ─────────────────────────────────────────────── */
+.vc-smart-crop-btn {
+  width: 100%; height: 38px; border-radius: 10px;
+  background: rgba(48,209,88,.15); color: #30d158;
+  font-size: 14px; font-weight: 600;
+  transition: background .15s, color .15s;
+  margin-bottom: 10px;
+}
+.vc-smart-crop-btn:hover { background: rgba(48,209,88,.28); }
+
+/* ── Transform Snapshot Status ─────────────────────────────────────── */
+.vc-snapshot-row {
+  display: flex; gap: 6px; align-items: center; margin-top: 4px;
+}
+.vc-snapshot-save {
+  flex: 1; height: 34px; border-radius: 8px;
+  background: rgba(0,122,255,.18); color: #007aff;
+  font-size: 13px; font-weight: 600;
+  transition: background .15s;
+}
+.vc-snapshot-save:hover { background: rgba(0,122,255,.32); }
+.vc-snapshot-reset {
+  width: 34px; height: 34px; border-radius: 8px;
+  background: none; font-size: 14px;
+  transition: opacity .15s;
+}
+.vc-snapshot-reset:hover { opacity: .7; }
+.vc-snapshot-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: #30d158;
+  flex-shrink: 0; display: none;
+}
+.vc-snapshot-dot.on { display: block; }
+
+/* ── Filter Preset Actions ──────────────────────────────────────────── */
+.vc-filter-save-btn {
+  width: 100%; height: 34px; border-radius: 8px;
+  background: rgba(0,122,255,.18); color: #007aff;
+  font-size: 13px; font-weight: 600; margin-top: 10px;
+  transition: background .15s;
+}
+.vc-filter-save-btn:hover { background: rgba(0,122,255,.32); }
 
 /* ── AB Loop ───────────────────────────────────────────────────────── */
 .vc-ab-points {
@@ -209,7 +299,7 @@
 .vc-preset-row:hover .vc-preset-del { opacity: 1; }
 
 @media (min-width: 769px) {
-  .vc-preset-del { filter: invert(1); }
+  .vc-preset-del, .vc-snapshot-reset { filter: invert(1); }
 }
 
 @media (max-width: 768px) {
@@ -242,7 +332,7 @@
 .vc-toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
   background: rgba(30,30,30,.96); backdrop-filter: blur(16px);
-  border-radius: 14px; padding: 12px 16px;
+  border-radius: 14px; padding: 12px 16px 12px 16px;
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   font-size: 14px; color: #e5e5ea;
   box-shadow: 0 4px 24px rgba(0,0,0,.5);
@@ -263,6 +353,15 @@
 .vc-toast button:first-of-type { background: #007aff; }
 .vc-toast button:first-of-type:hover { background: #0066d4; }
 .vc-toast button:hover { background: rgba(255,255,255,.25); }
+.vc-toast-close {
+  background: none !important; color: rgba(255,255,255,.4) !important;
+  font-size: 17px !important; font-weight: 300 !important;
+  padding: 2px 4px !important; line-height: 1;
+  margin-left: 2px; align-self: flex-start;
+  transition: color .15s !important;
+}
+.vc-toast-close:hover { color: #fff !important; background: none !important; }
+@media (max-width: 768px) { .vc-toast-close { display: none !important; } }
 
 /* ── Reset ─────────────────────────────────────────────────────────── */
 .vc-reset-section { padding: 14px 18px; }
@@ -334,10 +433,107 @@
   .vc-toggle-btn,
   .vc-text-btn         { min-height: 46px; height: 46px; font-size: 15px; }
   .vc-reset-btn        { height: 50px; font-size: 17px; }
+  .vc-seg-btn          { min-height: 44px; height: 44px; font-size: 14px; }
+  .vc-smart-crop-btn   { height: 48px; font-size: 15px; }
+  .vc-snapshot-save    { height: 44px; font-size: 14px; }
+  .vc-snapshot-reset   { width: 44px; height: 44px; font-size: 16px; }
+  .vc-tab-btn          { height: 38px; font-size: 14px; }
+  .vc-filter-save-btn  { height: 44px; font-size: 14px; margin-top: 12px; }
+  .vc-icon-btn         { width: 32px; height: 32px; font-size: 16px; }
+  /* 手機底部面板：Tab 間距略增，方便觸控 */
+  .vc-tabs             { padding: 0 12px 12px; gap: 6px; }
 
   .vc-slider-row input[type="range"]::-webkit-slider-thumb {
     width: 24px; height: 24px;
   }
+}
+
+/* ── 手動裁切 Overlay ───────────────────────────────────────────── */
+#vc-crop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9550;  /* 高於 dplayer(9200)/mplayer(9500)，低於 vc-panel(9600) */
+  pointer-events: none;
+}
+/* 四塊遮罩（裁切框外部暗化） */
+.vc-cs {
+  position: fixed;
+  background: rgba(0,0,0,.55);
+  pointer-events: none;
+}
+/* 裁切框邊框 */
+#vc-crop-rect {
+  position: fixed;
+  border: 2px solid rgba(255,255,255,.9);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+/* 三等分參考線（水平 + 垂直） */
+#vc-crop-rect::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(rgba(255,255,255,.18) 1px, transparent 1px) 0 33.33% / 100% 33.33%,
+    linear-gradient(90deg, rgba(255,255,255,.18) 1px, transparent 1px) 33.33% 0 / 33.33% 100%;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+/* 拖動把手 */
+.vc-ch {
+  position: absolute;
+  width: 20px; height: 20px;
+  border: 2.5px solid #fff;
+  background: rgba(0,0,0,.55);
+  border-radius: 3px;
+  pointer-events: all;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transform: translate(-50%, -50%);
+}
+/* 擴大觸控範圍 */
+.vc-ch::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 44px; height: 44px;
+}
+.vc-ch[data-dir="nw"] { top: 0;    left: 0;    cursor: nw-resize; }
+.vc-ch[data-dir="n"]  { top: 0;    left: 50%;  cursor: n-resize;  }
+.vc-ch[data-dir="ne"] { top: 0;    left: 100%; cursor: ne-resize; }
+.vc-ch[data-dir="w"]  { top: 50%;  left: 0;    cursor: w-resize;  }
+.vc-ch[data-dir="e"]  { top: 50%;  left: 100%; cursor: e-resize;  }
+.vc-ch[data-dir="sw"] { top: 100%; left: 0;    cursor: sw-resize; }
+.vc-ch[data-dir="s"]  { top: 100%; left: 50%;  cursor: s-resize;  }
+.vc-ch[data-dir="se"] { top: 100%; left: 100%; cursor: se-resize; }
+/* 工具列（取消 + 套用） */
+#vc-crop-toolbar {
+  position: fixed;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 32px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 12px;
+  pointer-events: all;
+  z-index: 9551;  /* 比 overlay 高一層，仍低於 vc-panel(9600) */
+}
+.vc-ctb {
+  padding: 11px 28px;
+  border-radius: 26px;
+  font-size: 15px; font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  border: none;
+}
+.vc-ctb-cancel {
+  background: rgba(20,20,20,.85);
+  color: rgba(255,255,255,.8);
+  border: 1px solid rgba(255,255,255,.22);
+}
+.vc-ctb-apply {
+  background: #007aff;
+  color: #fff;
 }
 
 /* ── 容器黑底（translate 超出時顯示）────────────────────────────── */

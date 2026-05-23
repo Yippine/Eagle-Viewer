@@ -666,13 +666,25 @@ def _index_library(lib_name: str) -> dict:
 # User data (preset sync)
 # ---------------------------------------------------------------------------
 _USER_DATA_PATH = DATA_DIR / "user_data.json"
-_EMPTY_USER_DATA = {"version": 0, "presets": [], "videoPresets": {}}
+_EMPTY_USER_DATA = {"version": 0, "filterPresets": [], "transformSnapshots": {}}
 
 def _load_user_data() -> dict:
     try:
         if _USER_DATA_PATH.exists():
             with open(_USER_DATA_PATH, encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                # 舊 schema 遷移：presets → filterPresets, videoPresets → transformSnapshots
+                if "presets" in data and "filterPresets" not in data:
+                    data["filterPresets"] = [
+                        {k: v for k, v in p.items() if k != "tx"}
+                        for p in data.pop("presets", [])
+                    ]
+                if "videoPresets" in data and "transformSnapshots" not in data:
+                    snaps = {}
+                    for vid_id, vd in data.pop("videoPresets", {}).items():
+                        snaps[vid_id] = {"tx": vd.get("tx", {}), "savedAt": vd.get("modifiedAt", 0)}
+                    data["transformSnapshots"] = snaps
+                return data
     except Exception:
         pass
     return dict(_EMPTY_USER_DATA)
@@ -686,18 +698,24 @@ def _save_user_data(obj: dict) -> None:
 
 def _merge_user_data(server: dict, client: dict) -> dict:
     import time
-    s_map = {p["id"]: p for p in server.get("presets", []) if "id" in p}
-    for cp in client.get("presets", []):
+    # Filter Presets（命名濾鏡庫）
+    s_fp = {p["id"]: p for p in server.get("filterPresets", []) if "id" in p}
+    for cp in client.get("filterPresets", []):
         cid = cp.get("id")
         if not cid:
             continue
-        if cid not in s_map or cp.get("modifiedAt", 0) > s_map[cid].get("modifiedAt", 0):
-            s_map[cid] = cp
-    s_vp = dict(server.get("videoPresets", {}))
-    for vid, cvd in client.get("videoPresets", {}).items():
-        if vid not in s_vp or cvd.get("modifiedAt", 0) > s_vp[vid].get("modifiedAt", 0):
-            s_vp[vid] = cvd
-    return {"version": int(time.time() * 1000), "presets": list(s_map.values()), "videoPresets": s_vp}
+        if cid not in s_fp or cp.get("modifiedAt", 0) > s_fp[cid].get("modifiedAt", 0):
+            s_fp[cid] = cp
+    # Transform Snapshots（每影片幾何快照）
+    s_ts = dict(server.get("transformSnapshots", {}))
+    for vid_id, snap in client.get("transformSnapshots", {}).items():
+        if vid_id not in s_ts or snap.get("savedAt", 0) > s_ts[vid_id].get("savedAt", 0):
+            s_ts[vid_id] = snap
+    return {
+        "version": int(time.time() * 1000),
+        "filterPresets": list(s_fp.values()),
+        "transformSnapshots": s_ts,
+    }
 
 # ---------------------------------------------------------------------------
 # CORS headers

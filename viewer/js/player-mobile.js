@@ -9,7 +9,8 @@ import { seededShuffle, currentSeed } from './shuffle.js';
 import { trackView }                from './api.js';
 import { fmtTime, HIDE_TAGS, encodePath } from './utils.js';
 import { applyTagSet }              from './ui-filters.js';
-import { vcInitVid, vcAbTimeUpdate, closeVcPanel, toggleVcPanel }
+import { vcInitVid, vcAbTimeUpdate, closeVcPanel, toggleVcPanel, vcApplyTransform,
+         vcSetAutoRotate, vcHasSnapshot }
   from './video-controls.js';
 
 /* ── 播放器狀態 ────────────────────────────────────────────────────── */
@@ -354,4 +355,9 @@ export function wireMobilePlayer() {
       if (item?.url) window._openUrl(item.url);
     }, { passive: true });
   }
+
+  // Reapply transform on device orientation change so auto-fit scale recalculates
+  window.addEventListener('resize', () => {
+    if (_MP.vid) vcApplyTransform(_MP.vid);
+  }, { passive: true });
 }

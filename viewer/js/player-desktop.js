@@ -9,7 +9,8 @@ import { seededShuffle, currentSeed } from './shuffle.js';
 import { trackView }                  from './api.js';
 import { fmtTime, HIDE_TAGS, encodePath } from './utils.js';
 import { applyTagSet }                from './ui-filters.js';
-import { vcInitVid, vcAbTimeUpdate, vcApplyTransform, closeVcPanel }
+import { vcInitVid, vcAbTimeUpdate, vcApplyTransform, closeVcPanel,
+         vcSetAutoRotate, vcHasSnapshot }
   from './video-controls.js';
 
 /* ── 播放器狀態 ────────────────────────────────────────────────────── */

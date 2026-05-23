@@ -213,8 +213,9 @@ __marimo__/
 data/
 !data/config.example.json
 
-# Logs
+# Logs & runtime artifacts
 logs/
+*.pid
 
 # --- BEGIN AI-CORE MANAGED (gitignore-sync) ---
 # ============================================================
