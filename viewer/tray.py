@@ -30,27 +30,67 @@ _log("=== tray.py 啟動 ===")
 PORT = 8765
 
 
-def _kill_existing():
-    if not _PID_FILE.exists():
-        return
+def _kill_by_port():
+    """用 netstat 找出所有佔用 PORT 的 PID 並逐一強殺（含 process tree）。"""
     try:
-        old_pid = int(_PID_FILE.read_text().strip())
-        if old_pid == os.getpid():
-            return
-        _log(f"發現舊 PID {old_pid}，嘗試終止")
-        subprocess.run(
-            ["taskkill", "/F", "/PID", str(old_pid)],
-            capture_output=True,
+        r = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        time.sleep(0.6)
+        my_pid = str(os.getpid())
+        seen: set[str] = set()
+        for line in r.stdout.splitlines():
+            if f":{PORT}" not in line:
+                continue
+            parts = line.strip().split()
+            if not parts:
+                continue
+            pid = parts[-1]
+            if pid in seen or pid == my_pid or pid == "0":
+                continue
+            seen.add(pid)
+            _log(f"[kill] port {PORT} 被 PID {pid} 佔用，強制終止")
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", pid],
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
     except Exception:
-        _log("終止舊 process 失敗（可能已關閉）：\n" + traceback.format_exc())
-    finally:
+        _log("_kill_by_port 失敗：\n" + traceback.format_exc())
+
+
+def _kill_existing():
+    """Kill ALL processes using PORT, then wait until port is actually free."""
+    # 1. 先嘗試 PID 檔（精確殺）
+    if _PID_FILE.exists():
         try:
-            _PID_FILE.unlink(missing_ok=True)
+            old_pid = int(_PID_FILE.read_text().strip())
+            if old_pid != os.getpid():
+                _log(f"發現舊 PID {old_pid}，嘗試終止")
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(old_pid)],
+                    capture_output=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
         except Exception:
-            pass
+            _log("PID 檔終止失敗（可能已關閉）：\n" + traceback.format_exc())
+        finally:
+            try:
+                _PID_FILE.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    # 2. 再用 netstat 掃描殺掉所有仍在 PORT 上的殭屍進程
+    _kill_by_port()
+
+    # 3. 等到 port 真正釋放（最多等 8 秒）
+    for i in range(16):
+        if not _port_in_use():
+            _log(f"port {PORT} 已釋放（等待 {i * 0.5:.1f}s）")
+            return
+        time.sleep(0.5)
+    _log(f"警告：port {PORT} 等待 8s 後仍被佔用，強制繼續")
 
 
 def _write_pid():

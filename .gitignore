@@ -218,10 +218,6 @@ logs/
 *.pid
 
 # --- BEGIN AI-CORE MANAGED (gitignore-sync) ---
-# ============================================================
-# AI Core .gitignore 模板
-# 維護：.claude/skills/gitignore-sync/references/gitignore.template
-# ============================================================
 
 # ── Claude Code：完全忽略 ────────────────────────────────
 .claude/
@@ -264,3 +260,60 @@ logs/
 # ── Eagle Tags Sync Diff ──────────────────────────────────────
 .ai-core/notes/eagle/references/eagle-tags-sync-diff.md
 .ai-core/notes/eagle/references/eagle-items-tags-sync-diff.md
+# ============================================================
+# AI Core .gitignore 模板
+# 維護：.claude/skills/gitignore-sync/references/gitignore.template
+# ============================================================
+
+# ── Claude Code：保留設定與技能，忽略執行狀態 ──────────────
+.claude/*
+!.claude/settings.json
+!.claude/statusline.sh
+!.claude/output-styles/
+!.claude/skills/
+!.claude/hooks/
+!.claude/scripts/
+!.claude/trigger-map.md
+.claude/hooks/__pycache__/
+.claude/hooks/*.log
+.claude/hooks/state-*.json
+.claude/hooks/memory-review-state.json
+.claude/skills/.health-scan.state.json
+
+# ── AI Core：忽略任務執行與對話狀態 ────────────────────────
+.ai-core/tasks/
+.ai-core/sessions/
+.ai-core/chat/
+
+# ── AI Core Entity Cache ────────────────────────────────────
+.ai-core/projects/*/.cache/
+.ai-core/repos/*/.cache/
+
+# ── Obsidian App Config ─────────────────────────────────────
+.obsidian/
+
+# ── Resources：忽略媒體，保留 HTML Canvas ───────────────────
+**/resources/*
+!**/resources/*.html
+# 未來擴增格式加在此處（e.g. !**/resources/*.canvas）
+
+# ── External References（根目錄錨定）───────────────────────
+/references/
+
+# ── 圖片 / 影片 ─────────────────────────────────────────────
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.webm
+*.mov
+
+# ── 二進位文件格式 ──────────────────────────────────────────
+*.xmind
+
+# ── 暫存檔 ──────────────────────────────────────────────────
+.tmp_xmind*/
+
+# ── AI Core Secrets（本機環境變數，永不進版控）──────────────
+.ai-core/config/.env

@@ -7,17 +7,31 @@
 
 import { fmtTime } from './utils.js';
 
+const _selDefault = (id = null) =>
+  ({ id: id ?? Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+     targetHue: null, range: 30, hueShift: 0,
+     brightness: 0, contrast: 0, saturate: 0, sepia: 0 });
+
+const _newSelItem = () => _selDefault();
+const _getActive = () =>
+  _VCS.selectiveList.find(s => s.id === _VCS._activeSelectiveId) ?? null;
+
 /* ── 狀態 ─────────────────────────────────────────────────────────── */
 const _VCS = {
-  filter:   { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0 },
-  tx:       { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0,
-              rotate: 0, flipH: false, flipV: false },
-  ab:       { a: null, b: null, active: false },
-  playback: { loopMode: 'single', speed: 1.0 },
-  _vid:               null,
-  _itemId:            null,
+  filter:    { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 },
+  selectiveList: [],
+  _activeSelectiveId: null,
+  tx:        { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0,
+               rotate: 0, flipH: false, flipV: false },
+  ab:        { a: null, b: null, active: false },
+  playback:  { loopMode: 'single', speed: 1.0 },
+  _vid:                null,
+  _itemId:             null,
+  _mediaType:          'video',
   _activeFilterPresetId: null,
-  _autoRotate:        0,   // 瀏覽器旋轉 metadata 未套用時的自動補正（不存入快照）
+  _autoRotate:         0,
+  _imgOriginalSrc:     null,   // 圖片原始 src（Canvas 處理前保存）
+  _canvasObjectURL:    null,   // Canvas 輸出的 blob URL
 };
 
 export function vcGetVid() { return _VCS._vid; }
@@ -38,7 +52,7 @@ export function vcHasSnapshot(itemId) {
 ══════════════════════════════════════════════════════════════════ */
 const _FILTER_PRESETS_KEY = 'eagle-filter-presets';
 const _txKey  = id => `eagle-transform-${id}`;
-const _vflKey = id => `eagle-video-filter-${id}`;
+const _vflKey = id => `eagle-media-filter-${id}`;
 const _VFL_MIGRATED_KEY = 'eagle-vfl-migrated';
 
 /* ══════════════════════════════════════════════════════════════════
@@ -172,6 +186,21 @@ function _migrateOnce() {
   }
 }
 
+/* ── eagle-video-filter-* → eagle-media-filter-* key 遷移 ────────── */
+function _migrateMediaFilterKeys() {
+  const toRename = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith('eagle-video-filter-')) toRename.push(key);
+  }
+  toRename.forEach(key => {
+    const newKey = key.replace('eagle-video-filter-', 'eagle-media-filter-');
+    const val = localStorage.getItem(key);
+    if (val) localStorage.setItem(newKey, val);
+    localStorage.removeItem(key);
+  });
+}
+
 /* ── Per-video filter link migration（已完成舊版 migration 的用戶補跑）── */
 function _migrateVideoFilterLinks() {
   if (localStorage.getItem(_VFL_MIGRATED_KEY)) return;
@@ -227,6 +256,314 @@ function _uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   Canvas 工具：HSL 轉換 / 模糊 / 銳化 / 選擇性色相
+══════════════════════════════════════════════════════════════════ */
+function _rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+      case g: h = ((b - r) / d + 2) / 6; break;
+      case b: h = ((r - g) / d + 4) / 6; break;
+    }
+  }
+  return [h * 360, s, l];
+}
+
+function _hslToRgb(h, s, l) {
+  h /= 360;
+  if (s === 0) { const v = Math.round(l * 255); return [v, v, v]; }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const hue2rgb = (t) => {
+    if (t < 0) t += 1; if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  return [Math.round(hue2rgb(h + 1/3) * 255), Math.round(hue2rgb(h) * 255), Math.round(hue2rgb(h - 1/3) * 255)];
+}
+
+function _hueDist(a, b) {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+function _boxBlurH(src, dst, w, h, r) {
+  const iarr = 1 / (r + r + 1);
+  for (let i = 0; i < h; i++) {
+    let ti = i * w, li = ti, ri = ti + r;
+    let fv = src[ti * 4], lv = src[(ti + w - 1) * 4], val = (r + 1) * fv;
+    for (let j = 0; j < r; j++) val += src[(ti + j) * 4];
+    for (let j = 0; j <= r; j++, ri++) { val += src[ri * 4] - fv; dst[ti++ * 4] = Math.round(val * iarr); }
+    for (let j = r + 1; j < w - r; j++, ri++, li++) { val += src[ri * 4] - src[li * 4]; dst[ti++ * 4] = Math.round(val * iarr); }
+    for (let j = w - r; j < w; j++, li++) { val += lv - src[li * 4]; dst[ti++ * 4] = Math.round(val * iarr); }
+  }
+}
+
+function _boxBlurV(src, dst, w, h, r) {
+  const iarr = 1 / (r + r + 1);
+  for (let i = 0; i < w; i++) {
+    let ti = i, li = ti, ri = ti + r * w;
+    let fv = src[ti * 4], lv = src[(ti + w * (h - 1)) * 4], val = (r + 1) * fv;
+    for (let j = 0; j < r; j++) val += src[(ti + j * w) * 4];
+    for (let j = 0; j <= r; j++, ri += w) { val += src[ri * 4] - fv; dst[ti * 4] = Math.round(val * iarr); ti += w; }
+    for (let j = r + 1; j < h - r; j++, ri += w, li += w) { val += src[ri * 4] - src[li * 4]; dst[ti * 4] = Math.round(val * iarr); ti += w; }
+    for (let j = h - r; j < h; j++, li += w) { val += lv - src[li * 4]; dst[ti * 4] = Math.round(val * iarr); ti += w; }
+  }
+}
+
+function _blurChannel(data, w, h, r) {
+  // 分離式 box blur（單通道；data 為 Uint8ClampedArray，步距 4）
+  const tmp = new Uint8ClampedArray(data.length);
+  _boxBlurH(data, tmp, w, h, r);
+  _boxBlurV(tmp, data, w, h, r);
+}
+
+function _unsharpMask(imgData, amount) {
+  const { data, width, height } = imgData;
+  const blurred = new Uint8ClampedArray(data);
+  _blurChannel(blurred, width, height, 1);
+  for (let i = 0; i < data.length - 1; i += 4) {
+    data[i]   = Math.min(255, Math.max(0, data[i]   + amount * (data[i]   - blurred[i])));
+    data[i+1] = Math.min(255, Math.max(0, data[i+1] + amount * (data[i+1] - blurred[i+1])));
+    data[i+2] = Math.min(255, Math.max(0, data[i+2] + amount * (data[i+2] - blurred[i+2])));
+  }
+  return imgData;
+}
+
+function _applySelectiveHue(imgData, sel) {
+  const { data } = imgData;
+  const { targetHue, range, hueShift = 0,
+          brightness: dBri = 0, contrast: dCon = 0,
+          saturate: dSat = 0, sepia: dSep = 0 } = sel;
+  if (targetHue === null) return imgData;
+  const isNoop = hueShift === 0 && dBri === 0 && dCon === 0
+                 && dSat === 0 && dSep === 0;
+  if (isNoop) return imgData;
+
+  const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
+
+  for (let i = 0; i < data.length - 1; i += 4) {
+    const [h, s, l] = _rgbToHsl(data[i], data[i+1], data[i+2]);
+    if (_hueDist(h, targetHue) > range) continue;
+
+    const h2 = (h + hueShift + 360) % 360;
+    const s2 = clamp(s * (1 + dSat));
+    const l2 = clamp(l * (1 + dBri));
+
+    let [r, g, b] = _hslToRgb(h2, s2, l2);
+
+    if (dCon !== 0) {
+      const f = 1 + dCon;
+      r = clamp((r / 255 - 0.5) * f + 0.5) * 255;
+      g = clamp((g / 255 - 0.5) * f + 0.5) * 255;
+      b = clamp((b / 255 - 0.5) * f + 0.5) * 255;
+    }
+
+    if (dSep !== 0) {
+      const sr = r * 0.393 + g * 0.769 + b * 0.189;
+      const sg = r * 0.349 + g * 0.686 + b * 0.168;
+      const sb = r * 0.272 + g * 0.534 + b * 0.131;
+      r = clamp(r + (sr - r) * dSep, 0, 255);
+      g = clamp(g + (sg - g) * dSep, 0, 255);
+      b = clamp(b + (sb - b) * dSep, 0, 255);
+    }
+
+    data[i] = Math.round(r);
+    data[i+1] = Math.round(g);
+    data[i+2] = Math.round(b);
+  }
+  return imgData;
+}
+
+/* ── Canvas Pipeline ──────────────────────────────────────────── */
+let _canvasTimer = null;
+
+function _needsCanvas() {
+  return _VCS._mediaType === 'image' &&
+         (_VCS.filter.sharpness > 0 || _VCS.selectiveList.some(s => s.targetHue !== null));
+}
+
+function _releaseCanvas() {
+  if (_VCS._canvasObjectURL) { URL.revokeObjectURL(_VCS._canvasObjectURL); _VCS._canvasObjectURL = null; }
+}
+
+function _scheduleCanvasUpdate() {
+  clearTimeout(_canvasTimer);
+  _canvasTimer = setTimeout(_runCanvasPipeline, 180);
+}
+
+async function _runCanvasPipeline() {
+  const img = _VCS._vid;
+  if (!img || _VCS._mediaType !== 'image') return;
+  // 必須在 img.src 被替換成 blob 之前捕捉 originalSrc
+  if (!_VCS._imgOriginalSrc) _VCS._imgOriginalSrc = img.src;
+  const src = _VCS._imgOriginalSrc;
+  if (!src) return;
+
+  const srcImg = new Image();
+  srcImg.src = src;
+  if (!srcImg.complete) await new Promise((res, rej) => { srcImg.onload = res; srcImg.onerror = rej; });
+
+  const canvas = document.createElement('canvas');
+  canvas.width  = srcImg.naturalWidth  || srcImg.width;
+  canvas.height = srcImg.naturalHeight || srcImg.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(srcImg, 0, 0);
+
+  let imgData;
+  try {
+    imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  } catch {
+    return; // tainted canvas（跨域）：跳過 Canvas 處理
+  }
+
+  const s = _VCS.filter.sharpness;
+  if (s > 0) _unsharpMask(imgData, s * 0.12);
+  for (const s of _VCS.selectiveList) {
+    if (s.targetHue !== null) _applySelectiveHue(imgData, s);
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+  canvas.toBlob(blob => {
+    if (!blob || img !== _VCS._vid) return;
+    _releaseCanvas();
+    _VCS._canvasObjectURL = URL.createObjectURL(blob);
+    img.src = _VCS._canvasObjectURL;
+  }, 'image/jpeg', 0.95);
+}
+
+function _restoreOriginalSrc() {
+  const img = _VCS._vid;
+  if (!img || !_VCS._imgOriginalSrc) return;
+  _releaseCanvas();
+  img.src = _VCS._imgOriginalSrc;
+}
+
+
+/* ── Eyedropper ───────────────────────────────────────────────── */
+let _eyedropperActive = false;
+let _eyedropperHandler = null;
+
+export function vcStartEyedropper() {
+  const img = _VCS._vid;
+  if (!img || _VCS._mediaType !== 'image') return;
+  _eyedropperActive = true;
+  document.getElementById('vc-eyedropper-btn')?.classList.add('vc-on');
+  img.style.cursor = 'crosshair';
+
+  _eyedropperHandler = (e) => {
+    if (!_eyedropperActive) return;
+    e.preventDefault();
+    // offsetX/offsetY 是 element 本地座標（不受 CSS transform 影響）
+    const px = Math.round(e.offsetX * (img.naturalWidth  || img.offsetWidth)  / img.offsetWidth);
+    const py = Math.round(e.offsetY * (img.naturalHeight || img.offsetHeight) / img.offsetHeight);
+
+    const canvas = document.createElement('canvas');
+    canvas.width  = img.naturalWidth  || img.offsetWidth;
+    canvas.height = img.naturalHeight || img.offsetHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    // 直接從 img 元素 drawImage（已在記憶體，無 async，無 src 切換問題）
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    try {
+      const d = ctx.getImageData(px, py, 1, 1).data;
+      const [h] = _rgbToHsl(d[0], d[1], d[2]);
+      const _a = _getActive();
+      if (_a) { _a.targetHue = Math.round(h); }
+      // 確保 originalSrc 在第一次 canvas op 前已捕捉
+      if (!_VCS._imgOriginalSrc) _VCS._imgOriginalSrc = img.src;
+      vcStopEyedropper();
+      vcSyncPanel();
+      _scheduleCanvasUpdate();
+    } catch { vcStopEyedropper(); }
+  };
+
+  img.addEventListener('click', _eyedropperHandler);
+}
+
+export function vcStopEyedropper() {
+  _eyedropperActive = false;
+  document.getElementById('vc-eyedropper-btn')?.classList.remove('vc-on');
+  const img = _VCS._vid;
+  if (img) { img.style.cursor = ''; img.removeEventListener('click', _eyedropperHandler); }
+  _eyedropperHandler = null;
+}
+
+export function vcSetSelectiveHue(key, val) {
+  const a = _getActive();
+  if (!a) return;
+  a[key] = +val;
+  if (a.targetHue !== null) _scheduleCanvasUpdate();
+  vcSyncPanel();
+}
+
+export function vcClearSelectiveColor() {
+  const a = _getActive();
+  if (!a) return;
+  a.targetHue  = null;
+  a.range      = 30;
+  a.hueShift   = 0;
+  a.brightness = 0;
+  a.contrast   = 0;
+  a.saturate   = 0;
+  a.sepia      = 0;
+  vcStopEyedropper();
+  _scheduleCanvasUpdate();
+  vcSyncPanel();
+}
+
+export function vcAddSelectiveColor() {
+  const item = _newSelItem();
+  _VCS.selectiveList.push(item);
+  _VCS._activeSelectiveId = item.id;
+  vcSyncPanel();
+  vcStartEyedropper();
+}
+
+export function vcSetActiveSelective(id) {
+  _VCS._activeSelectiveId = id;
+  vcSyncPanel();
+}
+
+export function vcRemoveSelective(id) {
+  _VCS.selectiveList = _VCS.selectiveList.filter(s => s.id !== id);
+  if (_VCS._activeSelectiveId === id) {
+    _VCS._activeSelectiveId = _VCS.selectiveList.at(-1)?.id ?? null;
+  }
+  _scheduleCanvasUpdate();
+  vcSyncPanel();
+}
+
+export function vcRenderSelectiveChips() {
+  const container = document.getElementById('vc-sel-chips');
+  if (!container) return;
+  container.innerHTML = '';
+  for (const item of _VCS.selectiveList) {
+    const isActive = item.id === _VCS._activeSelectiveId;
+    const bg = item.targetHue !== null ? `hsl(${item.targetHue},70%,50%)` : '#888';
+    const chip = document.createElement('span');
+    chip.className = 'vc-sel-chip' + (isActive ? ' vc-on' : '');
+    chip.style.background = bg;
+    chip.title = item.targetHue !== null ? `色相 ${item.targetHue}°` : '未取色';
+    chip.onclick = () => vcSetActiveSelective(item.id);
+    const rm = document.createElement('button');
+    rm.className = 'vc-sel-chip-rm';
+    rm.textContent = '×';
+    rm.title = '刪除此色塊';
+    rm.onclick = (e) => { e.stopPropagation(); vcRemoveSelective(item.id); };
+    chip.appendChild(rm);
+    container.appendChild(chip);
+  }
+}
+
 function _filterAutoName(f) {
   const parts = [];
   if      (f.brightness > 1.3)        parts.push('偏亮');
@@ -237,11 +574,26 @@ function _filterAutoName(f) {
   const h = f.hueRotate;
   if      (h >= 20  && h <= 80)       parts.push('暖色調');
   else if (h >= 160 && h <= 260)      parts.push('冷色調');
+  if (f.sepia > 30)                   parts.push('復古');
+  if (f.sharpness > 3)                parts.push('銳化');
+  else if (f.sharpness < -3)          parts.push('柔焦');
   return parts.length ? parts.join('・') : '原色';
 }
 
 function _isFilterDefault(f) {
-  return f.brightness === 1 && f.contrast === 1 && f.saturate === 1 && f.hueRotate === 0;
+  return f.brightness === 1 && f.contrast === 1 && f.saturate === 1 && f.hueRotate === 0 &&
+         !f.sepia && !f.sharpness;
+}
+function _isSelectiveDefault(s) {
+  if (Array.isArray(s)) {
+    return s.length === 0 || s.every(_isSelectiveDefault);
+  }
+  return s.targetHue === null
+    && s.hueShift   === 0
+    && s.brightness === 0
+    && s.contrast   === 0
+    && s.saturate   === 0
+    && s.sepia      === 0;
 }
 function _isTxDefault(t) {
   return t.scaleX === 1 && t.scaleY === 1 && t.translateX === 0 && t.translateY === 0 &&
@@ -255,12 +607,22 @@ export function vcSaveFilterPreset(force = false) {
     return;
   }
   if (!force) {
-    const dup = _loadFilterPresets().find(p =>
-      !p.deleted &&
-      p.filter?.brightness === _VCS.filter.brightness &&
-      p.filter?.contrast   === _VCS.filter.contrast   &&
-      p.filter?.saturate   === _VCS.filter.saturate   &&
-      p.filter?.hueRotate  === _VCS.filter.hueRotate);
+    const normList = (arr) =>
+      (Array.isArray(arr) ? arr : (arr ? [arr] : []))
+        .map(({id: _, ...rest}) => rest);
+    const curSelStr = JSON.stringify(normList(_VCS.selectiveList));
+    const dup = _loadFilterPresets().find(p => {
+      if (p.deleted) return false;
+      const fMatch =
+        p.filter?.brightness === _VCS.filter.brightness &&
+        p.filter?.contrast   === _VCS.filter.contrast   &&
+        p.filter?.saturate   === _VCS.filter.saturate   &&
+        p.filter?.hueRotate  === _VCS.filter.hueRotate  &&
+        (p.filter?.sepia     ?? 0) === (_VCS.filter.sepia     ?? 0) &&
+        (p.filter?.sharpness ?? 0) === (_VCS.filter.sharpness ?? 0);
+      if (!fMatch) return false;
+      return JSON.stringify(normList(p.selective)) === curSelStr;
+    });
     if (dup) {
       _showToast(
         `<span>此色調與「${dup.name}」相同。</span>` +
@@ -277,6 +639,7 @@ export function vcSaveFilterPreset(force = false) {
   presets.push({
     id, name: name.trim() || suggested,
     filter: { ..._VCS.filter },
+    selective: _VCS.selectiveList.map(s => ({ ...s })),
     createdAt:  new Date().toISOString(),
     modifiedAt: Date.now(),
   });
@@ -297,13 +660,24 @@ export function vcSaveFilterPreset(force = false) {
 export function vcApplyFilterPreset(id) {
   const preset = _loadFilterPresets().find(p => p.id === id);
   if (!preset) return;
-  _VCS.filter               = { ...preset.filter };
+  _VCS.filter               = { sepia: 0, sharpness: 0, ...preset.filter };
+  if (Array.isArray(preset.selective)) {
+    _VCS.selectiveList = preset.selective.map(s => ({ ..._selDefault(s.id), ...s }));
+  } else if (preset.selective && preset.selective.targetHue != null) {
+    _VCS.selectiveList = [{ ..._selDefault(), ...preset.selective }];
+  } else {
+    _VCS.selectiveList = [];
+  }
+  _VCS._activeSelectiveId = _VCS.selectiveList[0]?.id ?? null;
   _VCS._activeFilterPresetId = id;
-  // 記錄此影片最後套用的濾鏡（供下次開啟自動套用）
+  // 記錄此素材最後套用的濾鏡，並加入 presetIds（供 header 篩選計數）
   if (_VCS._itemId) {
     const vfl = _loadVideoFilterData(_VCS._itemId);
     vfl.lastUsed = id;
+    if (!vfl.presetIds) vfl.presetIds = [];
+    if (!vfl.presetIds.includes(id)) vfl.presetIds.push(id);
     _saveVideoFilterData(_VCS._itemId, vfl);
+    if (window.buildPresetChips) window.buildPresetChips();
   }
   vcApplyFilter(_VCS._vid);
   vcSyncPanel();
@@ -373,7 +747,8 @@ export function vcRenderFilterPresets() {
   function _row(p, linked) {
     const isActive = p.id === activeId;
     const bmCls = `vc-preset-bm${linked ? ' on' : ''}`;
-    const bmTip = linked ? '從此影片移除' : '加入此影片';
+    const _mediaWord = _VCS._mediaType === 'image' ? '此圖片' : '此影片';
+    const bmTip = linked ? `從${_mediaWord}移除` : `套用至${_mediaWord}`;
     return `<div class="vc-preset-row${isActive ? ' active' : ''}">` +
       (hasItem
         ? `<button class="${bmCls}" onclick="vcToggleVideoFilterPreset('${p.id}')" title="${bmTip}">🔖</button>`
@@ -479,12 +854,12 @@ export function vcRenderTransformActions() {
 ══════════════════════════════════════════════════════════════════ */
 export function vcSmartCrop() {
   const vid = _VCS._vid;
-  if (!vid || !vid.videoWidth || !vid.videoHeight) {
-    _showToast('<span>請等影片載入完成後再試</span>');
+  if (!vid || !(vid.naturalWidth || vid.videoWidth) || !(vid.naturalHeight || vid.videoHeight)) {
+    _showToast('<span>請等媒體載入完成後再試</span>');
     return;
   }
 
-  const W = vid.videoWidth, H = vid.videoHeight;
+  const W = vid.videoWidth || vid.naturalWidth, H = vid.videoHeight || vid.naturalHeight;
   const tx = _VCS.tx;
   const rotNorm = ((tx.rotate % 360) + 360) % 360;
   const isSwapped = (rotNorm === 90 || rotNorm === 270);
@@ -584,7 +959,8 @@ function _getVideoContentRect(vid) {
   const container = vid.parentElement;
   if (!container) return null;
   const cr  = container.getBoundingClientRect();
-  const vw  = vid.videoWidth, vh = vid.videoHeight;
+  const vw  = vid.videoWidth || vid.naturalWidth || 0;
+  const vh  = vid.videoHeight || vid.naturalHeight || 0;
   const scl = Math.min(cr.width / vw, cr.height / vh);
   const rw  = vw * scl, rh = vh * scl;
   return {
@@ -599,7 +975,8 @@ function _getVideoVisualRect(vid) {
   const container = vid.parentElement;
   if (!container) return null;
   const cr = container.getBoundingClientRect();
-  const vw = vid.videoWidth, vh = vid.videoHeight;
+  const vw = vid.videoWidth || vid.naturalWidth || 0;
+  const vh = vid.videoHeight || vid.naturalHeight || 0;
   const rotNorm = ((_VCS.tx.rotate % 360) + 360) % 360;
   const isSwapped = (rotNorm === 90 || rotNorm === 270);
   const ofit = Math.min(cr.width / vw, cr.height / vh);
@@ -686,8 +1063,10 @@ export function vcToggleCropMode() {
     vcCancelCrop();
   } else {
     const vid = _VCS._vid;
-    if (vid && vid.videoWidth) {
-      const nc = _getCropFromTransform(_VCS.tx, vid.videoWidth, vid.videoHeight);
+    if (vid && (vid.videoWidth || vid.naturalWidth)) {
+      const nw = vid.videoWidth || vid.naturalWidth;
+      const nh = vid.videoHeight || vid.naturalHeight;
+      const nc = _getCropFromTransform(_VCS.tx, nw, nh);
       if (nc.top + nc.bottom + nc.left + nc.right > 0) {
         const rotNorm = ((_VCS.tx.rotate % 360) + 360) % 360;
         const vc = _nativeToVisualScan(nc, rotNorm, _VCS.tx.flipH, _VCS.tx.flipV);
@@ -704,8 +1083,8 @@ export function vcToggleCropMode() {
 // initCrop: { top, bottom, left, right } 影片自然像素，null 表示全畫面
 function _vcStartCropMode(initCrop = null) {
   const vid = _VCS._vid;
-  if (!vid || !vid.videoWidth || !vid.videoHeight) {
-    _showToast('<span>請等影片載入完成後再試</span>');
+  if (!vid || !(vid.naturalWidth || vid.videoWidth) || !(vid.naturalHeight || vid.videoHeight)) {
+    _showToast('<span>請等媒體載入完成後再試</span>');
     return;
   }
 
@@ -771,7 +1150,8 @@ export function vcApplyCrop() {
   );
 
   const vid = _VCS._vid;
-  const NW = vid.videoWidth, NH = vid.videoHeight;
+  const NW = vid.videoWidth || vid.naturalWidth || 0;
+  const NH = vid.videoHeight || vid.naturalHeight || 0;
   const effH = NH - nc.top - nc.bottom, effW = NW - nc.left - nc.right;
   if (effH < 10 || effW < 10) { _showToast('<span>裁切範圍太小，請重新拖曳</span>'); return; }
 
@@ -960,6 +1340,10 @@ export function vcOnVideoEnded() {
    vcInitVid（新影片載入）
 ══════════════════════════════════════════════════════════════════ */
 export function vcInitVid(vid, itemId) {
+  _VCS._mediaType      = 'video';
+  vcStopEyedropper();
+  _releaseCanvas();
+  _VCS._imgOriginalSrc = null;
   // 切換影片時靜默清理裁切框（不觸發 panel toggle）
   if (_cropState) {
     _removeCropOverlay();
@@ -978,14 +1362,14 @@ export function vcInitVid(vid, itemId) {
   _VCS.ab          = { a: null, b: null, active: false };
 
   // 重置色彩濾鏡，再嘗試套用此影片已儲存的濾鏡
-  _VCS.filter               = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0 };
+  _VCS.filter               = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
   _VCS._activeFilterPresetId = null;
   if (itemId) {
     const vfl = _loadVideoFilterData(itemId);
     if (vfl.lastUsed) {
       const preset = _loadFilterPresets().find(p => p.id === vfl.lastUsed && !p.deleted);
       if (preset) {
-        _VCS.filter               = { ...preset.filter };
+        _VCS.filter               = { sepia: 0, sharpness: 0, ...preset.filter };
         _VCS._activeFilterPresetId = preset.id;
       }
     }
@@ -1021,14 +1405,107 @@ export function vcInitVid(vid, itemId) {
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   vcInitMedia（圖片 / 影片通用入口）
+══════════════════════════════════════════════════════════════════ */
+export function vcInitMedia(el, itemId, mediaType) {
+  _VCS._mediaType = mediaType || 'video';
+  vcStopEyedropper();
+  _releaseCanvas();
+  _VCS._imgOriginalSrc = null;
+  if (mediaType === 'image') {
+    _migrateOnce();
+    _VCS._vid    = el;
+    _VCS._itemId = itemId || null;
+    _VCS.ab      = { a: null, b: null, active: false };
+    _VCS.selectiveList = []; _VCS._activeSelectiveId = null;
+
+    _VCS.filter               = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
+    _VCS._activeFilterPresetId = null;
+    if (itemId) {
+      const vfl = _loadVideoFilterData(itemId);
+      if (vfl.lastUsed) {
+        const preset = _loadFilterPresets().find(p => p.id === vfl.lastUsed && !p.deleted);
+        if (preset) { _VCS.filter = { ...preset.filter }; _VCS._activeFilterPresetId = preset.id; }
+      }
+    }
+
+    _VCS.tx = { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0,
+                rotate: 0, flipH: false, flipV: false };
+    if (itemId) {
+      const snap = _loadTransformSnapshot(itemId);
+      if (snap?.tx) _VCS.tx = { ..._VCS.tx, ...snap.tx };
+    }
+
+    vcApplyFilter(el);
+    vcApplyTransform(el);
+    vcSyncPanel();
+    vcRenderFilterPresets();
+    vcRenderTransformActions();
+  } else {
+    vcInitVid(el, itemId);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   圖片專有控制（Image Tab：Zoom / Fit / BgColor / Navigation）
+   ─ 透過 _imageZoomCallbacks 由 modal.js 注入 izZoom / izFit
+══════════════════════════════════════════════════════════════════ */
+const _imageZoomCB = { zoom: null, fit: null, getScale: null, actualSize: null };
+
+export function vcRegisterImageZoom(zoomFn, fitFn, getScaleFn, actualSizeFn) {
+  _imageZoomCB.zoom       = zoomFn;
+  _imageZoomCB.fit        = fitFn;
+  _imageZoomCB.getScale   = getScaleFn   || null;
+  _imageZoomCB.actualSize = actualSizeFn || null;
+}
+
+export function vcImageZoom(delta) {
+  if (_imageZoomCB.zoom) _imageZoomCB.zoom(delta);
+}
+export function vcImageZoomSet(val) {
+  if (_imageZoomCB.zoom) _imageZoomCB.zoom(0, val);   // delta=0, absolute=val
+}
+export function vcImageFit() {
+  if (_imageZoomCB.fit) _imageZoomCB.fit();
+}
+export function vcImageActualSize() {
+  if (_imageZoomCB.actualSize) _imageZoomCB.actualSize();
+}
+
+let _imageNavFn = null;
+export function vcRegisterImageNav(fn) { _imageNavFn = fn; }
+export function vcImageNav(dir) {
+  if (_imageNavFn) _imageNavFn(dir);
+}
+
+export function vcSetModalBg(color) {
+  const mbox = document.getElementById('mbox');
+  if (mbox) mbox.style.background = color || '';
+}
+
+/* ══════════════════════════════════════════════════════════════════
    Apply
 ══════════════════════════════════════════════════════════════════ */
 export function vcApplyFilter(vid) {
   if (!vid) return;
   const f = _VCS.filter;
-  vid.style.filter =
-    `brightness(${f.brightness}) contrast(${f.contrast}) ` +
-    `saturate(${f.saturate}) hue-rotate(${f.hueRotate}deg)`;
+  const blurPx = f.sharpness < 0 ? Math.abs(f.sharpness) * 0.5 : 0;
+  const parts = [
+    `brightness(${f.brightness})`,
+    `contrast(${f.contrast})`,
+    `saturate(${f.saturate})`,
+    `hue-rotate(${f.hueRotate}deg)`,
+    `sepia(${f.sepia ?? 0}%)`,
+  ];
+  if (blurPx > 0) parts.push(`blur(${blurPx.toFixed(1)}px)`);
+  vid.style.filter = parts.join(' ');
+
+  if (_needsCanvas()) {
+    if (!_VCS._imgOriginalSrc) _VCS._imgOriginalSrc = vid.src;
+    _scheduleCanvasUpdate();
+  } else if (_VCS._mediaType === 'image' && _VCS._canvasObjectURL) {
+    _restoreOriginalSrc();
+  }
 }
 
 export function vcApplyTransform(vid) {
@@ -1054,16 +1531,18 @@ export function vcApplyTransform(vid) {
     const ctr = vid.parentElement;
     const cw  = ctr ? ctr.clientWidth  : 0;
     const ch  = ctr ? ctr.clientHeight : 0;
-    const vw  = vid.videoWidth;
-    const vh  = vid.videoHeight;
-    // 必須等 metadata 載入（vw/vh > 0）才能算正確的 fit；未就緒則等 loadedmetadata 再補算
+    const vw  = vid.videoWidth  || vid.naturalWidth  || 0;
+    const vh  = vid.videoHeight || vid.naturalHeight || 0;
+    // 必須等 metadata 載入（vw/vh > 0）才能算正確的 fit；未就緒則等載入完成再補算
     if (cw > 0 && ch > 0 && vw > 0 && vh > 0) {
       const ofit = Math.min(cw / vw, ch / vh);
       const fit  = Math.min(cw / (vh * ofit), ch / (vw * ofit));
       sx *= fit;
       sy *= fit;
-    } else if (vw === 0 || vh === 0) {
+    } else if ((vw === 0 || vh === 0) && vid.tagName === 'VIDEO') {
       vid.addEventListener('loadedmetadata', () => vcApplyTransform(vid), { once: true });
+    } else if ((vw === 0 || vh === 0) && vid.tagName === 'IMG') {
+      vid.addEventListener('load', () => vcApplyTransform(vid), { once: true });
     }
   }
 
@@ -1141,9 +1620,12 @@ export function vcAbTimeUpdate(vid) {
    Reset（各模組獨立 + 全部重置）
 ══════════════════════════════════════════════════════════════════ */
 export function vcResetFilters() {
-  _VCS.filter               = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0 };
+  _VCS.filter               = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
+  _VCS.selectiveList = []; _VCS._activeSelectiveId = null;
   _VCS._activeFilterPresetId = null;
-  // 清除此影片的 lastUsed，避免下次開啟又自動套用被重置的濾鏡
+  vcStopEyedropper();
+  _restoreOriginalSrc();
+  _VCS._imgOriginalSrc = null;
   if (_VCS._itemId) {
     const vfl = _loadVideoFilterData(_VCS._itemId);
     vfl.lastUsed = null;
@@ -1163,12 +1645,16 @@ export function vcResetTransform() {
   vcSyncPanel();
 }
 export function vcResetAll() {
-  _VCS.filter      = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0 };
+  _VCS.filter      = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
+  _VCS.selectiveList = []; _VCS._activeSelectiveId = null;
   _VCS.tx          = { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0,
                         rotate: 0, flipH: false, flipV: false };
   _VCS.ab          = { a: null, b: null, active: false };
   _VCS._autoRotate = 0;
   _VCS._activeFilterPresetId = null;
+  vcStopEyedropper();
+  _restoreOriginalSrc();
+  _VCS._imgOriginalSrc = null;
   const vid = _VCS._vid;
   if (vid) { vid.style.filter = ''; vid.style.transform = ''; vid.style.transformOrigin = ''; }
   vcSyncPanel();
@@ -1252,6 +1738,10 @@ export function vcSwitchTab(tab) {
 ══════════════════════════════════════════════════════════════════ */
 const _VC_DEFAULT_H = 0.55;
 
+function _syncVcBtn(isOpen) {
+  document.getElementById('m-vc-btn')?.classList.toggle('active', isOpen);
+}
+
 export function toggleVcPanel() {
   const panel = document.getElementById('vc-panel');
   if (!panel) return;
@@ -1260,6 +1750,7 @@ export function toggleVcPanel() {
     panel.style.maxHeight = Math.round(window.innerHeight * _VC_DEFAULT_H) + 'px';
   }
   panel.classList.toggle('open');
+  _syncVcBtn(opening);
   if (opening) {
     vcRenderFilterPresets();
     vcRenderTransformActions();
@@ -1268,6 +1759,7 @@ export function toggleVcPanel() {
 
 export function closeVcPanel() {
   document.getElementById('vc-panel')?.classList.remove('open');
+  _syncVcBtn(false);
 }
 
 let _vcDragInited = false;
@@ -1360,11 +1852,37 @@ function _setSlider(id, val, txt) {
 
 export function vcSyncPanel() {
   const f = _VCS.filter, t = _VCS.tx, ab = _VCS.ab;
+  const isImage = _VCS._mediaType === 'image';
 
-  _setSlider('vc-brightness', f.brightness, f.brightness.toFixed(2));
-  _setSlider('vc-contrast',   f.contrast,   f.contrast.toFixed(2));
-  _setSlider('vc-saturate',   f.saturate,   f.saturate.toFixed(2));
-  _setSlider('vc-hue',        f.hueRotate,  f.hueRotate + '°');
+  _setSlider('vc-brightness', f.brightness,        f.brightness.toFixed(2));
+  _setSlider('vc-contrast',   f.contrast,          f.contrast.toFixed(2));
+  _setSlider('vc-saturate',   f.saturate,          f.saturate.toFixed(2));
+  _setSlider('vc-hue',        f.hueRotate,         f.hueRotate + '°');
+  _setSlider('vc-sepia',     f.sepia     ?? 0, (f.sepia ?? 0) + '%');
+  _setSlider('vc-sharpness', f.sharpness ?? 0, (f.sharpness > 0 ? '+' : '') + (f.sharpness ?? 0));
+
+  // 多色塊 UI 同步
+  vcRenderSelectiveChips();
+  const sel      = _getActive();
+  const eyedropRow = document.getElementById('vc-sel-eyedropper-row');
+  const swatchEl   = document.getElementById('vc-sel-swatch');
+  const deltasEl   = document.getElementById('vc-sel-deltas');
+  const hasActive  = sel !== null;
+  const hasPick    = sel?.targetHue !== null;
+  if (eyedropRow) eyedropRow.style.display = hasActive ? '' : 'none';
+  if (swatchEl) {
+    swatchEl.style.background = hasPick ? `hsl(${sel.targetHue},70%,50%)` : 'transparent';
+    swatchEl.title = hasPick ? `色相 ${sel.targetHue}°` : '未取色';
+  }
+  if (deltasEl) deltasEl.style.display = hasPick ? '' : 'none';
+  const _fmtDelta = v => (v > 0 ? '+' : '') + v.toFixed(2);
+  const _s = sel ?? { hueShift: 0, range: 30, brightness: 0, contrast: 0, saturate: 0, sepia: 0 };
+  _setSlider('vc-sel-hueshift',   _s.hueShift,   (_s.hueShift > 0 ? '+' : '') + _s.hueShift + '°');
+  _setSlider('vc-sel-range',      _s.range,      '±' + _s.range + '°');
+  _setSlider('vc-sel-brightness', _s.brightness, _fmtDelta(_s.brightness));
+  _setSlider('vc-sel-contrast',   _s.contrast,   _fmtDelta(_s.contrast));
+  _setSlider('vc-sel-saturate',   _s.saturate,   _fmtDelta(_s.saturate));
+  _setSlider('vc-sel-sepia',      _s.sepia,      _s.sepia.toFixed(2));
 
   _setSlider('vc-scalex', t.scaleX,     t.scaleX.toFixed(2) + '×');
   _setSlider('vc-scaley', t.scaleY,     t.scaleY.toFixed(2) + '×');
@@ -1388,10 +1906,37 @@ export function vcSyncPanel() {
   if (btnA) btnA.classList.toggle('vc-on', ab.a !== null);
   if (btnB) btnB.classList.toggle('vc-on', ab.b !== null);
 
+  // 標題動態更新
+  const titleEl = document.getElementById('vc-title');
+  if (titleEl) titleEl.textContent = isImage ? '圖片控制' : '影片控制';
+
+  // 圖片縮放滑桿同步
+  if (isImage && _imageZoomCB.getScale) {
+    const s = _imageZoomCB.getScale();
+    _setSlider('vc-img-zoom', s, Math.round(s * 100) + '%');
+  }
+
+  // 播放 tab：圖片時隱藏
+  const playbackBtn  = document.querySelector('.vc-tab-btn[data-tab="playback"]');
+  const playbackPane = document.getElementById('vc-pane-playback');
+  if (playbackBtn)  playbackBtn.style.display  = isImage ? 'none' : '';
+  if (playbackPane) playbackPane.style.display = isImage ? 'none' : '';
+
+  // 圖片 tab：僅圖片時顯示
+  const imageTabBtn  = document.querySelector('.vc-tab-btn[data-tab="image"]');
+  const imageTabPane = document.getElementById('vc-pane-image');
+  if (imageTabBtn)  imageTabBtn.style.display  = isImage ? '' : 'none';
+  if (imageTabPane) imageTabPane.style.display = isImage ? '' : 'none';
+
+  // 自動切換 tab
+  if (isImage  && _currentTab === 'playback') vcSwitchTab('image');
+  if (!isImage && _currentTab === 'image')    vcSwitchTab('filters');
+
   vcSyncPlayback();
   vcRenderTransformActions();
 }
 
 // 模組初始化
+_migrateMediaFilterKeys();
 _migrateVideoFilterLinks();
 _syncLoad();

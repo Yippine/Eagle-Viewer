@@ -61,6 +61,9 @@ export const vidObs = new IntersectionObserver(entries => {
         const knownH = parseInt(target.dataset.vh || '0');
         if (!knownW || !knownH) {
           ratioBox.style.aspectRatio = `${vid.videoWidth} / ${vid.videoHeight}`;
+          // 實際比例更新後觸發 masonry 重排，避免後續卡片位置錯位
+          clearTimeout(_relayoutTimer);
+          _relayoutTimer = setTimeout(_relayout, 80);
         }
       }
     }, { once: true });
@@ -165,39 +168,110 @@ document.addEventListener('vc-snaps-synced', () => {
   });
 });
 
-/* ── 排序輔助：依 mode 排列項目（不影響 shuffle 路徑）──────────────── */
-function _sortItems(arr, mode) {
+/* ── 排序輔助：依 key + dir 排列項目（不影響 shuffle 路徑）────────── */
+function _sortItems(arr, key, dir) {
   const a = [...arr];
-  switch (mode) {
-    case 'date-desc': return a.sort((x, y) => (y.id > x.id ? 1 : -1));
-    case 'date-asc':  return a.sort((x, y) => (x.id > y.id ? 1 : -1));
-    case 'name-asc':  return a.sort((x, y) => x.name.localeCompare(y.name, 'zh-TW'));
-    case 'name-desc': return a.sort((x, y) => y.name.localeCompare(x.name, 'zh-TW'));
-    case 'tags-asc':  return a.sort((x, y) => {
-      const tx = (x.tags?.[0] || '￿').toLowerCase();
-      const ty = (y.tags?.[0] || '￿').toLowerCase();
-      return tx.localeCompare(ty, 'zh-TW');
+  const sign = dir === 'asc' ? 1 : -1;
+  switch (key) {
+    case 'date':  return a.sort((x, y) => sign * (x.id > y.id ? 1 : -1));
+    case 'mtime': return a.sort((x, y) => sign * ((x.mtime ?? 0) - (y.mtime ?? 0)));
+    case 'name':  return a.sort((x, y) => sign * x.name.localeCompare(y.name, 'zh-TW'));
+    case 'ext':   return a.sort((x, y) => {
+      const ex = (x.ext || '').toLowerCase();
+      const ey = (y.ext || '').toLowerCase();
+      const cmp = ex.localeCompare(ey, 'zh-TW');
+      return cmp !== 0 ? sign * cmp : sign * x.name.localeCompare(y.name, 'zh-TW');
     });
+    case 'dim':   return a.sort((x, y) => {
+      const da = (x.width ?? 0) * (x.height ?? 0);
+      const db = (y.width ?? 0) * (y.height ?? 0);
+      return sign * (da - db);
+    });
+    case 'duration': return a.sort((x, y) => sign * ((x.duration ?? 0) - (y.duration ?? 0)));
+    case 'star':  return a.sort((x, y) => sign * ((x.star ?? 0) - (y.star ?? 0)));
+    case 'size':  return a.sort((x, y) => sign * ((x.size ?? 0) - (y.size ?? 0)));
     default: return a;
   }
 }
 
+/* ── JS Masonry 引擎（排序模式專用）────────────────────────────────── */
+let _masonryCols = [];  // 各欄當前高度（px）
+
+
+function _getColCount() {
+  return parseInt(getComputedStyle(document.documentElement).getPropertyValue('--col')) || 4;
+}
+function _getGapPx() {
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gap')) || 14;
+}
+
+function _masonryLayout(gridEl, cards) {
+  if (!cards.length) return;
+  if (gridEl.offsetWidth === 0) return;
+
+  const cols = _getColCount();
+  const gap  = _getGapPx();
+  const colW = (gridEl.offsetWidth - gap * (cols - 1)) / cols;
+
+  if (_masonryCols.length !== cols) _masonryCols = new Array(cols).fill(0);
+
+  /* Phase 1：設定欄寬 + position:absolute（觸發單次 reflow）*/
+  cards.forEach(card => {
+    card.style.width        = colW + 'px';
+    card.style.position     = 'absolute';
+    card.style.marginBottom = '0';
+  });
+
+  /* Phase 2：批次讀實際高度（img 有 width/height HTML attr → 未載入也精準）*/
+  const heights = cards.map(card => card.offsetHeight);
+
+  /* Phase 3：HorizontalOrder 放置（ε = 2px，補浮點誤差，選最左等高欄）*/
+  const epsilon = 2;
+  cards.forEach((card, i) => {
+    const minH = Math.min(..._masonryCols);
+    let col = 0;
+    for (let c = 0; c < cols; c++) {
+      if (_masonryCols[c] <= minH + epsilon) { col = c; break; }
+    }
+    card.style.left = (col * (colW + gap)) + 'px';
+    card.style.top  = _masonryCols[col] + 'px';
+    _masonryCols[col] += heights[i] + gap;
+  });
+
+  gridEl.style.height = Math.max(..._masonryCols) + 'px';
+}
+
+/** 視窗 resize 後重新定位（debounce 150ms）*/
+export function _relayout() {
+  if (state.curSortKey === 'shuffle') return;
+  const gridEl = document.getElementById('grid');
+  _masonryCols = [];
+  _masonryLayout(gridEl, [...gridEl.querySelectorAll('.card')]);
+}
+let _resizeTimer;
+let _relayoutTimer;
+window.addEventListener('resize', () => { clearTimeout(_resizeTimer); _resizeTimer = setTimeout(_relayout, 150); });
+
 /* ── applyFilter：重算 filtered 並重繪 grid ─────────────────────────── */
 export function applyFilter() {
   const base = computeFiltered();
-  if (state.curSort === 'shuffle') {
+  if (state.curSortKey === 'shuffle') {
     state.shuffled = seededShuffle(base, currentSeed());
     state.filtered = state.shuffled;
   } else {
-    state.filtered = _sortItems(base, state.curSort);
+    state.filtered = _sortItems(base, state.curSortKey, state.curSortDir);
   }
-  state.page      = 0;
-  document.getElementById('grid').innerHTML = '';
+  state.page   = 0;
+  _masonryCols = [];
+  const gridEl     = document.getElementById('grid');
+  const isMasonry  = state.curSortKey !== 'shuffle';
+  gridEl.classList.toggle('grid--masonry', isMasonry);
+  if (!isMasonry) gridEl.style.height = '';  // 恢復 column-count 自然高度
+  gridEl.innerHTML = '';
   document.getElementById('ibar').textContent = `顯示 ${state.filtered.length} / ${state.ALL.length} 筆`;
   if (!state.filtered.length) {
-    document.getElementById('grid').innerHTML =
-      `<div class="state-empty" style="grid-column:1/-1;column:1/-1">
-         <div class="ei">🔍</div><span>沒有符合的項目</span></div>`;
+    gridEl.style.height = '';  // 清除 masonry 舊高度（避免空狀態在高容器中偏移）
+    gridEl.innerHTML = `<div class="state-empty"><div class="ei">🔍</div><span>沒有符合的項目</span></div>`;
     return;
   }
   appendPage();
@@ -211,18 +285,35 @@ export function appendPage() {
   const loader = document.getElementById('loader');
   loader.classList.add('visible');
   requestAnimationFrame(() => {
-    const slice = state.filtered.slice(start, start + PAGE);
-    const frag  = document.createDocumentFragment();
-    const tmp   = document.createElement('div');
+    const slice    = state.filtered.slice(start, start + PAGE);
+    const frag     = document.createDocumentFragment();
+    const tmp      = document.createElement('div');
+    const newCards = [];
     slice.forEach(item => {
       tmp.innerHTML = buildCard(item);
-      while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+      while (tmp.firstChild) {
+        const el = tmp.firstChild;
+        if (el.nodeType === 1 && el.classList?.contains('card')) newCards.push(el);
+        frag.appendChild(el);
+      }
     });
-    document.getElementById('grid').appendChild(frag);
+    const gridEl = document.getElementById('grid');
+    gridEl.appendChild(frag);
+    if (state.curSortKey !== 'shuffle') _masonryLayout(gridEl, newCards);
     loader.classList.remove('visible');
-    document.querySelectorAll('.vid-lazy[data-vsrc]:not([data-obs])').forEach(el => {
+    gridEl.querySelectorAll('.vid-lazy[data-vsrc]:not([data-obs])').forEach(el => {
       el.dataset.obs = '1'; vidObs.observe(el);
     });
-    document.querySelectorAll('.vid-snap[data-snap-id]:not([data-snap-ok])').forEach(_applySnapThumb);
+    gridEl.querySelectorAll('.vid-snap[data-snap-id]:not([data-snap-ok])').forEach(_applySnapThumb);
+    // 對沒有明確尺寸的圖片（如 Excire Foto），載入後觸發 relayout
+    newCards.forEach(card => {
+      const img = card.querySelector('img.nat:not([width])');
+      if (img && !img.complete) {
+        img.addEventListener('load', () => {
+          clearTimeout(_relayoutTimer);
+          _relayoutTimer = setTimeout(_relayout, 80);
+        }, { once: true });
+      }
+    });
   });
 }

@@ -1,6 +1,8 @@
 'use strict';
 /* ── modal.js  ▸  Lightbox 模態視窗（桌面圖片 / 影片預覽）─────────────── */
 
+import { vcRegisterImageZoom, vcInitMedia, closeVcPanel, vcSyncPanel, vcImageNav, vcApplyTransform } from './video-controls.js';
+
 let _modalHistoryPushed = false;
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -40,14 +42,17 @@ function _izEnsureCenter() {
   return true;
 }
 
-/* 套用 transform 到 img */
+/* 套用 transform 到 img（合併 _IZ 縮放/平移 + _VCS 幾何變換，避免互相覆蓋） */
 function _izApply(img) {
   if (_IZ.s <= 1.001) {
-    img.style.transform = '';
+    vcApplyTransform(img);  // 還原 _VCS 幾何變換（翻轉/旋轉）而非清空
     img.classList.remove('iz-zoomed', 'iz-dragging');
   } else {
+    vcApplyTransform(img);  // 先套用 _VCS 幾何變換
+    const baseTransform = img.style.transform || '';
     img.style.transform =
-      `translate(${_IZ.px.toFixed(1)}px,${_IZ.py.toFixed(1)}px) scale(${_IZ.s.toFixed(3)})`;
+      `translate(${_IZ.px.toFixed(1)}px,${_IZ.py.toFixed(1)}px) scale(${_IZ.s.toFixed(3)})` +
+      (baseTransform ? ` ${baseTransform}` : '');
     img.classList.add('iz-zoomed');
     img.classList.toggle('iz-dragging', _IZ.dragging);
   }
@@ -74,6 +79,7 @@ function _izWheel(e) {
   e.preventDefault();
   const img = document.querySelector('#mbody img');
   if (!img || !_izEnsureCenter()) return;
+  img.classList.remove('iz-animate');  // 滾輪縮放不用動畫，保持即時
 
   const oldS = _IZ.s;
   const step = e.deltaY < 0 ? 0.15 : -0.15;
@@ -93,6 +99,7 @@ function _izWheel(e) {
 
   _izApply(img);
   _izIndicator();
+  vcSyncPanel();
 }
 
 /* ── 拖曳平移（縮放時才作用）────────────────────────────────────── */
@@ -148,14 +155,90 @@ function _izDblClick(e) {
 
 /* ── 點擊 #mbox / #mbody 的空白區域關閉（img-mode 專用）────────── */
 function _izMboxClick(e) {
+  if (e.target.closest('#m-vc-btn')) return;
   const img = document.querySelector('#mbody img');
   if (e.target !== img) closeModal();
 }
 
 /* ════════════════════════════════════════════════════════════════════
+   izZoom / izFit — 供 video-controls.js image tab 呼叫
+   ════════════════════════════════════════════════════════════════════ */
+export function izGetScale() { return _IZ.s; }
+
+export function izZoom(delta, absolute) {
+  const img = document.querySelector('#mbody img');
+  if (!img || !_IZ.active) return;
+  if (absolute !== undefined) {
+    _IZ.s = Math.max(1, Math.min(8, absolute));
+  } else {
+    _IZ.s = Math.max(1, Math.min(8, _IZ.s + delta));
+  }
+  if (_IZ.s <= 1.001) { _IZ.px = 0; _IZ.py = 0; }
+  _izApply(img);
+  _izIndicator();
+  vcSyncPanel();
+}
+
+export function izFit() {
+  const img = document.querySelector('#mbody img');
+  if (!img || !_IZ.active) return;
+  img.classList.add('iz-animate');
+  _IZ.px = 0; _IZ.py = 0;
+  // clientWidth/Height = CSS layout 尺寸（s=1 時的顯示大小，不受 _IZ.s 影響）
+  // 對大圖：clientWidth ≈ 容器寬，scale ≈ 1（已填滿）
+  // 對小圖：clientWidth = naturalWidth < 容器寬，scale > 1（需放大才能填滿）
+  const mbody = img.parentElement;
+  if (mbody && img.clientWidth > 0 && img.clientHeight > 0) {
+    const s = Math.min(mbody.clientWidth / img.clientWidth, mbody.clientHeight / img.clientHeight);
+    _IZ.s = Math.max(1, Math.min(8, s));
+  } else {
+    _IZ.s = 1;
+  }
+  _izApply(img);
+  _izIndicator();
+  vcSyncPanel();
+}
+
+export function izActualSize() {
+  const img = document.querySelector('#mbody img');
+  if (!img || !_IZ.active) return;
+  if (!img.naturalWidth || !img.clientWidth) return;
+  // clientWidth = layout width（CSS transform 不影響 layout），即 s=1 時的顯示寬度
+  const scale = img.naturalWidth / img.clientWidth;
+  _IZ.s = Math.max(1, Math.min(8, scale));
+  if (_IZ.s <= 1.001) { _IZ.px = 0; _IZ.py = 0; }
+  img.classList.add('iz-animate');
+  _izApply(img);
+  _izIndicator();
+  vcSyncPanel();
+}
+
+// 模組初始化時向 video-controls 注冊 zoom 回調
+vcRegisterImageZoom(izZoom, izFit, izGetScale, izActualSize);
+
+/* ── 圖片模式鍵盤導覽（ArrowLeft/Right）─────────────────────────── */
+function _izKeyNav(e) {
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); vcImageNav('prev'); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); vcImageNav('next'); }
+}
+
+/* ── 圖片模式觸控 swipe 導覽（水平 > 50px）─────────────────────── */
+let _izSwipeX = null;
+function _izTouchStart(e) {
+  if (e.touches.length === 1) _izSwipeX = e.touches[0].clientX;
+}
+function _izTouchEnd(e) {
+  if (_izSwipeX === null) return;
+  const dx = e.changedTouches[0].clientX - _izSwipeX;
+  _izSwipeX = null;
+  if (Math.abs(dx) < 50) return;
+  vcImageNav(dx < 0 ? 'next' : 'prev');
+}
+
+/* ════════════════════════════════════════════════════════════════════
    openModal / closeModal
    ════════════════════════════════════════════════════════════════════ */
-export function openModal(src, type) {
+export function openModal(src, type, itemId) {
   _izReset();
   const mbody = document.getElementById('mbody');
   const mbox  = document.getElementById('mbox');
@@ -176,6 +259,14 @@ export function openModal(src, type) {
     img.addEventListener('dblclick',  _izDblClick);
     mbody.appendChild(img);
 
+    /* 初始化 vc-panel 為圖片模式（快取圖片 load 不觸發，需補 complete 檢查） */
+    const _initVcImage = () => vcInitMedia(img, itemId || null, 'image');
+    if (img.complete) {
+      requestAnimationFrame(_initVcImage);
+    } else {
+      img.addEventListener('load', _initVcImage, { once: true });
+    }
+
     /* 點擊 #mbox / #mbody 空白區域（letterbox）→ 關閉 */
     mbox.addEventListener('click', _izMboxClick);
 
@@ -184,6 +275,12 @@ export function openModal(src, type) {
     document.addEventListener('mousemove', _izMouseMove);
     document.addEventListener('mouseup',   _izMouseUp);
     document.addEventListener('click',     _izClickCapture, true);
+
+    /* 鍵盤 ArrowLeft/Right 切換上下張（圖片模式） */
+    document.addEventListener('keydown', _izKeyNav);
+    /* 手指左右 swipe 切換上下張 */
+    mbox.addEventListener('touchstart', _izTouchStart, { passive: true });
+    mbox.addEventListener('touchend',   _izTouchEnd);
   } else {
     mbox.classList.remove('img-mode');
     const vid = document.createElement('video');
@@ -205,13 +302,18 @@ export function closeModal(fromPopstate = false) {
   document.getElementById('mbox').classList.remove('img-mode');
   document.getElementById('mbody').innerHTML = '';
 
-  document.getElementById('mbox').removeEventListener('click', _izMboxClick);
+  const mbox = document.getElementById('mbox');
+  mbox.removeEventListener('click',      _izMboxClick);
+  mbox.removeEventListener('touchstart', _izTouchStart);
+  mbox.removeEventListener('touchend',   _izTouchEnd);
   document.removeEventListener('wheel',     _izWheel,       { capture: true });
   document.removeEventListener('mousemove', _izMouseMove);
   document.removeEventListener('mouseup',   _izMouseUp);
   document.removeEventListener('click',     _izClickCapture, true);
+  document.removeEventListener('keydown',   _izKeyNav);
 
   _izReset();
+  closeVcPanel();
   if (!fromPopstate && _modalHistoryPushed) history.back();
   _modalHistoryPushed = false;
 }

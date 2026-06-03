@@ -16,8 +16,16 @@ function _saveSeeds(arr) {
 export let seeds    = _loadSeeds();
 export let seedIdx  = seeds.length - 1;
 
+// t045：FIFO 上限，預設 7（Miller's Law 7±2），可由偏好設定覆蓋
+export const DEFAULT_MAX_SEEDS = 7;
+export function getMaxSeeds() {
+  return parseInt(localStorage.getItem('eagle-pref-max-seeds') || DEFAULT_MAX_SEEDS, 10);
+}
+
 export function newSeed() {
+  const maxSeeds = getMaxSeeds();
   const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+  if (seeds.length >= maxSeeds) seeds.shift(); // FIFO：移除最舊
   seeds.push(seed);
   seedIdx = seeds.length - 1;
   _saveSeeds(seeds);

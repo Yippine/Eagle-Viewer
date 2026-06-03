@@ -1,52 +1,11 @@
 'use strict';
-/* ── stats.js  ▸  觀看統計面板（歷史紀錄 Tab + 統計分析 Tab）───────────── */
+/* ── stats.js  ▸  觀看統計面板（單頁統一渲染：摘要 → 分析 → 歷史）────────── */
 
 import { state }                        from './state.js';
 import { h, KIND_ICON, fmtDuration, encodePath } from './utils.js';
 import { deleteHistoryEntry, clearAllViews } from './api.js';
-import { mpCommitDuration }             from './player-mobile.js';
-import { dpCommitDuration }             from './player-desktop.js';
 
-let _statsTab = 'history';
-
-/* ── 開啟 / 關閉 ─────────────────────────────────────────────────── */
-let _statsHistoryPushed = false;
-
-export async function openStats() {
-  mpCommitDuration();
-  dpCommitDuration();
-  document.getElementById('stats-panel').classList.add('open');
-  document.getElementById('stats-backdrop').classList.add('open');
-  history.pushState({ overlay: 'stats' }, '');
-  _statsHistoryPushed = true;
-  document.getElementById('sp-body').innerHTML =
-    '<div class="sp-loading"><div class="spin"></div><span>載入中…</span></div>';
-  try {
-    const ctrl = new AbortController();
-    const tid  = setTimeout(() => ctrl.abort(), 4000);
-    const res  = await fetch(`/api/views?lib=${encodeURIComponent(state.activeLib)}`, { signal: ctrl.signal });
-    clearTimeout(tid);
-    if (res.ok) state.VIEWS = await res.json();
-  } catch (_) {}
-  renderStatsPanel();
-}
-
-export function closeStats(fromPopstate = false) {
-  if (!document.getElementById('stats-panel').classList.contains('open')) return;
-  document.getElementById('stats-panel').classList.remove('open');
-  document.getElementById('stats-backdrop').classList.remove('open');
-  if (!fromPopstate && _statsHistoryPushed) history.back();
-  _statsHistoryPushed = false;
-}
-
-export function switchStatsTab(tab) {
-  _statsTab = tab;
-  document.querySelectorAll('.sp-tab').forEach(b =>
-    b.classList.toggle('on', b.dataset.tab === tab));
-  renderStatsPanel();
-}
-
-/* ── 主渲染 ──────────────────────────────────────────────────────── */
+/* ── 主渲染（單一捲動頁：摘要 → 分析圖表 → 觀看記錄）─────────────── */
 export function renderStatsPanel() {
   const allIds   = new Set(state.ALL.map(i => i.id));
   const viewList = Object.entries(state.VIEWS).map(([id, rec]) => ({
@@ -58,11 +17,84 @@ export function renderStatsPanel() {
   })).sort((a, b) => b.views - a.views);
 
   document.getElementById('sp-body').innerHTML =
-    _statsTab === 'history' ? _renderHistoryTab(viewList) : _renderStatsTab(viewList);
+    _renderSummarySection(viewList) +
+    _renderAnalysisSection(viewList) +
+    _renderHistorySection(viewList);
 }
 
-/* ── 歷史紀錄 Tab ────────────────────────────────────────────────── */
-function _renderHistoryTab(viewList) {
+/* ── 摘要數字（常駐頂部）────────────────────────────────────────── */
+function _renderSummarySection(viewList) {
+  const totalViews  = viewList.reduce((s, v) => s + v.views, 0);
+  const totalTime   = viewList.reduce((s, v) => s + (v.total_watch_time || 0), 0);
+  const uniqueItems = viewList.length;
+  const timeFontSz  = totalTime >= 3600 ? '18px' : totalTime >= 60 ? '20px' : '24px';
+  return `
+    <div class="sp-summary">
+      <div class="sp-stat"><div class="sv">${totalViews}</div><div class="sl">總觀看次數</div></div>
+      <div class="sp-stat"><div class="sv">${uniqueItems}</div><div class="sl">已觀看項目</div></div>
+      <div class="sp-stat"><div class="sv" style="font-size:${timeFontSz}">${fmtDuration(totalTime) || '0秒'}</div><div class="sl">總停留時間</div></div>
+    </div>`;
+}
+
+/* ── 分析圖表（摘要之後）────────────────────────────────────────── */
+function _renderAnalysisSection(viewList) {
+  if (!viewList.length) return '';
+  const domainViews = {};
+  viewList.forEach(v => { domainViews[v.domain] = (domainViews[v.domain] || 0) + v.views; });
+
+  const now = new Date(), months = [];
+  for (let m = 11; m >= 0; m--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
+    months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: `${d.getMonth() + 1}月`, count: 0 });
+  }
+  const mMap = {}; months.forEach(m => { mMap[m.key] = m; });
+  viewList.forEach(v => v.history.forEach(hh => {
+    const k = hh.t ? hh.t.slice(0, 7) : '';
+    if (mMap[k]) { mMap[k].count++; mMap[k].time += (hh.d || 0); }
+  }));
+  viewList.forEach(v => v.history.forEach(hh => {
+    const k = hh.t ? hh.t.slice(0, 7) : '';
+    if (mMap[k]) mMap[k].count++;
+  }));
+  const maxMonth = Math.max(1, ...months.map(m => m.count));
+
+  const domainRows = Object.entries(domainViews).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const maxDV      = Math.max(1, domainRows[0]?.[1] || 1);
+  const top10      = viewList.slice(0, 10);
+
+  return `
+    <div class="sp-section-hdr">📈 統計分析</div>
+
+    <div class="sp-h">近 12 個月趨勢</div>
+    <div class="month-chart">
+      ${months.map(m => `
+        <div class="mc-col">
+          <div class="mc-val">${m.count || ''}</div>
+          <div class="mc-bar" style="height:${Math.round(m.count / maxMonth * 80)}px"></div>
+          <div class="mc-label">${m.label}</div>
+        </div>`).join('')}
+    </div>
+
+    <div class="sp-h">網域觀看分佈</div>
+    <div class="bar-chart">
+      ${domainRows.map(([d, c]) => `
+        <div class="bc-row">
+          <div class="bc-label" title="${h(d)}">${h(d)}</div>
+          <div class="bc-track"><div class="bc-fill" style="width:${Math.round(c / maxDV * 100)}%"></div></div>
+          <div class="bc-val">${c}</div>
+        </div>`).join('')}
+      ${domainRows.length === 0 ? '<div style="color:var(--text3);font-size:13px">尚無資料</div>' : ''}
+    </div>
+
+    <div class="sp-h">TOP 10 最常觀看</div>
+    <div class="sp-items">
+      ${top10.map((v, i) => _spItem(v, i + 1)).join('')}
+      ${top10.length === 0 ? '<div style="color:var(--text3);font-size:13px">尚無觀看紀錄</div>' : ''}
+    </div>`;
+}
+
+/* ── 觀看記錄（時間軸，最後一個 section）───────────────────────── */
+function _renderHistorySection(viewList) {
   const events = [];
   viewList.forEach(v => {
     if (v.history?.length) v.history.forEach(hEntry => events.push({ ...v, t: hEntry.t, dur: hEntry.d || 0 }));
@@ -70,12 +102,19 @@ function _renderHistoryTab(viewList) {
   });
   events.sort((a, b) => new Date(b.t) - new Date(a.t));
 
-  if (!events.length) return `
-    <div style="color:var(--text3);font-size:14px;padding:48px 0;text-align:center">
-      <div style="font-size:40px;margin-bottom:12px">🎬</div>
+  const emptyHtml = `
+    <div style="color:var(--text3);font-size:14px;padding:32px 0;text-align:center">
+      <div style="font-size:36px;margin-bottom:10px">🎬</div>
       尚無觀看紀錄<br>
       <span style="font-size:12px">點擊任何影片或連結即可開始記錄</span>
     </div>`;
+
+  const headerHtml = `<div class="sp-section-hdr" style="display:flex;align-items:center;justify-content:space-between">
+    <span>🕐 觀看記錄</span>
+    ${events.length ? `<span style="font-size:13px;color:var(--text3);font-weight:400">共 ${events.length} 筆${events.length >= 100 ? '（顯示最近 100 筆）' : ''}</span>` : ''}
+  </div>`;
+
+  if (!events.length) return headerHtml + emptyHtml;
 
   const today = new Date().toISOString().slice(0, 10);
   const yest  = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
@@ -88,8 +127,7 @@ function _renderHistoryTab(viewList) {
     groups.get(label).push(e);
   });
 
-  let html = `<div class="sp-hist-toolbar">
-    <span class="sp-hist-total">共 ${events.length} 筆${events.length >= 100 ? '（顯示最近 100 筆）' : ''}</span>
+  let html = headerHtml + `<div style="display:flex;justify-content:flex-end;margin-bottom:4px">
     <button class="sp-clear-btn" onclick="clearAllHistory()">清除全部</button>
   </div>`;
 
@@ -112,8 +150,8 @@ function _renderHistoryTab(viewList) {
 
       const isImage = e.item?.file && e.item?.media_type === 'image';
       let clickAttr = '';
-      if (isVideo)        clickAttr = `onclick="_playVideoItem('${h(e.id)}')"`;
-      else if (isImage)   clickAttr = `onclick="_openImageItem('${h(e.id)}')"`;
+      if (isVideo)          clickAttr = `onclick="_playVideoItem('${h(e.id)}')"`;
+      else if (isImage)     clickAttr = `onclick="_openImageItem('${h(e.id)}')"`;
       else if (e.item?.url) clickAttr = `onclick="trackView(_lookupItem('${h(e.id)}'));_openUrl('${h(e.item.url)}')"`;
 
       html += `<div class="sp-hist-item" ${clickAttr} style="${clickAttr ? '' : 'cursor:default'}"
@@ -134,83 +172,6 @@ function _renderHistoryTab(viewList) {
     html += '</div>';
   }
   return html;
-}
-
-/* ── 統計分析 Tab ────────────────────────────────────────────────── */
-function _renderStatsTab(viewList) {
-  const totalViews  = viewList.reduce((s, v) => s + v.views, 0);
-  const totalTime   = viewList.reduce((s, v) => s + (v.total_watch_time || 0), 0);
-  const uniqueItems = viewList.length;
-  const domainViews = {};
-  viewList.forEach(v => { domainViews[v.domain] = (domainViews[v.domain] || 0) + v.views; });
-  const topDomain = Object.entries(domainViews).sort((a, b) => b[1] - a[1])[0];
-
-  const now = new Date(), months = [];
-  for (let m = 11; m >= 0; m--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
-    months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: `${d.getMonth() + 1}月`, count: 0, time: 0 });
-  }
-  const mMap = {}; months.forEach(m => { mMap[m.key] = m; });
-  viewList.forEach(v => v.history.forEach(hh => {
-    const k = hh.t ? hh.t.slice(0, 7) : '';
-    if (mMap[k]) { mMap[k].count++; mMap[k].time += (hh.d || 0); }
-  }));
-  const maxMonth = Math.max(1, ...months.map(m => m.count));
-
-  const domainRows = Object.entries(domainViews).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const maxDV      = Math.max(1, domainRows[0]?.[1] || 1);
-  const top20      = viewList.slice(0, 20);
-
-  return `
-    <div class="sp-summary">
-      <div class="sp-stat"><div class="sv">${totalViews}</div><div class="sl">總觀看次數</div></div>
-      <div class="sp-stat"><div class="sv">${uniqueItems}</div><div class="sl">已觀看項目</div></div>
-      <div class="sp-stat">
-        <div class="sv" style="font-size:${totalTime >= 3600 ? '20px' : totalTime >= 60 ? '18px' : '22px'}">${fmtDuration(totalTime) || '0秒'}</div>
-        <div class="sl">總停留時間</div>
-      </div>
-    </div>
-    <div class="sp-summary" style="margin-top:-10px">
-      <div class="sp-stat">
-        <div class="sv" style="font-size:${topDomain && topDomain[0].length > 8 ? '13px' : '20px'}">${topDomain ? h(topDomain[0]) : '–'}</div>
-        <div class="sl">最多看的網域</div>
-      </div>
-      <div class="sp-stat">
-        <div class="sv" style="font-size:18px">${totalViews > 0 ? fmtDuration(Math.round(totalTime / totalViews)) : '–'}</div>
-        <div class="sl">平均停留時間</div>
-      </div>
-      <div class="sp-stat">
-        <div class="sv">${viewList.filter(v => v.total_watch_time > 0).length}</div>
-        <div class="sl">有時間紀錄</div>
-      </div>
-    </div>
-
-    <div class="sp-h">TOP 20 最常觀看</div>
-    <div class="sp-items">
-      ${top20.map((v, i) => _spItem(v, i + 1)).join('')}
-      ${top20.length === 0 ? '<div style="color:var(--text3);font-size:13px">尚無觀看紀錄</div>' : ''}
-    </div>
-
-    <div class="sp-h">網域觀看分佈</div>
-    <div class="bar-chart">
-      ${domainRows.map(([d, c]) => `
-        <div class="bc-row">
-          <div class="bc-label" title="${h(d)}">${h(d)}</div>
-          <div class="bc-track"><div class="bc-fill" style="width:${Math.round(c / maxDV * 100)}%"></div></div>
-          <div class="bc-val">${c}</div>
-        </div>`).join('')}
-      ${domainRows.length === 0 ? '<div style="color:var(--text3);font-size:13px">尚無資料</div>' : ''}
-    </div>
-
-    <div class="sp-h">近 12 個月觀看趨勢</div>
-    <div class="month-chart">
-      ${months.map(m => `
-        <div class="mc-col">
-          <div class="mc-val">${m.count || ''}</div>
-          <div class="mc-bar" style="height:${Math.round(m.count / maxMonth * 80)}px"></div>
-          <div class="mc-label">${m.label}</div>
-        </div>`).join('')}
-    </div>`;
 }
 
 function _spItem(v, rank) {

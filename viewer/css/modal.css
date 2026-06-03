@@ -42,12 +42,14 @@
   box-shadow: 0 24px 80px rgba(0,0,0,.7);
   transform-origin: center center;
   will-change: transform;
+  animation: none;  /* 避免縮放回 1x 時 scale-in 重新觸發造成閃現 */
   cursor: zoom-in;
   border-radius: 0;
   user-select: none; -webkit-user-drag: none;
 }
 #mbox.img-mode #mbody img.iz-zoomed  { cursor: grab; animation: none; }
 #mbox.img-mode #mbody img.iz-dragging { cursor: grabbing; }
+#mbox.img-mode #mbody img.iz-animate  { transition: transform .25s ease; }
 
 /* ── 縮放倍率指示器 ──────────────────────────────────────────────── */
 #m-zoom-ind {
@@ -59,11 +61,14 @@
   backdrop-filter: blur(8px);
 }
 #m-zoom-ind.show { opacity: 1; }
-#m-close {
-  position: absolute; top: -48px; right: -2px;
+#m-close, #m-vc-btn {
+  position: absolute; top: -48px;
   width: 36px; height: 36px; border-radius: 50%;
   background: rgba(255,255,255,.15); color: #fff;
   font-size: 17px; display: flex; align-items: center; justify-content: center;
   backdrop-filter: blur(8px); transition: background .15s;
 }
-#m-close:hover { background: rgba(255,255,255,.3); }
+#m-close { right: -2px; }
+#m-vc-btn { right: 42px; }
+#m-close:hover, #m-vc-btn:hover { background: rgba(255,255,255,.3); }
+#m-vc-btn.active { background: rgba(255,255,255,.35); }

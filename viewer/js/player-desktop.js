@@ -34,7 +34,7 @@ export function openItemInDesktopPlayer(itemId) {
     list = seededShuffle(base, currentSeed());
     idx  = list.findIndex(i => i.id === itemId);
     if (idx === -1) return;
-  } else if (state.curDomain === 'all') {
+  } else if (!state.curDomains?.size) {
     const dl = list.filter(i => i.domain === clicked.domain);
     const di = dl.findIndex(i => i.id === itemId);
     if (di !== -1) { list = dl; idx = di; }

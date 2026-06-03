@@ -1,0 +1,46 @@
+# Eagle-Viewer 外部下載服務
+# 啟動：docker compose up -d
+# 停止：docker compose down
+#
+# 端口對應：
+#   9001  → cobalt API        （X.com / YouTube / Facebook / TikTok 全球版…）
+#   9003  → Evil0ctal API     （抖音 / Douyin）
+#   5555  → XHS-Downloader    （小紅書 / XiaoHongShu）
+
+services:
+
+  # ── cobalt（主力，涵蓋西方平台）──────────────────────────────
+  cobalt-api:
+    image: ghcr.io/imputnet/cobalt:11    # 升級：:10 → :11（A1）
+    restart: unless-stopped
+    container_name: eagle-cobalt
+    ports:
+      - "127.0.0.1:9001:9000"
+    environment:
+      API_URL: "http://localhost:9001"
+      CORS_WILDCARD: "1"
+
+  # ── Evil0ctal（抖音 / Douyin 專用）────────────────────────────
+  evil0ctal-api:
+    image: evil0ctal/douyin_tiktok_download_api:latest
+    restart: unless-stopped
+    container_name: eagle-douyin
+    ports:
+      - "127.0.0.1:9003:8080"             # port 9003（2333/9002 被 Windows 側封鎖；8080 避開容器 port 80 問題）
+    volumes:
+      - ./config/evil0ctal_config.yaml:/app/config.yaml:ro  # override Host_Port: 80 → 8080
+
+  # ── XHS-Downloader（小紅書）────────────────────────────────────
+  # 官方映像檔：joeanamier/xhs-downloader（Docker Hub）
+  xhs-api:
+    image: joeanamier/xhs-downloader  # 官方映像（A3）
+    restart: unless-stopped
+    container_name: eagle-xhs
+    ports:
+      - "127.0.0.1:5555:5556"         # 容器內部 port 為 5556（A3）
+    volumes:
+      - xhs_downloader_volume:/app/Volume  # cookie 持久化
+    command: python main.py api       # API server mode
+
+volumes:
+  xhs_downloader_volume:

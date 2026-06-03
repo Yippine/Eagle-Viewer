@@ -8,28 +8,57 @@
 
   .mob-play-hint { display: block; }
 
+  /* 設定面板：bottom sheet（iPhone 模式）*/
   #stats-panel {
     top: auto; left: 0; right: 0; bottom: 0; width: 100%;
-    max-height: 92vh; border-radius: 20px 20px 0 0;
+    max-height: 94vh; border-radius: 18px 18px 0 0;
     border-left: none; border-top: 1px solid var(--border);
-    box-shadow: 0 -8px 40px rgba(0,0,0,.18);
+    box-shadow: 0 -6px 40px rgba(0,0,0,.16);
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
+  /* bottom sheet 動畫（覆蓋桌面的 slide-in-right）*/
   @keyframes slide-in-right {
-    from { transform: translateY(80px); opacity: 0 }
+    from { transform: translateY(60px); opacity: 0 }
     to   { transform: translateY(0);    opacity: 1 }
   }
-  .sp-tabs { top: 61px; }
+  /* sp-header：padding 更緊湊，加 bottom sheet 拖拽指示 */
+  .sp-header { padding: 14px 16px 0; }
+  .sp-header::before {
+    content: ''; display: block; position: absolute;
+    top: 8px; left: 50%; transform: translateX(-50%);
+    width: 32px; height: 4px; border-radius: 2px;
+    background: var(--border);
+  }
+  /* tab bar */
+  .st-tabs { padding: 6px 16px 0; }
+  .st-tab  { padding: 10px 12px 8px; font-size: 13px; }
 
-  .sp-hist-thumb, .sp-hist-thumb-ph { width: 90px; height: 51px; }
-  .sp-summary { grid-template-columns: repeat(3,1fr); gap: 8px; }
+  .sp-hist-thumb, .sp-hist-thumb-ph { width: 80px; height: 45px; }
+  .sp-hist-item { padding: 9px 16px; }
+  .sp-summary { grid-template-columns: repeat(3,1fr); gap: 8px; margin: 12px 16px 4px; }
+  .sp-h { margin: 16px 16px 6px; }
+  .bar-chart { padding: 0 16px; }
+  .month-chart { padding: 0 16px; }
+  .sp-section-hdr { padding: 14px 16px 0; }
+  .sp-body { padding: 0 0 32px; }
+
+  /* 空通知狀態：補足 notif-footer 隱藏時的視覺落差（上方空間感較大）*/
+  .notif-empty { padding-bottom: 48px; }
+
+  /* 手機版三欄動態高度由 ui-filters.js _syncPanelHeights() 以 JS 計算接管
+   * CSS custom property --fbar/tag/preset-panel-mh 於每次 toggle/resize 更新 */
 }
 
 @media (max-width: 580px) {
-  .hdr-inner   { gap: 7px; padding: 10px 14px 8px; }
+  .hdr-inner   { gap: 6px; padding: 8px 14px 6px; }
+  .hdr-row-1   { flex-wrap: wrap; gap: 6px; }  /* 手機允許換行 */
+  .hdr-row-2   { flex-wrap: wrap; gap: 5px; }  /* 手機：篩選按鈕換行 */
+  .fbar-filter-btn { font-size: 13px; padding: 5px 9px; }
+  .srch-clear-btn  { font-size: 14px; padding: 4px 7px; }
   .logo        { font-size: 20px; }
-  #search      { font-size: 17px; padding: 7px 14px 7px 34px; }
-  .tpill       { padding: 5px 13px; font-size: 16px; }
+  .srch-box    { padding: 4px 12px 4px 32px; }
+  #search      { font-size: 16px; min-width: 80px; }
+  /* .tpill 已移除（P3 w018-dev：改為 type-menu dropdown）*/
   .icon-btn    { padding: 5px 10px; font-size: 17px; }
   #wrap        { padding: 14px 12px 40px; }
   .cbody       { padding: 11px 13px 14px; }
@@ -43,4 +72,130 @@
   .ftag        { font-size: 16px; }
   #ibar        { font-size: 16px; }
   .sp-body     { padding: 12px 16px 32px; }
+}
+
+/* ── t033：手機版 header 重排（≤768px）─────────────────────────────
+ * 基於 w015-research：Zone B（580–768px）的 flex-wrap:nowrap 未被覆蓋
+ * 是截圖中 pills 溢出截斷的根本原因。
+ * 置於 ≤580px 之後：F4（hdr-row-2 nowrap）才能覆蓋其中的 flex-wrap:wrap。
+ * ────────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+
+  /* F1：Zone B 修復——825px 全不換行 → 覆蓋為 wrap */
+  .hdr-row-1 { flex-wrap: wrap; }
+
+  /* F2：兩列重排（P3 w018-dev：type-pills 移入 Row 2 dropdown，Row B 消除）
+   * Row A：logo  +  lib-select（flex:1 填滿）  +  btn-add-lib（＋）
+   * Row B：hdr-actions（居中排列）
+   */
+  .logo        { order: 1; }
+  #lib-select  { order: 2; flex: 1; min-width: 0; max-width: none; }
+  #btn-add-lib { order: 3; }
+  .hdr-spacer  { display: none; }
+  /* hdr-actions：居中排列，固定間距（3 個按鈕，space-evenly 會過度拉開）*/
+  .hdr-actions { order: 4; width: 100%; justify-content: center; gap: 30px; }
+
+  /* F4：hdr-row-2 強制不換行
+   * ≤580px block 有 flex-wrap:wrap，此處後置覆蓋
+   * srch-box 有 min-width:0（header.css），5 items 共 ~299px < inner 寬度 */
+  .hdr-row-2 { flex-wrap: nowrap; }
+}
+
+/* ── w020：手機版 hdr-row-2 兩行佈局（搜尋框全寬 + 篩選器獨立行）──────
+ * 此 @media 放在第二個 ≤768px F4 block 之後，優先序最高，覆蓋 F4 nowrap。
+ * ─────────────────────────────────────────────────────────────────── */
+@media (max-width: 580px) {
+  /* 搜尋框獨占第一行；篩選器 .filter-row 佔第二行 */
+  .hdr-row-2 {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 6px;
+    align-items: stretch;
+  }
+  .hdr-row-2 .srch-box {
+    flex: none; width: 100%;
+    /* 搜尋框內 chips 橫向滑動（避免換行撐開） */
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .hdr-row-2 .srch-box::-webkit-scrollbar { display: none; }
+  .hdr-row-2 .srch-chips { flex-wrap: nowrap; }
+
+  /* 篩選器行：跳棋式均勻定位（保持按鈕自然寬度，間距均分全寬）
+   * justify-content:space-evenly → 五個元素自然寬度，間距自動均等 */
+  .filter-row {
+    display: flex;
+    gap: 0;
+    overflow-x: visible;
+    scrollbar-width: none;
+    flex-shrink: 0;
+    justify-content: space-evenly;
+    position: relative;
+  }
+  .filter-row::-webkit-scrollbar { display: none; }
+}
+
+/* ── 桌面版（≥ 768px）────────────────────────────────────────────── */
+@media (min-width: 768px) {
+
+  /* ── Bottom Sheet → 置中 Modal ─────────────────────────────────── */
+  .bottom-sheet {
+    /* 覆蓋手機版的 bottom/left/right 貼底定位 */
+    bottom: auto;
+    right: auto;
+    left: 50%;
+    top: 50%;
+
+    /* 置中 modal 尺寸與外觀 */
+    width: calc(100% - 48px);
+    max-width: 480px;
+    border-radius: 16px;
+    max-height: 80vh;
+
+    /* 初始狀態：縮小 + 透明（取代 translateY(100%) 滑出畫面） */
+    transform: translate(-50%, -50%) scale(0.96);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform .2s cubic-bezier(.32,0,.15,1), opacity .2s ease;
+  }
+
+  .bottom-sheet.open {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* 手機拖曳把手在桌面 modal 不需要 */
+  .sheet-handle { display: none; }
+
+  /* 手機 safe-area padding 在桌面不需要 */
+  #action-sheet { padding-bottom: 0; }
+
+  /* ── Action Sheet 列表項目縮減觸控 padding ───────────────────── */
+  .as-item {
+    padding: 10px 16px;
+    font-size: 15px;
+  }
+
+  /* ── 確認按鈕：限制寬度，不再全寬撐滿 ──────────────────────── */
+  .del-confirm-btn,
+  .edit-confirm-btn,
+  .upload-submit-btn {
+    width: auto;
+    min-width: 160px;
+    margin-left: auto;
+    margin-right: auto;
+    padding: 10px 24px;
+  }
+
+  /* ── Panel 高度適配桌面 ────────────────────────────────────── */
+  #settings-panel      { max-height: 80vh; }
+  #folder-picker-sheet { max-height: 70vh; }
+
+  /* ── Upload 拖放區 padding 縮減 ──────────────────────────────── */
+  .upload-file-input-wrap { padding: 20px; }
+
+  /* ── Sheet header 字體微調 ──────────────────────────────────── */
+  .sheet-title { font-size: 14px; }
 }

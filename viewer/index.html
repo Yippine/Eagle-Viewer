@@ -23,76 +23,121 @@
 <header id="hdr">
   <div class="hdr-inner">
 
-    <div class="logo">🦅&nbsp;Eagle<em>Viewer</em></div>
+    <!-- ── Row 1：工具列（logo · 資源庫 · type pills · actions）── -->
+    <div class="hdr-row hdr-row-1">
+      <div class="logo">🦅&nbsp;Eagle<em>Viewer</em></div>
 
-    <select id="lib-select" onchange="switchLibrary(this.value)" title="切換資源庫"></select>
-    <button class="icon-btn" id="btn-add-lib" title="新增資源庫" onclick="_addLibrary()">＋</button>
+      <select id="lib-select" onchange="switchLibrary(this.value)" title="切換資源庫"></select>
+      <button class="icon-btn" id="btn-add-lib" title="新增資源庫" onclick="_addLibrary()">＋</button>
 
-    <div class="srch-box">
-      <span class="srch-ic">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-             stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-        </svg>
-      </span>
-      <input id="search" type="text" placeholder='搜尋  tag:標籤  -domain:x.com  "完整詞"' autocomplete="off"
-             title="搜尋語法：預設AND  word  排除-word  &quot;phrase&quot;  完整詞  name: tag: domain: url: kind: 欄位搜尋">
-    </div>
+      <!-- type-pills 已改為 hdr-row-2 的 type dropdown（P3 w018-dev） -->
 
-    <div class="type-pills">
-      <button class="tpill" data-t="bookmark">🔖&thinsp;書籤</button>
-      <button class="tpill" data-t="video">🎬&thinsp;影片</button>
-      <button class="tpill" data-t="gif">🖼&thinsp;動圖</button>
-      <button class="tpill" data-t="image">🌅&thinsp;圖片</button>
-    </div>
+      <div class="hdr-spacer"></div>
 
-    <div class="hdr-actions">
-      <button class="icon-btn seed-nav" id="btn-seed-prev" title="上一個排列" onclick="prevSeed()" disabled>‹</button>
-      <button class="icon-btn" id="btn-shuffle" title="重新隨機排列" onclick="newShuffle()">🔀</button>
-      <span id="seed-idx-lbl" class="seed-lbl"></span>
-      <button class="icon-btn seed-nav" id="btn-seed-next" title="下一個排列" onclick="nextSeed()" disabled>›</button>
-      <div class="sort-wrap" id="sort-wrap">
-        <button class="icon-btn" id="btn-sort" title="排列方式" onclick="toggleSortMenu()">
-          <span id="sort-icon">⇅</span>
-        </button>
-        <div id="sort-menu" class="sort-menu" role="menu">
-          <button class="sort-opt" data-sort="shuffle"   onclick="setSort('shuffle')">🔀&thinsp;隨機</button>
-          <button class="sort-opt" data-sort="date-desc" onclick="setSort('date-desc')">🕐&thinsp;最新加入</button>
-          <button class="sort-opt" data-sort="date-asc"  onclick="setSort('date-asc')">🕙&thinsp;最早加入</button>
-          <button class="sort-opt" data-sort="name-asc"  onclick="setSort('name-asc')">Az&thinsp;名稱 A→Z</button>
-          <button class="sort-opt" data-sort="name-desc" onclick="setSort('name-desc')">Az&thinsp;名稱 Z→A</button>
-          <button class="sort-opt" data-sort="tags-asc"  onclick="setSort('tags-asc')">🏷&thinsp;標籤 A→Z</button>
+      <div class="hdr-actions">
+        <!-- shuffle controls：僅 shuffle 模式顯示（t043 w022-dev）；僅保留 🔀（‹/› 移至設定偏好）-->
+        <div id="shuffle-controls" class="shuffle-controls">
+          <button class="icon-btn" id="btn-shuffle" title="新隨機排列" onclick="newShuffle()">🔀</button>
         </div>
+        <div class="sort-wrap" id="sort-wrap">
+          <button class="icon-btn" id="btn-sort" title="排列方式" onclick="toggleSortMenu()">
+            <span id="sort-icon">⇅</span>
+          </button>
+          <div id="sort-menu" class="sort-menu" role="menu">
+            <button class="sort-opt" data-sort-key="shuffle" onclick="setSortKey('shuffle')"><span class="si">🔀</span><span>隨機</span></button>
+            <div class="sort-sep"></div>
+            <div class="sort-row">
+              <button class="sort-opt" data-sort-key="date"  onclick="setSortKey('date')"><span class="si">🕐</span><span>加入日期</span></button>
+              <button class="sort-dir" data-sort-key="date"  onclick="setSortDirToggle('date')">↓</button>
+            </div>
+            <div class="sort-row">
+              <button class="sort-opt" data-sort-key="mtime" onclick="setSortKey('mtime')"><span class="si">🕑</span><span>修改日期</span></button>
+              <button class="sort-dir" data-sort-key="mtime" onclick="setSortDirToggle('mtime')">↓</button>
+            </div>
+            <div class="sort-row">
+              <button class="sort-opt" data-sort-key="name"  onclick="setSortKey('name')"><span class="si">🔤</span><span>名稱</span></button>
+              <button class="sort-dir" data-sort-key="name"  onclick="setSortDirToggle('name')">↑</button>
+            </div>
+            <div class="sort-row">
+              <button class="sort-opt" data-sort-key="star"  onclick="setSortKey('star')"><span class="si">⭐</span><span>評分</span></button>
+              <button class="sort-dir" data-sort-key="star"  onclick="setSortDirToggle('star')">↓</button>
+            </div>
+            <div class="sort-row">
+              <button class="sort-opt" data-sort-key="size"     onclick="setSortKey('size')"><span class="si">📦</span><span>大小</span></button>
+              <button class="sort-dir" data-sort-key="size"     onclick="setSortDirToggle('size')">↓</button>
+            </div>
+            <div class="sort-row">
+              <button class="sort-opt" data-sort-key="ext"      onclick="setSortKey('ext')"><span class="si">📄</span><span>副檔名</span></button>
+              <button class="sort-dir" data-sort-key="ext"      onclick="setSortDirToggle('ext')">↑</button>
+            </div>
+            <div class="sort-row">
+              <button class="sort-opt" data-sort-key="dim"      onclick="setSortKey('dim')"><span class="si">⬜</span><span>尺寸</span></button>
+              <button class="sort-dir" data-sort-key="dim"      onclick="setSortDirToggle('dim')">↓</button>
+            </div>
+            <div class="sort-row">
+              <button class="sort-opt" data-sort-key="duration" onclick="setSortKey('duration')"><span class="si">⏱️</span><span>時長</span></button>
+              <button class="sort-dir" data-sort-key="duration" onclick="setSortDirToggle('duration')">↓</button>
+            </div>
+          </div>
+        </div>
+        <button class="icon-btn" id="btn-card-info" title="顯示／隱藏卡片資訊" onclick="toggleCardInfo()"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg></button>
+        <button class="icon-btn" id="btn-trash" title="垃圾桶（已封存素材）" onclick="openTrashView()"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>
+        <!-- ⚙ 整合設定面板：badge 指示未讀通知（t042 w022-dev）-->
+        <button class="icon-btn" id="btn-settings" title="設定（統計/通知/同步/偏好）" onclick="openSettingsPanel()"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="notif-badge" id="notif-badge" hidden>0</span></button>
       </div>
-      <button class="icon-btn" id="btn-stats" title="觀看統計" onclick="openStats()">📊</button>
     </div>
 
-    <p class="stats-row" id="stats-row"></p>
+    <!-- ── Row 2：搜尋列（搜尋框 + 篩選按鈕）──────────── -->
+    <div class="hdr-row hdr-row-2">
+      <div class="srch-box">
+        <span class="srch-ic">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </span>
+        <div class="srch-chips" id="srch-chips"></div>
+        <input id="search" type="text" placeholder='搜尋  tag:標籤  -domain:x.com  "完整詞"' autocomplete="off"
+               title="搜尋語法：預設AND  word  排除-word  &quot;phrase&quot;  完整詞  name: tag: domain: url: kind: 欄位搜尋">
+      </div>
+      <!-- 類型篩選 + 網域/資料夾/濾鏡 filter-row（w020：手機版分兩行）-->
+      <div class="filter-row" id="filter-row">
+        <div class="type-wrap" id="type-wrap">
+          <button class="fbar-filter-btn" id="type-filter-btn" onclick="toggleTypeMenu()" title="類型篩選">
+            <span id="type-icon">🗂️</span><span class="fbar-count" id="type-fbar-count"></span><span class="fbar-filter-arrow">▼</span>
+          </button>
+          <div id="type-menu" class="type-menu">
+            <button class="type-opt" data-t="all"><span class="si">🗂️</span><span>全部</span><span class="type-count"></span></button>
+            <button class="type-opt" data-t="bookmark"><span class="si">🔖</span><span>書籤</span><span class="type-count"></span></button>
+            <button class="type-opt" data-t="video"><span class="si">🎬</span><span>影片</span><span class="type-count"></span></button>
+            <button class="type-opt" data-t="gif"><span class="si">🖼</span><span>動圖</span><span class="type-count"></span></button>
+            <button class="type-opt" data-t="image"><span class="si">🌅</span><span>圖片</span><span class="type-count"></span></button>
+          </div>
+        </div>
+        <button class="fbar-filter-btn" id="domain-filter-btn" onclick="toggleFbar()" title="網域篩選">
+          🌐&thinsp;<span id="fbar-label"></span><span class="fbar-count" id="fbar-count"></span><span id="fbar-arrow" class="fbar-filter-arrow">▼</span>
+        </button>
+        <button class="fbar-filter-btn" id="tag-tog-inline" onclick="toggleTagPanel()" title="資料夾篩選">
+          📁&thinsp;<span class="fbar-count" id="tag-fbar-count"></span><span class="fbar-filter-arrow">▼</span>
+        </button>
+        <button class="fbar-filter-btn" id="preset-tog-inline" onclick="event.stopPropagation();togglePresetPanel()" title="影片濾鏡">
+          🎛️&thinsp;<span class="fbar-count" id="preset-fbar-count"></span><span class="fbar-filter-arrow">▼</span>
+        </button>
+        <button id="srch-clear-btn" class="srch-clear-btn" onclick="clearAllFilters()" title="清除所有篩選與搜尋">✕</button>
+      </div>
+    </div>
+
+    <!-- stats-row 已整合進類型下拉式選單的計數（w020），此元素保留供 renderer.js 向後相容 -->
+    <p class="stats-row" id="stats-row" hidden></p>
 
   </div>
 </header>
 
+<!-- ══════════════════════════════════════ FOLDER FILTER BAR（資料夾篩選指示器） ══ -->
+<div id="folder-filter-bar" hidden></div>
+
 <!-- ═══════════════════════════════════════ DOMAIN FILTER BAR（展開/收合） ══ -->
 <nav id="fbar">
-  <!-- 永遠可見的切換列 -->
-  <div class="fbar-toggle" id="fbar-toggle" onclick="toggleFbar()">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-      <line x1="3" y1="6"  x2="21" y2="6"/>
-      <line x1="7" y1="12" x2="21" y2="12"/>
-      <line x1="11" y1="18" x2="21" y2="18"/>
-    </svg>
-    <span id="fbar-label">全部網域</span>
-    <span class="fbar-count" id="fbar-count"></span>
-    <span class="fbar-arrow" id="fbar-arrow">▾</span>
-    <button id="tag-tog-inline" class="fbar-tag-btn" onclick="event.stopPropagation();toggleTagPanel()">
-      標籤&thinsp;<span class="arrow">▾</span>
-    </button>
-    <button id="preset-tog-inline" class="fbar-tag-btn" onclick="event.stopPropagation();togglePresetPanel()">
-      濾鏡&thinsp;<span class="arrow">▾</span>
-    </button>
-  </div>
-  <!-- 收合的 chip 區域 -->
   <div class="fbar-chips" id="fbar-chips">
     <div class="fbar-inner" id="dchips">
       <!-- domain chips injected by app.js -->
@@ -110,6 +155,9 @@
   <div class="tp-inner" id="pchips"></div>
 </section>
 
+<!-- 垃圾桶模式列：已由 btn-trash .on + batch-bar 取代，保留空佔位避免 JS 找不到 id -->
+<div id="trash-mode-bar" hidden></div>
+
 <!-- ／sticky-top -->
 </div>
 
@@ -121,27 +169,92 @@
   <div id="loader"><div class="spin"></div></div>
 </main>
 
-<!-- ════════════════════════════════════════════════════ STATS PANEL ══════ -->
+<!-- ══════ 統一設定面板（3-tab: 🔔通知/📊統計/🔧偏好）SESE 重構 ══════ -->
 <aside id="stats-panel">
   <div class="sp-header">
-    <h2 class="sp-title">📊 觀看統計</h2>
-    <button class="sp-close" onclick="closeStats()">✕</button>
+    <h2 class="sp-title">設定</h2>
+    <button class="sp-close" onclick="closeSettingsPanel()" aria-label="關閉">✕</button>
   </div>
-  <!-- 分頁 Tab -->
-  <div class="sp-tabs">
-    <button class="sp-tab on" data-tab="history" onclick="switchStatsTab('history')">歷史紀錄</button>
-    <button class="sp-tab"    data-tab="stats"   onclick="switchStatsTab('stats')">統計分析</button>
+  <!-- 外層 3-tab bar -->
+  <div class="st-tabs">
+    <button class="st-tab on" data-tab="notif" onclick="switchSettingsTab('notif')">🔔 通知</button>
+    <button class="st-tab"    data-tab="stats" onclick="switchSettingsTab('stats')">📊 統計</button>
+    <button class="st-tab"    data-tab="prefs" onclick="switchSettingsTab('prefs')">🔧 偏好</button>
   </div>
-  <div id="sp-body" class="sp-body">
-    <div class="sp-loading"><div class="spin"></div><span>載入中…</span></div>
+
+  <!-- 🔔 通知 pane（預設顯示）-->
+  <div id="sp-pane-notif" class="sp-pane">
+    <div class="notif-hdr">
+      <span class="notif-title">Eagle 同步紀錄</span>
+      <button class="notif-read-btn" title="全部已讀" onclick="window._notifMarkAllRead()">✓ 全部已讀</button>
+    </div>
+    <div id="notif-list" class="notif-list"></div>
+    <div id="notif-footer" class="notif-footer" hidden>
+      <button class="notif-clear-btn" onclick="window._notifClearAll()">清除全部</button>
+    </div>
+    <div id="notif-empty" class="notif-empty">沒有新通知</div>
+  </div>
+
+  <!-- 📊 統計 pane（單頁：摘要 → 分析 → 記錄）-->
+  <div id="sp-pane-stats" class="sp-pane" hidden>
+    <div id="sp-body" class="sp-body">
+      <div class="sp-loading"><div class="spin"></div><span>載入中…</span></div>
+    </div>
+  </div>
+
+  <!-- 🔧 偏好 pane（Shuffle 導航 + 標籤同步）-->
+  <div id="sp-pane-prefs" class="sp-pane" hidden>
+    <div class="st-body">
+      <!-- 🔀 今日隨機排列 -->
+      <div class="st-section">
+        <div class="seed-ctrl-hdr">
+          <span class="seed-ctrl-title">🔀 今日隨機排列</span>
+          <div class="seed-ctrl-actions">
+            <select id="pref-max-seeds" class="st-select st-select-sm" onchange="setPrefMaxSeeds(this.value)" title="保留幾組排列">
+              <option value="5">5 組</option>
+              <option value="7" selected>7 組</option>
+              <option value="10">10 組</option>
+            </select>
+            <button class="st-icon-btn" id="pref-clear-seeds" title="清除今日隨機歷史" onclick="clearShuffleHistory()">✕</button>
+          </div>
+        </div>
+        <div id="pref-seed-history" class="seed-history-list"></div>
+      </div>
+      <!-- 📁 資料夾標籤同步 -->
+      <div class="st-section">
+        <div class="st-section-title">📁 資料夾標籤同步</div>
+        <div class="st-btn-row">
+          <button class="st-btn st-btn-diff" id="folder-tags-diff-btn" onclick="folderTagsDiff()">預覽</button>
+          <button class="st-btn st-btn-apply" id="folder-tags-apply-btn" disabled onclick="folderTagsApply()">套用</button>
+        </div>
+        <div id="folder-tags-diff"></div>
+      </div>
+      <!-- 🏷 素材標籤同步 -->
+      <div class="st-section">
+        <div class="st-section-title">🏷 素材標籤同步</div>
+        <div class="st-btn-row">
+          <button class="st-btn st-btn-diff" id="items-tags-diff-btn" onclick="itemsTagsDiff()">預覽</button>
+          <button class="st-btn st-btn-apply" id="items-tags-apply-btn" disabled onclick="itemsTagsApply()">套用</button>
+        </div>
+        <div id="items-tags-diff"></div>
+      </div>
+    </div>
   </div>
 </aside>
-<div id="stats-backdrop" onclick="closeStats()"></div>
+<div id="stats-backdrop" onclick="closeSettingsPanel()"></div>
 
 <!-- ══════════════════════════════════════ LIGHTBOX MODAL（桌面用）═════════ -->
 <div id="modal" onclick="closeModal()">
   <div id="mbox" onclick="event.stopPropagation()">
     <button id="m-close" onclick="closeModal()">✕</button>
+    <button id="m-vc-btn" onclick="toggleVcPanel()" title="圖片控制 (C)">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+        <path d="M17 12a5 5 0 0 1-5 5M7 12a5 5 0 0 1 5-5"/>
+      </svg>
+    </button>
     <div id="mbody"></div>
     <div id="m-zoom-ind"></div>
   </div>
@@ -312,12 +425,13 @@
 <!-- ══════════════════════════════════ VIDEO CONTROLS PANEL ══════════ -->
 <div id="vc-panel">
   <div class="vc-header">
-    <span class="vc-title">影片控制</span>
+    <span class="vc-title" id="vc-title">媒體控制</span>
     <button class="vc-close-btn" onclick="closeVcPanel()">✕</button>
   </div>
 
   <!-- Tab 導覽 -->
   <div class="vc-tabs">
+    <button class="vc-tab-btn"        data-tab="image"     onclick="vcSwitchTab('image')" style="display:none">圖片</button>
     <button class="vc-tab-btn active" data-tab="playback"  onclick="vcSwitchTab('playback')">播放</button>
     <button class="vc-tab-btn"        data-tab="filters"   onclick="vcSwitchTab('filters')">濾鏡</button>
     <button class="vc-tab-btn"        data-tab="transform" onclick="vcSwitchTab('transform')">幾何</button>
@@ -404,6 +518,66 @@
                  oninput="_vcFilter('hueRotate',+this.value)">
           <span class="vc-val" id="vc-hue-v">0°</span>
         </div>
+        <div class="vc-slider-row">
+          <span class="vc-label">復古</span>
+          <input type="range" id="vc-sepia" min="0" max="100" step="1" value="0"
+                 oninput="_vcFilter('sepia',+this.value)">
+          <span class="vc-val" id="vc-sepia-v">0%</span>
+        </div>
+        <div class="vc-slider-row">
+          <span class="vc-label">銳化</span>
+          <input type="range" id="vc-sharpness" min="-10" max="10" step="1" value="0"
+                 oninput="_vcFilter('sharpness',+this.value)">
+          <span class="vc-val" id="vc-sharpness-v">0</span>
+        </div>
+        <!-- 選擇性調色（整合） -->
+        <div id="vc-sel-chips" class="vc-sel-chips-row"></div>
+        <button class="vc-icon-btn vc-sel-add-btn" onclick="vcAddSelectiveColor()" title="新增選色">＋ 新增選色</button>
+        <div class="vc-sel-eyedropper-row" id="vc-sel-eyedropper-row" style="display:none">
+          <button id="vc-eyedropper-btn" class="vc-eyedropper-btn"
+                  onclick="vcStartEyedropper()">點擊圖片取色</button>
+          <span id="vc-sel-swatch" class="vc-sel-swatch"></span>
+          <button class="vc-icon-btn" onclick="vcClearSelectiveColor()"
+                  title="清除此選色（保留色塊）">↺</button>
+        </div>
+        <div id="vc-sel-deltas" style="display:none">
+          <div class="vc-slider-row">
+            <span class="vc-label">色調</span>
+            <input type="range" id="vc-sel-hueshift" min="-180" max="180" step="1" value="0"
+                   oninput="vcSetSelectiveHue('hueShift',+this.value)">
+            <span class="vc-val" id="vc-sel-hueshift-v">0°</span>
+          </div>
+          <div class="vc-slider-row">
+            <span class="vc-label">選色寬度</span>
+            <input type="range" id="vc-sel-range" min="5" max="60" step="5" value="30"
+                   oninput="vcSetSelectiveHue('range',+this.value)">
+            <span class="vc-val" id="vc-sel-range-v">±30°</span>
+          </div>
+          <div class="vc-slider-row">
+            <span class="vc-label">亮度</span>
+            <input type="range" id="vc-sel-brightness" min="-1" max="1" step="0.05" value="0"
+                   oninput="vcSetSelectiveHue('brightness',+this.value)">
+            <span class="vc-val" id="vc-sel-brightness-v">0.00</span>
+          </div>
+          <div class="vc-slider-row">
+            <span class="vc-label">對比</span>
+            <input type="range" id="vc-sel-contrast" min="-1" max="1" step="0.05" value="0"
+                   oninput="vcSetSelectiveHue('contrast',+this.value)">
+            <span class="vc-val" id="vc-sel-contrast-v">0.00</span>
+          </div>
+          <div class="vc-slider-row">
+            <span class="vc-label">飽和</span>
+            <input type="range" id="vc-sel-saturate" min="-1" max="1" step="0.05" value="0"
+                   oninput="vcSetSelectiveHue('saturate',+this.value)">
+            <span class="vc-val" id="vc-sel-saturate-v">0.00</span>
+          </div>
+          <div class="vc-slider-row">
+            <span class="vc-label">復古</span>
+            <input type="range" id="vc-sel-sepia" min="0" max="1" step="0.05" value="0"
+                   oninput="vcSetSelectiveHue('sepia',+this.value)">
+            <span class="vc-val" id="vc-sel-sepia-v">0.00</span>
+          </div>
+        </div>
         <button class="vc-filter-save-btn" onclick="vcSaveFilterPreset()">＋ 儲存為濾鏡</button>
       </div>
 
@@ -489,13 +663,297 @@
 
     </div><!-- /vc-pane-transform -->
 
-  </div>
-</div>
+    <!-- ════════════ TAB：圖片 ════════════ -->
+    <div class="vc-tab-pane" id="vc-pane-image" style="display:none">
+
+      <!-- 縮放 -->
+      <div class="vc-section">
+        <div class="vc-section-header">
+          <span class="vc-section-label">⤢ 縮放</span>
+          <button class="vc-icon-btn" onclick="vcImageFit()" title="符合視窗">⊡</button>
+        </div>
+        <div class="vc-slider-row">
+          <button class="vc-icon-btn" onclick="vcImageZoom(-0.15)">−</button>
+          <input type="range" id="vc-img-zoom" min="1" max="8" step="0.05" value="1"
+                 oninput="vcImageZoomSet(+this.value)">
+          <button class="vc-icon-btn" onclick="vcImageZoom(+0.15)">＋</button>
+          <span class="vc-val" id="vc-img-zoom-v">100%</span>
+        </div>
+        <div class="vc-btn-group" style="margin-top:6px">
+          <button class="vc-geo-btn" onclick="vcImageFit()">⊡ 符合視窗</button>
+          <button class="vc-geo-btn" onclick="vcImageActualSize()">⊙ 原始大小</button>
+        </div>
+      </div>
+
+
+    </div><!-- /vc-pane-image -->
 
   </div>
 </div>
 
 <div id="vc-toast" class="vc-toast"></div>
+
+<!-- ══════════════════════════ ACTION SHEET ══════════════════════ -->
+<div class="sheet-bd" id="action-bd" onclick="closeActionSheet()"></div>
+<div class="bottom-sheet" id="action-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">
+    <div>
+      <div class="sheet-title">素材操作</div>
+      <div class="sheet-subtitle" id="as-item-title"></div>
+    </div>
+    <button class="sheet-close-btn" onclick="closeActionSheet()">✕</button>
+  </div>
+  <div class="as-body">
+    <button class="as-item" id="as-rename-btn" onclick="actionRename()">
+      <span class="as-icon">✏️</span>名稱
+    </button>
+    <button class="as-item" id="as-annotation-btn" onclick="actionAnnotation()">
+      <span class="as-icon">📝</span>註解
+    </button>
+    <button class="as-item" id="as-url-btn" onclick="actionUrl()">
+      <span class="as-icon">🔗</span>網址
+    </button>
+    <button class="as-item" id="as-tags-btn" onclick="actionEditTags()">
+      <span class="as-icon">🏷</span>標籤
+    </button>
+    <button class="as-item" id="as-move-btn" onclick="actionMove()">
+      <span class="as-icon">📁</span>資料夾
+    </button>
+    <button class="as-item" id="as-star-btn" onclick="actionStar()">
+      <span class="as-icon">⭐</span>評分
+    </button>
+    <div class="as-sep"></div>
+    <button class="as-item" id="as-archive-btn" onclick="actionArchive()">
+      <span class="as-icon">📦</span>封存
+    </button>
+    <button class="as-item" id="as-restore-btn" style="display:none" onclick="actionRestore()">
+      <span class="as-icon">📤</span>還原封存
+    </button>
+    <button class="as-item danger" id="as-delete-btn" onclick="actionDelete()">
+      <span class="as-icon">🗑</span>刪除
+    </button>
+  </div>
+</div>
+
+<!-- ══════════════════════ DELETE CONFIRM SHEET ══════════════════ -->
+<div class="sheet-bd" id="delete-bd" onclick="closeDeleteSheet()"></div>
+<div class="bottom-sheet" id="delete-sheet" style="z-index:5002">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">
+    <div class="sheet-title" style="color:var(--accent-r)">⚠️ 永久刪除</div>
+    <button class="sheet-close-btn" onclick="closeDeleteSheet()">✕</button>
+  </div>
+  <div class="del-body">
+    <p class="del-warn">此操作無法復原。將永久刪除 <strong id="del-item-name-lbl"></strong>。</p>
+    <button class="del-confirm-btn" id="del-confirm-btn" onclick="confirmDelete()">永久刪除</button>
+  </div>
+</div>
+
+<!-- ════════════════════════ RENAME SHEET ════════════════════════ -->
+<div class="sheet-bd" id="rename-bd" onclick="closeRenameSheet()"></div>
+<div class="bottom-sheet" id="rename-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">
+    <div class="sheet-title">改名</div>
+    <button class="sheet-close-btn" onclick="closeRenameSheet()">✕</button>
+  </div>
+  <div class="edit-body">
+    <div class="rename-input-wrap">
+      <input class="edit-input" id="rename-input" type="text" autocomplete="off" placeholder="新名稱…" onkeydown="if(event.key==='Enter')confirmRename()">
+      <span class="rename-ext-hint" id="rename-ext-hint"></span>
+    </div>
+    <button class="edit-confirm-btn" onclick="confirmRename()">確認改名</button>
+  </div>
+</div>
+
+<!-- ══════════════════════ TAGS EDIT SHEET ═══════════════════════ -->
+<div class="sheet-bd" id="tags-edit-bd" onclick="closeTagsEditSheet()"></div>
+<div class="bottom-sheet" id="tags-edit-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">
+    <div class="sheet-title">編輯標籤</div>
+    <button class="sheet-close-btn" onclick="closeTagsEditSheet()">✕</button>
+  </div>
+  <div class="te-body">
+    <div class="te-search-wrap">
+      <input class="te-search" id="te-search" type="text" placeholder="輸入或搜尋標籤…"
+             oninput="onTagSearch(this.value)" onkeydown="onTagSearchKey(event)">
+    </div>
+    <div class="te-chips-wrap" id="te-chips"></div>
+    <div class="te-suggestions" id="te-suggestions"></div>
+    <button class="edit-confirm-btn" onclick="confirmTagsEdit()">儲存標籤</button>
+  </div>
+</div>
+
+<!-- ══════════════════════ FOLDER PICKER ═════════════════════════ -->
+<div class="sheet-bd" id="folder-picker-bd" onclick="closeFolderPicker()"></div>
+<div class="bottom-sheet" id="folder-picker-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">
+    <div class="sheet-title">加入資料夾</div>
+    <button class="sheet-close-btn" onclick="closeFolderPicker()">✕</button>
+  </div>
+  <div class="fp-search-wrap">
+    <input class="fp-search" id="fp-search" type="search" placeholder="搜尋資料夾…"
+           oninput="onFolderSearch(this.value)">
+  </div>
+  <div class="fp-chips-wrap" id="fp-chips"></div>
+  <div class="fp-tree" id="fp-tree"></div>
+  <div class="fp-confirm-wrap">
+    <button class="fp-confirm-btn" id="fp-confirm-btn" onclick="confirmFolderPicker()">確認</button>
+  </div>
+</div>
+
+<!-- ════════════════════════ STAR SHEET ══════════════════════════ -->
+<div class="sheet-bd" id="star-bd" onclick="closeStarSheet()"></div>
+<div class="bottom-sheet" id="star-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">
+    <div class="sheet-title">評分</div>
+    <button class="sheet-close-btn" onclick="closeStarSheet()">✕</button>
+  </div>
+  <div class="star-body">
+    <div class="star-row" id="star-row">
+      <button class="star-btn" data-v="1" onclick="_starClick(1)">★</button>
+      <button class="star-btn" data-v="2" onclick="_starClick(2)">★</button>
+      <button class="star-btn" data-v="3" onclick="_starClick(3)">★</button>
+      <button class="star-btn" data-v="4" onclick="_starClick(4)">★</button>
+      <button class="star-btn" data-v="5" onclick="_starClick(5)">★</button>
+    </div>
+    <p class="star-hint">再次點擊同一顆星可取消評分</p>
+  </div>
+</div>
+
+<!-- ══════════════════════ ANNOTATION SHEET ══════════════════════ -->
+<div class="sheet-bd" id="annotation-bd" onclick="closeAnnotationSheet()"></div>
+<div class="bottom-sheet" id="annotation-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">
+    <div class="sheet-title">註解</div>
+    <button class="sheet-close-btn" onclick="closeAnnotationSheet()">✕</button>
+  </div>
+  <div class="edit-body">
+    <input type="text" class="edit-input" id="annotation-input" placeholder="輸入註解…" onkeydown="if(event.key==='Enter')confirmAnnotation()">
+    <button class="edit-confirm-btn" onclick="confirmAnnotation()">儲存註解</button>
+  </div>
+</div>
+
+<!-- ══════════════════════ ITEM URL SHEET ═════════════════════════ -->
+<div class="sheet-bd" id="item-url-bd" onclick="closeItemUrlSheet()"></div>
+<div class="bottom-sheet" id="item-url-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">
+    <div class="sheet-title">網址</div>
+    <button class="sheet-close-btn" onclick="closeItemUrlSheet()">✕</button>
+  </div>
+  <div class="edit-body">
+    <input class="edit-input" id="item-url-input" type="url" placeholder="https://…" autocomplete="off" onkeydown="if(event.key==='Enter')confirmUrl()">
+    <button class="edit-confirm-btn" onclick="confirmUrl()">儲存網址</button>
+  </div>
+</div>
+
+<!-- 設定面板已整合至 #stats-panel 4-tab（t042 w022-dev），此佔位避免 JS getElementById 找不到 id -->
+<div id="settings-bd" style="display:none"></div>
+<div id="settings-panel" style="display:none"></div>
+
+<!-- ══════════════════════ UPLOAD SHEET ══════════════════════════ -->
+<div class="sheet-bd" id="upload-bd" onclick="closeUploadSheet()"></div>
+<div class="bottom-sheet" id="upload-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">
+    <div class="sheet-title">📂 上傳檔案</div>
+    <button class="sheet-close-btn" onclick="closeUploadSheet()">✕</button>
+  </div>
+  <div class="upload-body">
+    <input id="upload-name" class="url-text-input" type="text"
+           placeholder="名稱（選填，多檔時忽略）"
+           autocomplete="off" spellcheck="false">
+    <input type="file" id="upload-file-input"
+           accept="video/*,image/*,audio/*" multiple style="display:none">
+    <button class="upload-folder-btn" id="upload-choose-btn"
+            onclick="document.getElementById('upload-file-input').click()">
+      📎 選擇檔案
+    </button>
+    <div id="upload-file-label" class="upload-file-label" style="margin-bottom:10px;min-height:18px"></div>
+    <div class="upload-status" id="upload-status"></div>
+    <button class="upload-submit-btn" id="upload-btn" onclick="submitUpload()">上傳</button>
+  </div>
+</div>
+
+<!-- ══════════════════════ URL IMPORT SHEET ══════════════════════ -->
+<div class="sheet-bd" id="url-bd" onclick="closeUrlSheet()"></div>
+<div class="bottom-sheet" id="url-sheet">
+  <div class="sheet-handle"></div>
+  <div class="sheet-hdr">
+    <div class="sheet-title">🌐 URL 匯入</div>
+    <button class="sheet-close-btn" onclick="closeUrlSheet()">✕</button>
+  </div>
+  <div class="upload-body">
+    <input id="url-input" class="url-text-input" type="url"
+           placeholder="貼入影片 / 貼文網址（YouTube、抖音、小紅書 …）"
+           autocomplete="off" spellcheck="false"
+           onkeydown="if(event.key==='Enter')submitUrlImport()">
+    <input id="url-name" class="url-text-input" type="text"
+           placeholder="名稱（選填，留空自動從網址推斷）"
+           autocomplete="off" spellcheck="false">
+    <div id="url-progress-wrap" class="url-progress-wrap" style="display:none">
+      <div class="url-progress-track"><div id="url-progress-bar" class="url-progress-bar" style="width:0%"></div></div>
+    </div>
+    <div class="upload-status" id="url-status"></div>
+    <button class="upload-submit-btn" id="url-import-btn" onclick="submitUrlImport()">開始下載</button>
+  </div>
+</div>
+
+<!-- ════════════════════════════ FAB ═════════════════════════════ -->
+<button id="import-fab" title="新增素材" onclick="toggleFabMenu()">＋</button>
+<div id="fab-menu" class="fab-menu">
+  <button class="fab-menu-item" onclick="openUrlSheet()">🌐 URL 匯入</button>
+  <button class="fab-menu-item" onclick="openUploadSheet()">📂 上傳檔案</button>
+</div>
+
+<!-- Actions Toast -->
+<div id="actions-toast" class="actions-toast"></div>
+
+<!-- Batch Bar -->
+<div id="batch-bar" style="display:none">
+  <span id="batch-sel-count">點擊卡片選取</span>
+  <div style="flex:1"></div>
+  <button id="batch-archive-btn" onclick="batchArchive()">📦 封存</button>
+  <button id="batch-folders-btn" onclick="batchFolders()">📁 資料夾</button>
+  <button id="batch-restore-btn" hidden onclick="batchTrashRestore()">↩ 還原</button>
+  <button onclick="batchDelete()" class="batch-del">🗑 刪除</button>
+  <button onclick="exitSelectMode()">✕ 取消</button>
+</div>
+
+<!-- ══════════════════════════════════ TRASH VIEW OVERLAY ══════════════════ -->
+<div id="trash-overlay" class="trash-overlay" style="display:none" aria-label="垃圾桶">
+  <div class="trash-header">
+    <button class="trash-close-btn" onclick="closeTrashView()">✕</button>
+    <h2 class="trash-title">🗑 垃圾桶</h2>
+    <span class="trash-count" id="trash-count"></span>
+    <div class="trash-header-actions">
+      <button class="trash-sel-all-btn" id="trash-sel-all" onclick="trashSelectAll()">全選</button>
+    </div>
+  </div>
+  <div id="trash-grid" class="trash-grid"></div>
+  <div id="trash-empty" class="trash-empty" style="display:none">
+    <div class="trash-empty-icon">🪣</div>
+    <p>垃圾桶是空的</p>
+  </div>
+  <div class="trash-bar" id="trash-bar" style="display:none">
+    <span id="trash-sel-count" class="trash-sel-count"></span>
+    <button class="trash-restore-btn" onclick="batchTrashRestore()">↩ 還原</button>
+    <button class="trash-delete-btn" onclick="batchTrashDelete()">🗑 永久刪除</button>
+  </div>
+</div>
+
+<!-- t019：🏷 leaf folder popover -->
+<div id="ifp-backdrop" onclick="closeFolderPopover()" style="display:none"></div>
+<div id="item-folder-popover" class="ifp-popover" style="display:none">
+  <div class="ifp-title">選擇維度篩選</div>
+  <div id="ifp-chips" class="ifp-chips"></div>
+</div>
 
 <script type="module" src="js/main.js"></script>
 </body>

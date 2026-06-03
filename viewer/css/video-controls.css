@@ -542,3 +542,48 @@
   transform-origin: center center;
   will-change: transform;
 }
+
+/* ── 選擇性調色 ─────────────────────────────────────────────────── */
+.vc-sel-chips-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.vc-sel-chip {
+  position: relative; width: 28px; height: 28px; border-radius: 50%;
+  cursor: pointer; border: 2px solid transparent; flex-shrink: 0;
+}
+.vc-sel-chip.vc-on { border-color: #fff; }
+.vc-sel-chip-rm {
+  position: absolute; top: -4px; right: -4px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #333; color: #fff; font-size: 10px;
+  border: none; cursor: pointer; display: none;
+  line-height: 14px; text-align: center; padding: 0;
+}
+.vc-sel-chip:hover .vc-sel-chip-rm { display: block; }
+.vc-sel-add-btn { margin: 2px 0 6px; font-size: 12px; }
+.vc-sel-eyedropper-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.vc-eyedropper-btn {
+  flex: 1;
+  height: 30px;
+  font-size: 12px;
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.8);
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .15s;
+}
+.vc-eyedropper-btn:hover  { background: rgba(0,122,255,.28); }
+.vc-eyedropper-btn.vc-on  { background: rgba(0,122,255,.5); border-color: #007aff; color: #fff; }
+.vc-sel-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.3);
+  flex-shrink: 0;
+  background: transparent;
+  transition: background .2s;
+}
