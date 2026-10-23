@@ -1,5 +1,6 @@
 """Shared configuration, constants, and mutable globals for Eagle Viewer."""
 import json
+import os
 import threading
 from collections import defaultdict
 from pathlib import Path
@@ -10,7 +11,9 @@ from pathlib import Path
 SCRIPT_DIR  = Path(__file__).resolve().parent   # → viewer/
 VIEWER_DIR  = SCRIPT_DIR
 PROJECT_DIR = VIEWER_DIR.parent                  # → Eagle-Viewer/
-DATA_DIR    = PROJECT_DIR / "data"
+# EAGLE_VIEWER_DATA_DIR：隔離測試用資料目錄覆寫（config.json / 快取 / journal 全數改落此處），
+# 未設定時維持既有 data/ 佈局。
+DATA_DIR    = Path(os.environ.get("EAGLE_VIEWER_DATA_DIR") or (PROJECT_DIR / "data"))
 CONFIG_FILE = DATA_DIR / "config.json"
 
 # ---------------------------------------------------------------------------

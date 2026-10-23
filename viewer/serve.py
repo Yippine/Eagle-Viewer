@@ -179,6 +179,9 @@ class _Handler(BaseHTTPRequestHandler):
         if up.startswith(("/excire-thumb/", "/excire-preview/", "/excire-file/")):
             media_serve.handle_excire_media(self, up); return
 
+        if up.startswith("/trash-file/"):
+            media_serve.handle_trash_media(self, up); return
+
         if up == "/api/views":
             _r.handle_views(self); return
 
@@ -208,6 +211,9 @@ class _Handler(BaseHTTPRequestHandler):
 
         if up.startswith("/api/folder-extract/status/"):
             _r.handle_folder_extract_status(self, up); return
+
+        if up == "/api/trash/list":
+            _r.handle_trash_list(self); return
 
         if up == "/api/services/health":
             _r.handle_services_health(self); return
@@ -304,6 +310,9 @@ class _Handler(BaseHTTPRequestHandler):
 
         if up == "/api/items/delete-batch":
             _m.handle_post_items_delete_batch(self); return
+
+        if up == "/api/trash/empty":
+            _m.handle_post_trash_empty(self); return
 
         if up == "/api/item/link":
             _m.handle_post_item_link(self); return

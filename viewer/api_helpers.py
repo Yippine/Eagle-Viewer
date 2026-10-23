@@ -180,6 +180,39 @@ def _remove_item_cache(lib_name: str, item_id: str) -> bool:
 # Eagle App API bridge
 # ---------------------------------------------------------------------------
 
+def _eagle_library_info():
+    """GET /api/library/info → {"name", "path"}（目前 Eagle 開啟的庫）；
+    Eagle 未執行 / 逾時 / 回應異常 → None。"""
+    if _urllib_req is None:
+        return None
+    try:
+        with _urllib_req.urlopen("http://localhost:41595/api/library/info", timeout=2) as r:
+            if r.status != 200:
+                return None
+            data = json.loads(r.read().decode("utf-8"))
+        d = data.get("data") or {}
+        lib = d.get("library") if isinstance(d.get("library"), dict) else d
+        return {"name": str(lib.get("name") or ""), "path": str(lib.get("path") or "")}
+    except Exception:
+        return None
+
+
+def _eagle_sync_gate(lib_name: str):
+    """A2 跨庫防護：Eagle 寫入 API 只作用於「目前開啟的庫」——呼叫前先比對，
+    Eagle 未執行或開啟庫非目標庫 → 不可同步（呼叫端須回報 degraded，禁止靜默假成功）。
+
+    回 (can_sync: bool, reason: str)；reason ∈ '' | 'eagle_offline' |
+    'eagle_other_library:{目前開啟庫名}'。
+    """
+    info = _eagle_library_info()
+    if info is None:
+        return False, "eagle_offline"
+    stem = lib_name[:-len(".library")] if lib_name.endswith(".library") else lib_name
+    if info["name"] == stem or Path(info["path"]).name == lib_name:
+        return True, ""
+    return False, f"eagle_other_library:{info['name'] or '?'}"
+
+
 def _write_via_eagle_api(op: str, payload: dict) -> bool:
     """Try Eagle App V1 API (localhost:41595/api/…). Returns True if succeeded."""
     if _urllib_req is None:
@@ -191,7 +224,13 @@ def _write_via_eagle_api(op: str, payload: dict) -> bool:
         req  = _urllib_req.Request(url, data=data,
                                    headers={"Content-Type": "application/json"})
         with _urllib_req.urlopen(req, timeout=2) as r:
-            return r.status == 200
+            if r.status != 200:
+                return False
+            # A2：Eagle 可能以 HTTP 200 回 {"status":"error"} → 一併視為失敗
+            try:
+                return _json.loads(r.read().decode("utf-8")).get("status") == "success"
+            except Exception:
+                return True
     except Exception:
         return False
 
@@ -211,7 +250,12 @@ def _write_via_eagle_api_v2(op: str, payload: dict) -> bool:
         req  = _urllib_req.Request(url, data=data,
                                    headers={"Content-Type": "application/json"})
         with _urllib_req.urlopen(req, timeout=2) as r:
-            return r.status == 200
+            if r.status != 200:
+                return False
+            try:
+                return _json.loads(r.read().decode("utf-8")).get("status") == "success"
+            except Exception:
+                return True
     except Exception:
         return False
 

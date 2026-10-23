@@ -536,6 +536,8 @@ def _run_one_folder(folder_name: str) -> bool:
             return
         for entry in entries:
             if entry.is_dir():
+                if entry.name.startswith("."):   # .viewer-trash 等隱藏目錄不入索引（A3）
+                    continue
                 _scan_dir(entry, category)
             elif entry.is_file():
                 ext = entry.suffix.lower()
@@ -577,6 +579,8 @@ def _run_one_folder(folder_name: str) -> bool:
 
     for entry in top_entries:
         if entry.is_dir():
+            if entry.name.startswith("."):       # .viewer-trash 等隱藏目錄不入索引（A3）
+                continue
             _scan_dir(entry, entry.name)
         elif entry.is_file():
             ext = entry.suffix.lower()
@@ -651,7 +655,8 @@ def _prune_stale_folder_items(folder_name: str) -> int:
         # Build set of all existing relative paths in one pass
         existing: set[str] = set()
         root_str = str(folder_root)
-        for dirpath, _dirs, files in os.walk(folder_root):
+        for dirpath, dirs, files in os.walk(folder_root):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]   # 隱藏目錄不入索引（A3）
             rel_dir = os.path.relpath(dirpath, root_str)
             rel_dir = "" if rel_dir == "." else rel_dir + "/"
             for fname in files:

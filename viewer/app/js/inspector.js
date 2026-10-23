@@ -62,7 +62,10 @@ function _syncBar() {
   $('btn-sel-folders')?.toggleAttribute('hidden', trash);
   $('btn-sel-restore')?.toggleAttribute('hidden', !trash);
   $('btn-sel-delete')?.toggleAttribute('hidden', !trash);
-  for (const id of ['btn-sel-archive', 'btn-sel-tags', 'btn-sel-folders']) {
+  // 垃圾桶操作（封存）Excire 亦可用（A1 檔案層垃圾桶）；編輯類維持唯讀
+  const ab = $('btn-sel-archive');
+  if (ab) { ab.disabled = false; ab.title = '加入垃圾桶（封存）'; }
+  for (const id of ['btn-sel-tags', 'btn-sel-folders']) {
     const b = $(id);
     if (b) { b.disabled = ro; b.title = ro ? 'Excire 庫為唯讀' : ''; }
   }
@@ -170,9 +173,9 @@ function _renderSingle(body, it) {
       ${it.source === 'eagle' ? `<a class="btn btn-ghost btn-sm" href="eagle://item/${h(it.id)}">${_icon('library-eagle')}Eagle</a>` : ''}
       <button class="btn btn-ghost btn-sm" data-act="refresh-thumb" ${ro ? 'disabled title="Excire 庫為唯讀"' : ''}>${_icon('retry')}縮圖</button>
       ${archived
-        ? `<button class="btn btn-ghost btn-sm" data-act="restore" ${ro ? 'disabled' : ''}>${_icon('restore')}還原</button>
-           <button class="btn btn-danger btn-sm" data-act="delete" ${ro ? 'disabled' : ''}>${_icon('trash')}永久刪除</button>`
-        : `<button class="btn btn-ghost btn-sm" data-act="archive" ${ro ? 'disabled title="Excire 庫為唯讀"' : ''}>${_icon('trash')}加入垃圾桶</button>`}
+        ? `<button class="btn btn-ghost btn-sm" data-act="restore">${_icon('restore')}還原</button>
+           <button class="btn btn-danger btn-sm" data-act="delete">${_icon('trash')}永久刪除</button>`
+        : `<button class="btn btn-ghost btn-sm" data-act="archive">${_icon('trash')}加入垃圾桶</button>`}
     </div>
   </div>`;
 
@@ -376,9 +379,9 @@ function _renderMulti(body, items) {
       <button class="btn btn-ghost btn-sm" data-act="tags" ${dis}>${_icon('tag')}加標籤</button>
       <button class="btn btn-ghost btn-sm" data-act="folders" ${dis}>${_icon('folder')}加資料夾</button>
       ${trash || allArchived
-        ? `<button class="btn btn-ghost btn-sm" data-act="restore" ${dis}>${_icon('restore')}還原</button>
-           <button class="btn btn-danger btn-sm" data-act="delete" ${dis}>${_icon('trash')}永久刪除</button>`
-        : `<button class="btn btn-ghost btn-sm" data-act="archive" ${dis}>${_icon('trash')}加入垃圾桶</button>`}
+        ? `<button class="btn btn-ghost btn-sm" data-act="restore">${_icon('restore')}還原</button>
+           <button class="btn btn-danger btn-sm" data-act="delete">${_icon('trash')}永久刪除</button>`
+        : `<button class="btn btn-ghost btn-sm" data-act="archive">${_icon('trash')}加入垃圾桶</button>`}
     </div>
     ${ro ? `<div class="insp-ro-banner">${_icon('lock-ro')} Excire 唯讀庫 — 僅供檢視</div>` : ''}
   </div>`;

@@ -97,6 +97,12 @@ export const api = {
   deleteItem: (lib, id) =>
     _json(`/api/item?id=${enc(id)}&lib=${enc(lib)}`, { method: 'DELETE' }),
 
+  /** GET /api/trash/list?lib= → { ok, kind, items, total }（三種庫型統一垃圾桶清單） */
+  trashList: lib => _json(`/api/trash/list?lib=${enc(lib)}`),
+
+  /** POST /api/trash/empty {lib} — 清空垃圾桶（永久刪除，A4） */
+  trashEmpty: lib => _json('/api/trash/empty', _POST_JSON({ lib })),
+
   /* ── AI（P6 端點，B5 前端點亮）────────────────────────────────── */
 
   /** GET /api/ai/status → { ok, onnxruntime, clip_model_ready, …, libs } */
@@ -112,16 +118,25 @@ export const api = {
     `/api/ai/similar?lib=${enc(lib)}&item=${enc(item)}` +
     `${topk ? `&topk=${topk}` : ''}${all ? '&all=1' : ''}`),
 
-  /** GET /api/ai/faces/persons?lib=… → { ok, clustered, persons } */
+  /** GET /api/ai/faces/persons?lib=… → { ok, clustered, attrs_available, persons } */
   aiFacesPersons: lib => _jsonStatus(`/api/ai/faces/persons?lib=${enc(lib)}`),
+
+  /** POST /api/ai/faces/persons/name {lib, person_id, name|null} → { ok, person_id, name }
+   *  （B1 人物命名：name=null 清除；寫入本站自有 persons.json，不碰 Excire） */
+  aiFacesPersonName: (lib, personId, name) =>
+    _json('/api/ai/faces/persons/name', _POST_JSON({ lib, person_id: personId, name })),
 
   /** GET /api/ai/faces/search?lib=&item=[&face=][&topk=][&all=1] → { status, body } */
   aiFacesSearch: (lib, item, { face, topk, all } = {}) => _jsonStatus(
     `/api/ai/faces/search?lib=${enc(lib)}&item=${enc(item)}` +
     `${face != null ? `&face=${face}` : ''}${topk ? `&topk=${topk}` : ''}${all ? '&all=1' : ''}`),
 
-  /** POST /api/ai/index {lib, kind} → { status, body }（409 = already_running） */
+  /** POST /api/ai/index {lib, kind} → { status, body }（409 = already_running）
+   *  kind: clip|faces|both|video-faces|tags（B3 影片多幀 / B5 標籤索引） */
   aiIndex: (lib, kind) => _jsonStatus('/api/ai/index', _POST_JSON({ lib, kind })),
+
+  /** GET /api/ai/tags?lib=… → { ok, built, labels, items }（B5 人數/場景/運動） */
+  aiTags: lib => _json(`/api/ai/tags?lib=${enc(lib)}`),
 
   /** GET /api/ai/index/progress → { ok, job }（SSE 備援輪詢） */
   aiIndexProgress: () => _json('/api/ai/index/progress'),

@@ -5,16 +5,18 @@
 PATCH handlers 的第二參數 ``b`` 為 serve.py 端已解析的 JSON body（維持原單次讀取行為）。
 路由 dispatch 表保留在 serve.py。
 """
+import json
 import shutil
 from urllib.parse import parse_qs, unquote
 
-from config import LIBRARY_PATHS, _lib_locks, _add_library_path, _add_folder_path
+from config import DATA_DIR, LIBRARY_PATHS, _lib_locks, _add_library_path, _add_folder_path
 from extract import _index_library
 from api_helpers import (
-    _add_link, _build_folder_map, _get_item_meta, _patch_item_cache,
-    _remove_item_cache, _remove_link, _sse_broadcast,
+    _add_link, _build_folder_map, _eagle_sync_gate, _get_item_meta,
+    _patch_item_cache, _remove_item_cache, _remove_link, _sse_broadcast,
     _write_item_meta, _write_via_eagle_api, _write_via_eagle_api_v2,
 )
+import trashlib
 from api_sync import _apply_folder_tags_sync, _apply_items_tags_sync
 from api_import import (
     _create_eagle_item_from_file, _load_user_data, _merge_user_data,
@@ -127,16 +129,41 @@ def handle_post_items_tags_sync_apply(h):
     h._json(200, {"ok": True, "applied": applied})
 
 
+def _file_trash_archive(h, lib: str, ids: list):
+    """A1/A3：Excire / dir 型檔案層垃圾桶（.viewer-trash + journal，不寫 Excire DB）。"""
+    r = trashlib.trash_items(lib, ids)
+    if not r["trashed"] and r["errors"]:
+        h._err(404, "；".join(r["errors"])); return
+    if r["trashed"]:
+        _sse_broadcast(lib, {"type": "items_archived", "ids": r["trashed"], "lib": lib})
+    h._json(200, {"ok": True, "archived": r["trashed"], "errors": r["errors"]})
+
+
+def _file_trash_restore(h, lib: str, ids: list):
+    r = trashlib.restore_items(lib, ids)
+    if not r["restored"] and r["errors"]:
+        h._err(404, "；".join(r["errors"])); return
+    if r["restored"]:
+        _sse_broadcast(lib, {"type": "items_restored", "ids": r["restored"], "lib": lib})
+    h._json(200, {"ok": True, "restored": r["restored"], "errors": r["errors"]})
+
+
 def handle_post_item_archive(h):
     b = h._read_json()
     if b is None: return
     item_id = str(b.get("id",  "")).strip()
     lib     = str(b.get("lib", "")).strip()
     if not item_id or not lib: h._err(400, "Missing field: id or lib"); return
+    if trashlib.lib_kind(lib) in ("excire", "dir"):
+        _file_trash_archive(h, lib, [item_id]); return
     meta = _get_item_meta(lib, item_id)
     if meta is None: h._err(404, "Item not found"); return
-    # 嘗試 Eagle 原生 moveToTrash；失敗則 soft-archive（加 archived tag）
-    eagle_ok = _write_via_eagle_api("item/moveToTrash", {"itemIds": [item_id]})
+    # A2 跨庫防護：先確認 Eagle 開啟中且目前庫 == 目標庫，才呼叫 moveToTrash；
+    # 否則僅 soft-archive（加 archived tag）並明確回報 degraded（不再靜默假成功）
+    can_sync, reason = _eagle_sync_gate(lib)
+    eagle_ok = can_sync and _write_via_eagle_api("item/moveToTrash", {"itemIds": [item_id]})
+    if can_sync and not eagle_ok:
+        reason = "eagle_api_failed"
     tags = meta.get("tags", [])
     if "archived" not in tags:
         tags = tags + ["archived"]
@@ -144,7 +171,9 @@ def handle_post_item_archive(h):
         _write_item_meta(lib, item_id, meta)
         _patch_item_cache(lib, item_id, {"tags": tags})
         _sse_broadcast(lib, {"type": "item_updated", "id": item_id, "lib": lib})
-    h._json(200, {"ok": True, "eagle_trash": eagle_ok})
+    h._json(200, {"ok": True, "eagle_trash": eagle_ok,
+                  "degraded": not eagle_ok,
+                  "degraded_reason": None if eagle_ok else reason})
 
 
 def handle_post_item_restore(h):
@@ -153,16 +182,24 @@ def handle_post_item_restore(h):
     item_id = str(b.get("id",  "")).strip()
     lib     = str(b.get("lib", "")).strip()
     if not item_id or not lib: h._err(400, "Missing field: id or lib"); return
+    if trashlib.lib_kind(lib) in ("excire", "dir"):
+        _file_trash_restore(h, lib, [item_id]); return
     meta = _get_item_meta(lib, item_id)
     if meta is None: h._err(404, "Item not found"); return
-    # Eagle V2 API（4.0 Build 21+）：isDeleted=false 從垃圾桶還原
-    eagle_ok = _write_via_eagle_api_v2("item/update", {"id": item_id, "isDeleted": False})
+    # Eagle V2 API（4.0 Build 21+）：isDeleted=false 從垃圾桶還原（A2：先過跨庫 gate）
+    can_sync, reason = _eagle_sync_gate(lib)
+    eagle_ok = can_sync and _write_via_eagle_api_v2(
+        "item/update", {"id": item_id, "isDeleted": False})
+    if can_sync and not eagle_ok:
+        reason = "eagle_api_failed"
     tags = [t for t in meta.get("tags", []) if t != "archived"]
     meta["tags"] = tags
     _write_item_meta(lib, item_id, meta)
     _patch_item_cache(lib, item_id, {"tags": tags})
     _sse_broadcast(lib, {"type": "item_updated", "id": item_id, "lib": lib})
-    h._json(200, {"ok": True, "eagle_restore": eagle_ok})
+    h._json(200, {"ok": True, "eagle_restore": eagle_ok,
+                  "degraded": not eagle_ok,
+                  "degraded_reason": None if eagle_ok else reason})
 
 
 def handle_post_items_restore_batch(h):
@@ -171,6 +208,10 @@ def handle_post_items_restore_batch(h):
     ids = [str(x).strip() for x in b.get("ids", [])]
     lib = str(b.get("lib", "")).strip()
     if not ids or not lib: h._err(400, "Missing field: ids or lib"); return
+    if trashlib.lib_kind(lib) in ("excire", "dir"):
+        _file_trash_restore(h, lib, ids); return
+    can_sync, reason = _eagle_sync_gate(lib)          # A2：整批一次 gate
+    eagle_all_ok = can_sync
     restored = []
     for item_id in ids:
         meta = _get_item_meta(lib, item_id)
@@ -180,11 +221,16 @@ def handle_post_items_restore_batch(h):
         _write_item_meta(lib, item_id, meta)
         _patch_item_cache(lib, item_id, {"tags": tags})
         # Eagle V2 API（4.0 Build 21+）：isDeleted=false 從垃圾桶還原
-        _write_via_eagle_api_v2("item/update", {"id": item_id, "isDeleted": False})
+        if can_sync and not _write_via_eagle_api_v2(
+                "item/update", {"id": item_id, "isDeleted": False}):
+            eagle_all_ok = False
+            reason = "eagle_api_failed"
         restored.append(item_id)
     if restored:
         _sse_broadcast(lib, {"type": "items_restored", "ids": restored, "lib": lib})
-    h._json(200, {"ok": True, "restored": restored})
+    h._json(200, {"ok": True, "restored": restored,
+                  "degraded": not eagle_all_ok,
+                  "degraded_reason": None if eagle_all_ok else reason})
 
 
 def handle_post_items_archive_batch(h):
@@ -193,6 +239,9 @@ def handle_post_items_archive_batch(h):
     ids = [str(x).strip() for x in b.get("ids", [])]
     lib = str(b.get("lib", "")).strip()
     if not ids or not lib: h._err(400, "Missing field: ids or lib"); return
+    if trashlib.lib_kind(lib) in ("excire", "dir"):
+        _file_trash_archive(h, lib, ids); return
+    can_sync, reason = _eagle_sync_gate(lib)          # A2：整批一次 gate
     archived = []
     for item_id in ids:
         meta = _get_item_meta(lib, item_id)
@@ -203,11 +252,17 @@ def handle_post_items_archive_batch(h):
             meta["tags"] = tags
             _write_item_meta(lib, item_id, meta)
             _patch_item_cache(lib, item_id, {"tags": tags})
-            _write_via_eagle_api("item/moveToTrash", {"itemIds": [item_id]})
         archived.append(item_id)
+    # Eagle 原生 moveToTrash：單次批次呼叫（避免逐項 HTTP 疊延遲）
+    eagle_ok = can_sync and bool(archived) and _write_via_eagle_api(
+        "item/moveToTrash", {"itemIds": archived})
+    if can_sync and not eagle_ok:
+        reason = "eagle_api_failed"
     if archived:
         _sse_broadcast(lib, {"type": "items_archived", "ids": archived, "lib": lib})
-    h._json(200, {"ok": True, "archived": archived})
+    h._json(200, {"ok": True, "archived": archived,
+                  "degraded": not eagle_ok,
+                  "degraded_reason": None if eagle_ok else reason})
 
 
 def handle_post_items_folders_batch(h):
@@ -228,15 +283,17 @@ def handle_post_items_folders_batch(h):
     h._json(200, {"ok": True, "updated": updated})
 
 
-def handle_post_items_delete_batch(h):
-    b = h._read_json()
-    if b is None: return
-    ids = [str(x).strip() for x in b.get("ids", [])]
-    lib = str(b.get("lib", "")).strip()
-    if not ids or not lib: h._err(400, "Missing field: ids or lib"); return
+def _eagle_delete_permanent(lib: str, ids: list):
+    """Eagle 型永久刪除：A4 後端驗證「須已在垃圾桶」（archived tag / isDeleted），
+    未封存項一律跳過（skipped），不再無條件 rmtree。回 (deleted, skipped)。"""
     lib_path = LIBRARY_PATHS.get(lib)
-    deleted = []
+    deleted, skipped = [], []
     for item_id in ids:
+        meta = _get_item_meta(lib, item_id)
+        if meta is not None and "archived" not in meta.get("tags", []) \
+                and not meta.get("isDeleted"):
+            skipped.append(item_id)
+            continue
         if lib_path:
             info_dir = lib_path / "images" / f"{item_id}.info"
             if info_dir.exists():
@@ -245,7 +302,57 @@ def handle_post_items_delete_batch(h):
         _remove_item_cache(lib, item_id)
         deleted.append(item_id)
         _sse_broadcast(lib, {"type": "item_deleted", "id": item_id, "lib": lib})
-    h._json(200, {"ok": True, "deleted": deleted})
+    return deleted, skipped
+
+
+def handle_post_items_delete_batch(h):
+    b = h._read_json()
+    if b is None: return
+    ids = [str(x).strip() for x in b.get("ids", [])]
+    lib = str(b.get("lib", "")).strip()
+    if not ids or not lib: h._err(400, "Missing field: ids or lib"); return
+    kind = trashlib.lib_kind(lib)
+    if kind in ("excire", "dir"):
+        # A1/A3：僅允許刪除 journal（垃圾桶）內的項目；不在垃圾桶 → errors
+        r = trashlib.delete_items(lib, ids)
+        for item_id in r["deleted"]:
+            _sse_broadcast(lib, {"type": "item_deleted", "id": item_id, "lib": lib})
+        h._json(200, {"ok": True, "deleted": r["deleted"], "errors": r["errors"]})
+        return
+    if kind is None:
+        h._err(404, "Library not found"); return
+    deleted, skipped = _eagle_delete_permanent(lib, ids)
+    h._json(200, {"ok": True, "deleted": deleted, "skipped": skipped})
+
+
+def handle_post_trash_empty(h):
+    """A4：清空垃圾桶（三種庫型統一）。Eagle = 刪除所有 archived/isDeleted 項；
+    Excire/dir = 清空 .viewer-trash + journal。前端必經「輸入 DELETE」二次確認。"""
+    b = h._read_json()
+    if b is None: return
+    lib = str(b.get("lib", "")).strip()
+    if not lib: h._err(400, "Missing field: lib"); return
+    kind = trashlib.lib_kind(lib)
+    if kind in ("excire", "dir"):
+        r = trashlib.empty_trash(lib)
+        for item_id in r["deleted"]:
+            _sse_broadcast(lib, {"type": "item_deleted", "id": item_id, "lib": lib})
+        h._json(200, {"ok": True, "deleted": r["deleted"], "errors": r["errors"]})
+        return
+    if kind is None:
+        h._err(404, "Library not found"); return
+    # Eagle：以快取為準收集垃圾桶內項目 id
+    cache_path = DATA_DIR / lib / "urls_data.json"
+    ids = []
+    if cache_path.exists():
+        try:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+            ids = [i.get("id") for i in data.get("items", [])
+                   if "archived" in (i.get("tags") or [])]
+        except Exception:
+            pass
+    deleted, skipped = _eagle_delete_permanent(lib, ids)
+    h._json(200, {"ok": True, "deleted": deleted, "skipped": skipped})
 
 
 def handle_post_item_link(h):
@@ -437,10 +544,22 @@ def handle_delete_item(h):
     item_id = unquote(p.get("id",  [""])[0]).strip()
     lib     = unquote(p.get("lib", [""])[0]).strip()
     if not item_id or not lib: h._err(400, "Missing ?id= or ?lib="); return
+    kind = trashlib.lib_kind(lib)
+    if kind in ("excire", "dir"):
+        r = trashlib.delete_items(lib, [item_id])
+        if not r["deleted"]:
+            h._err(404, "；".join(r["errors"]) or "尚未在垃圾桶中，禁止永久刪除"); return
+        _sse_broadcast(lib, {"type": "item_deleted", "id": item_id, "lib": lib})
+        h._json(200, {"ok": True}); return
     lib_path = LIBRARY_PATHS.get(lib)
     if lib_path is None: h._err(404, "Library not found"); return
     info_dir = lib_path / "images" / f"{item_id}.info"
     if not info_dir.exists(): h._err(404, "Item not found"); return
+    # A4 後端驗證：須已在垃圾桶（archived / isDeleted）才能永久刪除
+    meta = _get_item_meta(lib, item_id)
+    if meta is not None and "archived" not in meta.get("tags", []) \
+            and not meta.get("isDeleted"):
+        h._err(400, "尚未加入垃圾桶（封存），禁止永久刪除"); return
     with _lib_locks[lib]:
         shutil.rmtree(info_dir, ignore_errors=True)
     _remove_item_cache(lib, item_id)

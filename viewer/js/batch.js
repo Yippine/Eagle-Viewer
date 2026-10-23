@@ -102,12 +102,14 @@ export async function batchDelete() {
     });
     const d = await res.json();
     if (!d.ok) throw new Error(d.error);
-    const deletedSet = new Set(d.deleted || ids);
+    const deletedSet = new Set(d.deleted || []);
     state.ALL = state.ALL.filter(i => !deletedSet.has(i.id));
     deletedSet.forEach(id => document.querySelector(`.card[data-id="${CSS.escape(id)}"]`)?.remove());
     exitSelectMode();
     applyFilter();
-    _batchToast(`已刪除 ${deletedSet.size} 筆`);
+    // A4：後端要求「須先在垃圾桶」——未封存項目會被略過（skipped / errors）
+    const nSkip = (d.skipped || []).length + (d.errors || []).length;
+    _batchToast(`已刪除 ${deletedSet.size} 筆${nSkip ? `（${nSkip} 筆未在垃圾桶，已略過）` : ''}`, !deletedSet.size && nSkip > 0);
   } catch (e) { _batchToast(`刪除失敗：${e.message}`, true); }
 }
 

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from config import DATA_DIR, FOLDER_PATHS, LIBRARY_PATHS, VIEWER_DIR
 from excire import get_excire_library
+import trashlib
 
 # ---------------------------------------------------------------------------
 # MIME map
@@ -192,3 +193,23 @@ def handle_excire_media(h, up: str):
     # 縮圖/預覽為內容穩定的 JPG → 長效快取；原圖不快取
     cache = 86400 if kind in ("thumb", "preview") else 0
     serve_file(h, fs, _guess_mime(fs), cache=cache)
+
+
+# ---------------------------------------------------------------------------
+# Trash media route（垃圾桶內檔案：.viewer-trash 直接串流）
+# ---------------------------------------------------------------------------
+
+def handle_trash_media(h, up: str):
+    """GET /trash-file/{lib_key}/{rel} — 垃圾桶檢視用（Excire/dir 型）。"""
+    rest  = up[len("/trash-file/"):]
+    parts = rest.split("/", 1)
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        h._err(404, "Not found: " + up); return
+    root = trashlib.trash_root(parts[0])
+    if root is None or not root.exists():
+        h._err(404, f"垃圾桶不存在：{parts[0]}"); return
+    root_r = root.resolve()
+    fs = (root_r / parts[1]).resolve()
+    if not str(fs).startswith(str(root_r)) or not fs.is_file():
+        h._err(404, "Not found: " + up); return
+    serve_file(h, fs, _guess_mime(fs))

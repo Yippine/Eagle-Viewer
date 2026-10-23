@@ -19,6 +19,7 @@ from extract import (
 from api_helpers import _get_folder_tree, _get_item_meta, _load_links
 from api_sync import _compute_folder_tags_diff, _compute_items_tags_diff
 from api_import import _load_user_data, get_import_status
+import trashlib
 
 # ---------------------------------------------------------------------------
 # Views helpers (view history per library)
@@ -272,6 +273,28 @@ def handle_folder_extract_status(h, up: str):
     st = _get_folder_scan_status(task_id)
     if st is None: h._err(404, "Task not found"); return
     h._json(200, {"ok": True, "task_id": task_id, **st})
+
+
+def handle_trash_list(h):
+    """GET /api/trash/list?lib= — 垃圾桶清單（三種庫型統一）。
+    Eagle = 快取內 archived 項；Excire/dir = journal（.viewer-trash）清單。"""
+    lib = h._query_lib()
+    if not lib: h._err(400, "Missing ?lib= parameter"); return
+    kind = trashlib.lib_kind(lib)
+    if kind is None: h._err(404, f"Library not found: {lib}"); return
+    if kind == "eagle":
+        items = []
+        cache_path = DATA_DIR / lib / "urls_data.json"
+        if cache_path.exists():
+            try:
+                data = json.loads(cache_path.read_text(encoding="utf-8"))
+                items = [i for i in data.get("items", [])
+                         if "archived" in (i.get("tags") or [])]
+            except Exception:
+                pass
+    else:
+        items = trashlib.list_trash(lib)
+    h._json(200, {"ok": True, "kind": kind, "items": items, "total": len(items)})
 
 
 def handle_services_health(h):

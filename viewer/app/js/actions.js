@@ -1,15 +1,18 @@
-/* ── actions.js ▸ 單項/批次操作層（B4）───────────────────────────────────
+/* ── actions.js ▸ 單項/批次操作層（B4；Phase A 垃圾桶完備化）─────────────
    所有寫入走後端既有端點（api_mutations.py），成功後樂觀 patch store
    （notifications.patchLocal → 'items-mutated'）+ toast；SSE 回聲再以權威
-   資料校正。雙軌垃圾桶沿用舊版：封存 = moveToTrash + archived tag、
-   還原 = isDeleted:false + 去 tag、永久刪除僅限已封存（兩步保護）且必經
-   確認 dialog。Excire 項目唯讀：一律 guard 擋下 + 提示。 */
+   資料校正。垃圾桶三庫型統一：Eagle = moveToTrash + archived tag（A2：後端
+   跨庫 gate，degraded 時 toast 明示「僅本站封存」）；Excire/dir = 檔案層
+   .viewer-trash + journal（A1/A3）。永久刪除僅限已在垃圾桶（前後端雙重保護）
+   且必經確認 dialog；清空垃圾桶必經「輸入 DELETE」二次確認（A4）。
+   Excire 項目編輯類操作（標籤/星等/改名…）維持唯讀 guard。 */
 
 import { store } from './store.js';
 import { api, mediaURL } from './api.js';
 import { parseLibId } from './router.js';
 import { h } from './items.js';
 import { toast, patchLocal, removeLocal } from './notifications.js';
+import { bustTrashBadge } from './lib-data.js';
 
 let _ctx = { folderTree: () => [], folderName: id => id };
 export function setActionsContext(ctx) { Object.assign(_ctx, ctx); }
@@ -20,7 +23,12 @@ export function libSlug() { return parseLibId(store.state.libId || '')?.slug || 
 
 export function itemsByIds(ids) {
   const set = new Set(Array.isArray(ids) ? ids : [ids]);
-  return store.state.allItems.filter(i => set.has(i.id));
+  const found = store.state.allItems.filter(i => set.has(i.id));
+  if (found.length === set.size) return found;
+  const have = new Set(found.map(i => i.id));           // 垃圾桶（journal）項目可能只在 gridItems
+  for (const i of (store.state.gridItems || []))
+    if (set.has(i.id) && !have.has(i.id)) { found.push(i); have.add(i.id); }
+  return found;
 }
 
 export function isReadOnly(items) { return items.some(i => i.readOnly); }
@@ -30,6 +38,9 @@ function _guard(items) {
   if (isReadOnly(items)) { toast('Excire 庫為唯讀，無法編輯', { err: true }); return false; }
   return true;
 }
+
+/** 垃圾桶操作（封存/還原/永久刪除）不受 Excire 唯讀限制（A1 檔案層垃圾桶） */
+function _guardTrash(items) { return items.length > 0; }
 
 /** 既有標籤 ∪ 資料夾名 建議清單：[{ tag, isFolder, count }]（依使用數排序） */
 export function tagSuggestions() {
@@ -150,33 +161,45 @@ export async function setUrl(id, url) {
 
 export async function archiveItems(ids) {
   const items = itemsByIds(ids);
-  if (!_guard(items)) return;
+  if (!_guardTrash(items)) return;
   try {
     const d = await api.postItems('items/archive-batch',
       { ids: items.map(i => i.id), lib: libSlug() });
     const done = d.archived || items.map(i => i.id);
     patchLocal(done, it =>
       ({ tags: (it.tags || []).includes('archived') ? it.tags : [...(it.tags || []), 'archived'] }));
-    toast(`已封存 ${done.length} 筆`, { actionLabel: '復原', onAction: () => restoreItems(done) });
+    bustTrashBadge();
+    if (d.degraded && store.state.libType === 'eagle') {
+      // A2：跨庫 / Eagle 未執行 / API 失敗 → 明示降級，不再靜默假成功
+      toast(`已封存 ${done.length} 筆（僅本站封存，未同步 Eagle 垃圾桶）`,
+        { err: true, duration: 6000, actionLabel: '復原', onAction: () => restoreItems(done) });
+    } else {
+      toast(`已封存 ${done.length} 筆`, { actionLabel: '復原', onAction: () => restoreItems(done) });
+    }
   } catch (e) { toast(`封存失敗：${e.message}`, { err: true }); }
 }
 
 export async function restoreItems(ids) {
   const items = itemsByIds(ids);
-  if (!_guard(items)) return;
+  if (!_guardTrash(items)) return;
   try {
     const d = await api.postItems('items/restore-batch',
       { ids: items.map(i => i.id), lib: libSlug() });
     const done = d.restored || items.map(i => i.id);
     patchLocal(done, it => ({ tags: (it.tags || []).filter(t => t !== 'archived') }));
-    toast(`已還原 ${done.length} 筆`);
+    bustTrashBadge();
+    if (store.state.libType !== 'eagle') store.emit('lib-invalidate');  // dir/excire：下次進庫重載
+    if (d.degraded && store.state.libType === 'eagle')
+      toast(`已還原 ${done.length} 筆（僅本站還原，未同步 Eagle）`, { err: true, duration: 6000 });
+    else
+      toast(`已還原 ${done.length} 筆`);
   } catch (e) { toast(`還原失敗：${e.message}`, { err: true }); }
 }
 
-/** 永久刪除（兩步保護：僅限已封存項目；必經確認 dialog） */
+/** 永久刪除（兩步保護：僅限已在垃圾桶項目；必經確認 dialog；後端亦驗證） */
 export async function deleteItems(ids) {
   const items = itemsByIds(ids);
-  if (!_guard(items)) return;
+  if (!_guardTrash(items)) return;
   const notArchived = items.filter(i => !(i.tags || []).includes('archived'));
   if (notArchived.length) {
     toast('需先加入垃圾桶（封存）才能永久刪除', { err: true });
@@ -194,8 +217,29 @@ export async function deleteItems(ids) {
     const d = await api.postItems('items/delete-batch',
       { ids: items.map(i => i.id), lib: libSlug() });
     removeLocal(d.deleted || items.map(i => i.id));
+    bustTrashBadge();
     toast(`已永久刪除 ${(d.deleted || items).length} 筆`);
   } catch (e) { toast(`刪除失敗：${e.message}`, { err: true }); }
+}
+
+/** 清空垃圾桶（A4：三種庫型統一；必經「輸入 DELETE」二次確認） */
+export async function emptyTrash() {
+  const slug = libSlug();
+  if (!slug) return;
+  const n = (store.state.gridItems || []).length;
+  if (!n) { toast('垃圾桶已是空的'); return; }
+  const ok = await confirmTypeDialog({
+    title: '清空垃圾桶',
+    body: `將永久刪除垃圾桶內全部 ${n} 筆素材，此操作無法復原。`,
+    keyword: 'DELETE', okLabel: '永久刪除全部',
+  });
+  if (!ok) return;
+  try {
+    const d = await api.trashEmpty(slug);
+    removeLocal(d.deleted || []);
+    bustTrashBadge();
+    toast(`已清空垃圾桶（永久刪除 ${(d.deleted || []).length} 筆）`);
+  } catch (e) { toast(`清空失敗：${e.message}`, { err: true }); }
 }
 
 /* ── 複製 / 開檔 / 縮圖 ─────────────────────────────────────────────── */
@@ -253,6 +297,34 @@ export function confirmDialog({ title, body = '', okLabel = '確定', danger = f
       b.addEventListener('click', () => d.close(b.value)));
     d.addEventListener('close', () => resolve(d.returnValue === 'ok'), { once: true });
     d.showModal();
+  });
+}
+
+/** 高危二次確認 dialog（A4 清空垃圾桶）：須輸入 keyword 才能按下確認 → Promise<boolean> */
+export function confirmTypeDialog({ title, body = '', keyword = 'DELETE', okLabel = '永久刪除' }) {
+  return new Promise(resolve => {
+    const d = _dlg(`
+      <h3 class="dlg-title">${h(title)}</h3>
+      ${body ? `<p class="dlg-body">${h(body)}</p>` : ''}
+      <div class="dlg-input-row">
+        <input class="dlg-input" type="text" placeholder="輸入 ${h(keyword)} 以確認" autocomplete="off">
+        <span class="dlg-hint">輸入 ${h(keyword)} 解鎖刪除按鈕</span>
+      </div>
+      <div class="dlg-actions">
+        <button class="btn btn-ghost" value="">取消</button>
+        <button class="btn btn-danger" value="ok" disabled data-testid="dlg-ok">${h(okLabel)}</button>
+      </div>`);
+    const input = d.querySelector('.dlg-input');
+    const okBtn = d.querySelector('[value="ok"]');
+    input.addEventListener('input', () => { okBtn.disabled = input.value.trim() !== keyword; });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !okBtn.disabled) d.close('ok');
+    });
+    d.querySelectorAll('.dlg-actions .btn').forEach(b =>
+      b.addEventListener('click', () => d.close(b.value)));
+    d.addEventListener('close', () => resolve(d.returnValue === 'ok'), { once: true });
+    d.showModal();
+    requestAnimationFrame(() => input.focus());
   });
 }
 

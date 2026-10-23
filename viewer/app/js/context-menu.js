@@ -80,11 +80,12 @@ function _open(x, y, ids, items) {
     rows.push(mi('refresh-thumb', '重新整理縮圖', 'retry', roAttr));
   }
   rows.push(sep);
+  /* 垃圾桶操作 Excire 亦可用（A1 檔案層垃圾桶，不寫 Excire DB） */
   if (trash || allArchived) {
-    rows.push(mi('restore', '還原', 'restore', roAttr));
-    rows.push(mi('delete', '永久刪除…', 'trash', roAttr + ' data-danger'));
+    rows.push(mi('restore', '還原', 'restore'));
+    rows.push(mi('delete', '永久刪除…', 'trash', ' data-danger'));
   } else {
-    rows.push(mi('archive', '加入垃圾桶', 'trash', roAttr));
+    rows.push(mi('archive', '加入垃圾桶', 'trash'));
   }
   if (!single) { rows.push(sep); rows.push(mi('clear-sel', '取消選取', 'close')); }
 

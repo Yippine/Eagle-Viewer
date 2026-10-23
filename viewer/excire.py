@@ -383,6 +383,13 @@ class ExcireLibrary:
         fmap = self._folder_map()
 
         where, params = [], []
+        # A1 檔案層垃圾桶：journal 內（已搬入 .viewer-trash）的照片自查詢結果排除
+        # （DB 紀錄不動、縮圖不受影響；還原後自動恢復可見）
+        from trashlib import trashed_photo_ids
+        trashed = trashed_photo_ids(self.name)
+        if trashed:
+            where.append(
+                f"p.Id NOT IN ({','.join(str(int(x)) for x in sorted(trashed))})")
         if folder is not None:
             cids = self._folder_descendants(int(folder))
             if not cids:

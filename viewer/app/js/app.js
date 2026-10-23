@@ -11,7 +11,7 @@ import { initGrid, setEmptyStateProvider } from './grid.js';
 import { renderBreadcrumb, setContentChrome, renderPlaceholderPage, hidePagePanel }
   from './page-chrome.js';
 import { initData, refreshEagle, refreshExcire, refreshTrash, loadExcirePage,
-         updateTrashBadge } from './lib-data.js';
+         updateTrashBadge, dropArchivedFromExcireGrid } from './lib-data.js';
 import { renderSearchRoute, resetSearchView, invalidateLibCache, aiCaps, ensureAiStatus }
   from './ai-search.js';
 import { initPeople, renderPeopleRoute } from './people.js';
@@ -28,7 +28,7 @@ import { initSelection, clearSelection } from './selection.js';
 import { initViewer, syncViewerFromRoute } from './viewer.js';
 import { initDrawer } from './vc-drawer.js';
 import { initInspector, setInspectorContext } from './inspector.js';
-import { setActionsContext } from './actions.js';
+import { setActionsContext, emptyTrash } from './actions.js';
 import { initContextMenu } from './context-menu.js';
 import { initNotifications } from './notifications.js';
 import './vc-bindings.js';   // window.vc* 綁定（vc-panel inline onclick 用）
@@ -202,8 +202,10 @@ function _onItemsMutated() {
   const r = state.route;
   if (!r) return;
   if (r.name === 'trash') { refreshTrash({ keepScroll: true }); return; }
-  if ((r.name === 'lib' || r.name === 'folder') && store.state.libType !== 'excire')
-    refreshEagle(r, { keepScroll: true });
+  const inGrid = r.name === 'lib' || r.name === 'folder' || r.name === 'collection';
+  if (!inGrid) return;
+  if (store.state.libType === 'excire') { dropArchivedFromExcireGrid(); return; }  // 封存後就地剔除
+  if (r.name !== 'collection') refreshEagle(r, { keepScroll: true });
 }
 
 /** 統計頁上下文：需要一個已載入的 Eagle/dir 庫（觀看紀錄僅 Eagle/dir 有） */
@@ -248,6 +250,8 @@ async function _renderRoute(route) {
   /* 垃圾桶模式旗標（Inspector/SelectionBar/選取語意消費）；切換時清空選取 */
   const inTrash = route.name === 'trash';
   document.getElementById('sec-browse')?.classList.toggle('trash-dim', inTrash);
+  const btnEmpty = document.getElementById('btn-trash-empty');
+  if (btnEmpty) btnEmpty.hidden = !inTrash;
   if (!!store.state.trash !== inTrash) {
     store.set({ trash: inTrash });
     clearSelection();
@@ -308,9 +312,6 @@ async function _renderRoute(route) {
       const { libId } = route.params;
       const lib = state.libs.find(l => l.id === libId);
       if (!lib) { renderPlaceholderPage('找不到庫', libId, 'close'); return; }
-      if (lib.type === 'excire') {
-        renderPlaceholderPage('垃圾桶', 'Excire 唯讀庫沒有垃圾桶', 'lock-ro'); return;
-      }
       try { await ensureLibLoaded(libId); }
       catch (e) { renderPlaceholderPage('載入失敗', e.message, 'close'); return; }
       renderTree();
@@ -378,6 +379,7 @@ async function boot() {
   };
   setActionsContext(b4ctx);
   setInspectorContext(b4ctx);
+  document.getElementById('btn-trash-empty')?.addEventListener('click', () => emptyTrash());
   initInspector();
   initContextMenu();
   initNotifications();
