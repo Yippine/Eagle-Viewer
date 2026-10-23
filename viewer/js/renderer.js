@@ -182,7 +182,8 @@ export function buildCard(i) {
     const dimAttrs = (i.width && i.height) ? ` width="${i.width}" height="${i.height}"` : '';
     media = `<div class="cmedia">
       <img class="nat" src="${h(fileSrc)}" loading="lazy" alt="${h(title)}"${dimAttrs}
-           onclick="event.stopPropagation();_imgClick('${idSafe}','${h(fileSrc)}')">
+           onclick="event.stopPropagation();_imgClick('${idSafe}','${h(fileSrc)}')"
+           onerror="this.closest('.card').style.display='none'">
       ${ovBar}
     </div>`;
   } else if (i.file && i.media_type === 'video') {
@@ -192,7 +193,7 @@ export function buildCard(i) {
     const snapAttrs = i.id
       ? ` data-snap-id="${idSafe}"${i.width ? ` data-snap-nw="${i.width}"` : ''}${i.height ? ` data-snap-nh="${i.height}"` : ''}`
       : '';
-    const snapContent = (snapTx && thumbSrc) ? `<img class="snap-thumb" src="${h(thumbSrc)}" alt="" loading="lazy">` : '';
+    const snapContent = (snapTx && thumbSrc) ? `<img class="snap-thumb" src="${h(thumbSrc)}" alt="" loading="lazy" onerror="this.remove()">` : '';
     media = `<div class="cmedia">
       <div class="ratio-box"${ratioStyle}>
         <div class="vid-lazy${snapTx ? ' vid-snap' : ''}" data-vsrc="${h(fileSrc)}"${i.width ? ` data-vw="${i.width}"` : ''}${i.height ? ` data-vh="${i.height}"` : ''}${thumbSrc ? ` data-vposter="${h(thumbSrc)}"` : ''}${tAttr ? ' ' + tAttr : ''}${snapAttrs}>${snapContent}</div>
@@ -206,7 +207,7 @@ export function buildCard(i) {
   } else if (i.thumb) {
     const ratioStyle = (i.width && i.height) ? ` style="aspect-ratio:${i.width}/${i.height}"` : '';
     media = `<div class="cmedia">
-      <div class="ratio-box"${ratioStyle}><img src="${h(thumbSrc)}" loading="lazy" alt="${h(title)}"></div>
+      <div class="ratio-box"${ratioStyle}><img src="${h(thumbSrc)}" loading="lazy" alt="${h(title)}" onerror="this.closest('.card').style.display='none'"></div>
       ${ovBar}
     </div>`;
   } else {

@@ -23,22 +23,21 @@ const _MP = {
   uiVisible: true,
   pinchStart: null, pinchScale: 1, baseScale: 1,
 };
+let _mpSavedScrollY = 0;
 
 /* ── 開啟：從 grid 或統計面板 ────────────────────────────────────── */
 export function openItemInMobilePlayer(itemId) {
   const clicked = state.ALL.find(i => i.id === itemId);
   if (!clicked) return;
+  // 清單直接取 state.filtered 的影片子序列，與卡池順序及數量完全一致
   let list = state.filtered.filter(i => i.file && i.media_type === 'video');
   let idx  = list.findIndex(i => i.id === itemId);
   if (idx === -1) {
+    // fallback：項目不在當前篩選中（例如從統計面板開啟），以全庫同 domain 洗牌
     const base = state.ALL.filter(i => i.file && i.media_type === 'video' && i.domain === clicked.domain);
     list = seededShuffle(base, currentSeed());
     idx  = list.findIndex(i => i.id === itemId);
     if (idx === -1) return;
-  } else if (!state.curDomains?.size) {
-    const dl  = list.filter(i => i.domain === clicked.domain);
-    const di  = dl.findIndex(i => i.id === itemId);
-    if (di !== -1) { list = dl; idx = di; }
   }
   _mpOpen(list, idx);
 }
@@ -49,6 +48,7 @@ function _mpOpen(items, idx) {
   _MP.items = items; _MP.idx = idx; _MP.uiVisible = true;
   document.getElementById('mplayer').classList.remove('ui-hidden');
   document.getElementById('mplayer').classList.add('open');
+  _mpSavedScrollY = window.scrollY;
   document.body.style.overflow = 'hidden';
   history.pushState({ overlay: 'mplayer' }, '');
   _mpHistoryPushed = true;
@@ -63,8 +63,15 @@ export function closeMobilePlayer(fromPopstate = false) {
   _MP.vid = null; _MP.zoomWrapper = null;
   document.getElementById('mplayer').classList.remove('open');
   document.body.style.overflow = '';
-  if (!fromPopstate && _mpHistoryPushed) history.back();
+  if (!fromPopstate && _mpHistoryPushed) { window._skipPopstateCount = (window._skipPopstateCount || 0) + 1; history.back(); }
   _mpHistoryPushed = false;
+  window.scrollTo(0, _mpSavedScrollY);
+  // 阻擋幽靈 click：touchend 後 300ms 內瀏覽器補發的合成 click 可能命中
+  // stats-panel（手機底部抽屜）或其後方的 stats-backdrop（onclick=closeSettingsPanel）
+  const sp = document.getElementById('stats-panel');
+  const bd = document.getElementById('stats-backdrop');
+  if (sp) { sp.style.pointerEvents = 'none'; setTimeout(() => { sp.style.pointerEvents = ''; }, 350); }
+  if (bd) { bd.style.pointerEvents = 'none'; setTimeout(() => { bd.style.pointerEvents = ''; }, 350); }
 }
 
 /* ── 停留時間追蹤 ────────────────────────────────────────────────── */
@@ -82,7 +89,7 @@ export function mpCommitDuration() {
         (state.VIEWS[item.id].total_watch_time || 0) + Math.round(_MP.sessionDur);
       fetch('/api/track', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: item.id, name: item.name, domain: item.domain, duration: Math.round(_MP.sessionDur) }),
+        body: JSON.stringify({ id: item.id, name: item.name, domain: item.domain, duration: Math.round(_MP.sessionDur), lib: state.activeLib }),
       }).catch(() => {});
     }
   }
@@ -132,9 +139,11 @@ function _mpLoad() {
   }
 
   vid.addEventListener('play',       () => { _MP.playStart = Date.now(); _mpSetPlayBtn(false); });
-  vid.addEventListener('pause',      () => { mpAccumDur(); _mpSetPlayBtn(true); });
-  vid.addEventListener('ended',      () => { mpAccumDur(); });
-  vid.addEventListener('timeupdate', () => { _mpUpdateProgress(); vcAbTimeUpdate(vid); });
+  vid.addEventListener('pause',           () => { mpAccumDur(); _mpSetPlayBtn(true); });
+  vid.addEventListener('ended',           () => { mpAccumDur(); });
+  vid.addEventListener('loadedmetadata',  () => _mpUpdateProgress());
+  vid.addEventListener('seeked',          () => _mpUpdateProgress());
+  vid.addEventListener('timeupdate',      () => { _mpUpdateProgress(); vcAbTimeUpdate(vid); });
   vid.play().catch(() => {});
   trackView(item);
 }
@@ -161,7 +170,10 @@ function _mpUpdateProgress() {
 }
 
 export function mpSeekTo(val) {
-  if (_MP.vid && _MP.vid.duration) _MP.vid.currentTime = (val / 100) * _MP.vid.duration;
+  if (!_MP.vid || !_MP.vid.duration) return;
+  _MP.vid.currentTime = (val / 100) * _MP.vid.duration;
+  const r = document.getElementById('mp-prog-range');
+  if (r) r.style.setProperty('--pct', parseFloat(val).toFixed(1) + '%');
 }
 export function mpTogglePlay() {
   if (!_MP.vid) return;
@@ -337,8 +349,8 @@ export function wireMobilePlayer() {
   }
 
   const backBtn = document.querySelector('.mp-back');
-  backBtn.addEventListener('click', closeMobilePlayer);
-  _wireTopbarBtn(backBtn, closeMobilePlayer);
+  // onclick="closeMobilePlayer()" 已在 HTML 處理 click；只需 pointerup 快速響應觸控
+  _wireTopbarBtn(backBtn, () => closeMobilePlayer());
 
   const tagBtnEl = document.getElementById('mp-tag-btn');
   if (tagBtnEl) _wireTopbarBtn(tagBtnEl, mpSearchByTags);

@@ -195,11 +195,16 @@
     <div id="notif-empty" class="notif-empty">沒有新通知</div>
   </div>
 
-  <!-- 📊 統計 pane（單頁：摘要 → 分析 → 記錄）-->
+  <!-- 📊 統計 pane（雙子頁籤：總覽 / 觀看記錄）-->
   <div id="sp-pane-stats" class="sp-pane" hidden>
-    <div id="sp-body" class="sp-body">
+    <div class="sp-inner-tabs">
+      <button class="sp-inner-tab on" data-inner="overview" onclick="switchStatsTab('overview')">📊 總覽</button>
+      <button class="sp-inner-tab" data-inner="history" onclick="switchStatsTab('history')">🕐 觀看記錄</button>
+    </div>
+    <div id="sp-body" class="sp-inner-pane">
       <div class="sp-loading"><div class="spin"></div><span>載入中…</span></div>
     </div>
+    <div id="sp-body-history" class="sp-inner-pane" hidden></div>
   </div>
 
   <!-- 🔧 偏好 pane（Shuffle 導航 + 標籤同步）-->
@@ -394,6 +399,9 @@
   <!-- 播放/暫停閃示 -->
   <div class="dp-play-flash" id="dp-flash"></div>
 
+  <!-- 切換邊界提示 -->
+  <div class="dp-swipe-ov" id="dp-swipe-ov"></div>
+
   <!-- 縮放倍率提示 -->
   <div class="dp-zoom-ind" id="dp-zoom-ind"></div>
 
@@ -469,18 +477,33 @@
         <div class="vc-ab-points">
           <div class="vc-ab-point">
             <button class="vc-point-btn" id="vc-btn-a" onclick="_vcSetA()">A</button>
-            <span class="vc-a-time" id="vc-a-time">–</span>
+            <span class="vc-a-time vc-ab-editable" id="vc-a-time"
+                  contenteditable="true" inputmode="decimal" spellcheck="false"
+                  onfocus="_vcAbSpanFocus(this)"
+                  onblur="_vcAbSpanEdit('a',this)"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">–</span>
           </div>
           <span class="vc-ab-sep">→</span>
           <div class="vc-ab-point">
             <button class="vc-point-btn" id="vc-btn-b" onclick="_vcSetB()">B</button>
-            <span class="vc-b-time" id="vc-b-time">–</span>
+            <span class="vc-b-time vc-ab-editable" id="vc-b-time"
+                  contenteditable="true" inputmode="decimal" spellcheck="false"
+                  onfocus="_vcAbSpanFocus(this)"
+                  onblur="_vcAbSpanEdit('b',this)"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">–</span>
           </div>
         </div>
         <div class="vc-ab-row">
           <button class="vc-toggle-btn" id="vc-ab-toggle" onclick="_vcToggleAb()">AB 關閉</button>
           <button class="vc-text-btn" onclick="_vcClearAb()">清除</button>
         </div>
+      </div>
+
+      <!-- AB 設定庫 -->
+      <div class="vc-section" id="vc-ab-preset-section" style="display:none">
+        <div class="vc-section-label">🔖 AB 設定庫</div>
+        <div id="vc-ab-presets"></div>
+        <button class="vc-filter-save-btn" onclick="vcSaveAbPreset()">＋ 儲存當前 AB</button>
       </div>
 
     </div><!-- /vc-pane-playback -->
@@ -530,17 +553,22 @@
                  oninput="_vcFilter('sharpness',+this.value)">
           <span class="vc-val" id="vc-sharpness-v">0</span>
         </div>
-        <!-- 選擇性調色（整合） -->
+        <!-- 選擇性調色 -->
+        <div class="vc-sel-header-row">
+          <span class="vc-sel-section-label">🎨 選色</span>
+          <button class="vc-icon-btn vc-sel-add-btn" onclick="vcAddSelectiveColor()" title="新增色彩範圍，點圖取色">＋</button>
+        </div>
         <div id="vc-sel-chips" class="vc-sel-chips-row"></div>
-        <button class="vc-icon-btn vc-sel-add-btn" onclick="vcAddSelectiveColor()" title="新增選色">＋ 新增選色</button>
         <div class="vc-sel-eyedropper-row" id="vc-sel-eyedropper-row" style="display:none">
-          <button id="vc-eyedropper-btn" class="vc-eyedropper-btn"
-                  onclick="vcStartEyedropper()">點擊圖片取色</button>
+          <span class="vc-sel-pick-hint" id="vc-sel-pick-hint" style="display:none">👆 點圖取色中…</span>
           <span id="vc-sel-swatch" class="vc-sel-swatch"></span>
-          <button class="vc-icon-btn" onclick="vcClearSelectiveColor()"
-                  title="清除此選色（保留色塊）">↺</button>
+          <button id="vc-eyedropper-btn" class="vc-icon-btn vc-sel-repick-btn"
+                  onclick="vcStartEyedropper()" title="重新取色">💧</button>
+          <button class="vc-icon-btn vc-sel-clear-btn" onclick="vcClearSelectiveColor()"
+                  title="重設此色彩範圍">✕</button>
         </div>
         <div id="vc-sel-deltas" style="display:none">
+          <div class="vc-sel-deltas-title">調整選取色彩</div>
           <div class="vc-slider-row">
             <span class="vc-label">色調</span>
             <input type="range" id="vc-sel-hueshift" min="-180" max="180" step="1" value="0"
@@ -578,6 +606,16 @@
             <span class="vc-val" id="vc-sel-sepia-v">0.00</span>
           </div>
         </div>
+        <button class="vc-text-btn" id="vc-sel-bind-ab-btn"
+                onclick="vcBindAbToSelective()" title="將當前 A/B 時段綁定到此選色項目"
+                style="display:none;margin-top:8px">
+          ⏱ 套用此 AB 設定
+        </button>
+        <button class="vc-text-btn" id="vc-sel-unbind-ab-btn"
+                onclick="vcUnbindAbFromSelective()" title="移除時段綁定"
+                style="display:none;margin-top:8px">
+          ✕ 移除 AB 綁定
+        </button>
         <button class="vc-filter-save-btn" onclick="vcSaveFilterPreset()">＋ 儲存為濾鏡</button>
       </div>
 

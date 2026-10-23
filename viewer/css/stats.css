@@ -30,7 +30,10 @@
   flex-shrink: 0;
   background: var(--card);
   position: relative;
+  cursor: ns-resize;
+  user-select: none;
 }
+.sp-header.sp-dragging { cursor: ns-resize; }
 .sp-title {
   font-size: 20px; font-weight: 700; color: var(--text);
   letter-spacing: -.3px;
@@ -66,9 +69,35 @@
   flex: 1; overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   min-height: 0;
+  display: flex; flex-direction: column;
 }
 
-.sp-body { padding: 0 20px 40px; }
+/* ── 統計內層雙子頁籤（總覽 / 觀看記錄）──────────────────────── */
+.sp-inner-tabs {
+  display: flex; gap: 0;
+  padding: 10px 20px 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0; background: var(--card);
+}
+.sp-inner-tab {
+  padding: 8px 14px 7px;
+  font-size: 13px; font-weight: 500; color: var(--text3);
+  border-bottom: 2.5px solid transparent;
+  white-space: nowrap;
+  transition: color .15s, border-color .15s;
+}
+.sp-inner-tab:hover { color: var(--text2); }
+.sp-inner-tab.on    { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+/* 內層 pane：可捲動 */
+.sp-inner-pane {
+  flex: 1; overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  min-height: 0;
+  padding-bottom: 40px;
+}
+
+.sp-body { padding: 0; }
 .sp-loading {
   display: flex; align-items: center; gap: 12px;
   color: var(--text3); padding: 40px 20px;
@@ -85,22 +114,29 @@
 /* ── 摘要數字 grid ──────────────────────────────────────────────── */
 .sp-summary {
   display: grid; grid-template-columns: repeat(3, 1fr);
-  gap: 10px; margin: 16px 20px 4px;
+  gap: 10px; margin: 20px 20px 6px;
 }
 .sp-stat {
   background: var(--bg); border-radius: var(--r-sm);
-  padding: 14px 10px; text-align: center;
+  padding: 16px 12px; text-align: center;
+  border: 1px solid var(--border);
 }
-.sp-stat .sv { font-size: 25px; font-weight: 700; color: var(--accent); }
-.sp-stat .sl { font-size: 13px; color: var(--text3); margin-top: 3px; }
+.sp-stat .sv { font-size: 26px; font-weight: 700; color: var(--accent); }
+.sp-stat .sl { font-size: 12px; color: var(--text3); margin-top: 4px; letter-spacing: .2px; }
 
 .sp-h {
-  font-size: 12px; font-weight: 700; color: var(--text3);
-  letter-spacing: .5px; text-transform: uppercase;
-  margin: 20px 20px 8px;
+  font-size: 13px; font-weight: 700; color: var(--text2);
+  letter-spacing: .2px;
+  margin: 24px 20px 10px;
+  display: flex; align-items: center; gap: 6px;
+}
+.sp-h::before {
+  content: ''; display: block;
+  width: 3px; height: 14px; border-radius: 2px;
+  background: var(--accent); flex-shrink: 0;
 }
 
-.sp-items { display: flex; flex-direction: column; gap: 2px; padding: 0 12px; }
+.sp-items { display: flex; flex-direction: column; gap: 2px; padding: 0; }
 
 .sp-item {
   display: flex; align-items: center; gap: 11px;
@@ -161,12 +197,31 @@
   display: flex; align-items: center; justify-content: center;
   font-size: 26px;
 }
-.sp-hist-thumb .play-badge {
+/* hover 播放覆蓋層（取代舊 play-badge，hover 才出現）*/
+.sp-hist-play-overlay {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(0,0,0,.32);
+  background: rgba(0,0,0,.45);
+  opacity: 0; transition: opacity .15s;
+  border-radius: 7px;
 }
-.sp-hist-thumb .play-badge svg { color: #fff; }
+.sp-hist-item:hover .sp-hist-play-overlay { opacity: 1; }
+.sp-hist-play-overlay svg { drop-shadow: 0 1px 3px rgba(0,0,0,.5); }
+
+/* 縮圖 zoom on hover */
+.sp-hist-thumb img { transition: transform .2s ease; }
+.sp-hist-item:hover .sp-hist-thumb img { transform: scale(1.04); }
+
+/* Top 10 排名徽章（疊在縮圖左上角）*/
+.sp-top-rank {
+  position: absolute; top: 4px; left: 4px;
+  min-width: 20px; height: 20px; border-radius: 5px;
+  background: rgba(0,0,0,.65); color: #fff;
+  font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 4px; line-height: 1;
+  backdrop-filter: blur(2px);
+}
 
 .sp-hist-info { flex: 1; min-width: 0; }
 .sp-hist-name {
@@ -185,7 +240,7 @@
   padding: 1px 7px; font-size: 13px; font-weight: 600;
   color: var(--accent);
 }
-.sp-hist-time { font-size: 13px; color: var(--text3); }
+.sp-hist-time { font-size: 13px; color: var(--text3); } /* 相對時間保持 13px（次要資訊）*/
 
 .sp-hist-del {
   flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%;
@@ -202,55 +257,115 @@
 }
 .sp-watch-dur svg { opacity: .6; }
 
+/* ── 觀看記錄 toolbar ─────────────────────────────────────────── */
 .sp-hist-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 4px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 12px 16px 8px;
+  position: sticky; top: 0; background: var(--card); z-index: 1;
+  border-bottom: 1px solid var(--border);
 }
-.sp-hist-total { font-size: 14px; color: var(--text3); }
+.sp-hist-search-wrap {
+  flex: 1; min-width: 0; position: relative; display: flex; align-items: center;
+}
+.sp-hist-search-icon { position: absolute; left: 9px; font-size: 13px; pointer-events: none; }
+.sp-hist-search {
+  width: 100%; padding: 6px 10px 6px 30px;
+  border: 1.5px solid var(--border); border-radius: 20px;
+  background: var(--bg); color: var(--text); font-size: 13px;
+  outline: none; transition: border-color .15s;
+}
+.sp-hist-search:focus { border-color: var(--accent); }
+.sp-hist-search::-webkit-search-cancel-button { cursor: pointer; }
+
+.sp-hist-total { font-size: 12px; color: var(--text3); white-space: nowrap; flex-shrink: 0; }
 .sp-clear-btn {
-  font-size: 14px; color: var(--accent-r); font-weight: 600;
-  padding: 4px 10px; border-radius: 8px;
+  font-size: 13px; color: var(--accent-r); font-weight: 600;
+  padding: 4px 10px; border-radius: 8px; flex-shrink: 0;
   transition: background .12s;
 }
 .sp-clear-btn:hover { background: #ff3b3015; }
 
+/* ── 每日群組 header ──────────────────────────────────────────── */
+.sp-hist-day-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px 4px;
+  font-size: 12px; font-weight: 700; color: var(--text3);
+  letter-spacing: .4px; text-transform: uppercase;
+}
+.sp-day-del-btn {
+  font-size: 12px; color: var(--text3);
+  padding: 2px 8px; border-radius: 6px;
+  border: 1px solid var(--border);
+  transition: color .12s, background .12s, border-color .12s;
+  opacity: 0; transition: opacity .15s;
+}
+.sp-hist-day-hdr:hover .sp-day-del-btn { opacity: 1; }
+.sp-day-del-btn:hover { color: var(--accent-r); background: #ff3b3010; border-color: var(--accent-r); }
+
 /* ── Charts ───────────────────────────────────────────────────────── */
-.bar-chart { display: flex; flex-direction: column; gap: 8px; padding: 0 20px; }
-.bc-row { display: flex; align-items: center; gap: 9px; }
+
+/* 資料夾分佈 bar chart */
+.bar-chart { display: flex; flex-direction: column; gap: 12px; padding: 0 20px 8px; }
+.bc-row { display: flex; align-items: center; gap: 12px; }
 .bc-label {
-  font-size: 13px; color: var(--text2); width: 100px;
+  font-size: 13px; color: var(--text); width: 110px;
   flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-weight: 500;
 }
 .bc-track {
-  flex: 1; height: 12px; background: var(--bg);
-  border-radius: 8px; overflow: hidden;
+  flex: 1; height: 20px; background: var(--bg);
+  border-radius: 10px; overflow: hidden;
 }
 .bc-fill {
   height: 100%; background: var(--accent);
-  border-radius: 8px;
-  transition: width .4s cubic-bezier(.4,0,.2,1);
+  border-radius: 10px;
+  opacity: .85;
+  transition: width .5s cubic-bezier(.4,0,.2,1);
 }
 .bc-val {
   font-size: 13px; font-weight: 700; color: var(--text2);
-  width: 28px; text-align: right; flex-shrink: 0;
+  width: 32px; text-align: right; flex-shrink: 0;
 }
 
-.month-chart {
-  display: flex; align-items: flex-end; gap: 4px;
-  height: 100px; margin-top: 6px; padding: 0 20px;
+/* 近 30 天折線圖（SVG）*/
+.line-chart-wrap {
+  padding: 4px 20px 8px;
 }
-.mc-col {
-  flex: 1; display: flex; flex-direction: column;
-  align-items: center; gap: 3px;
+.lc-svg { display: block; overflow: visible; }
+.lc-grid {
+  stroke: var(--border); stroke-width: 1;
+  stroke-dasharray: 4 3;
 }
-.mc-bar {
-  width: 100%; background: var(--accent);
-  border-radius: 4px 4px 0 0;
-  min-height: 2px;
-  transition: height .4s cubic-bezier(.4,0,.2,1);
+.lc-label {
+  font-size: 11px; fill: var(--c-text3, #999);
+  font-family: inherit;
 }
-.mc-label { font-size: 12px; color: var(--text3); white-space: nowrap; }
-.mc-val   { font-size: 12px; color: var(--text2); font-weight: 600; }
+.lc-today {
+  fill: var(--c-accent, #007aff); font-weight: 700;
+}
+.lc-dot {
+  fill: var(--accent); stroke: var(--card); stroke-width: 1.5;
+  pointer-events: none;
+}
+.lc-dot-today { stroke-width: 2; }
+.lc-hit { cursor: pointer; }
+
+/* Tooltip */
+.lc-tooltip {
+  position: fixed; z-index: 9999;
+  background: var(--text); color: var(--card);
+  font-size: 13px; font-weight: 600;
+  padding: 5px 12px; border-radius: 8px;
+  pointer-events: none; white-space: nowrap;
+  opacity: 0; transform: translateY(4px);
+  transition: opacity .15s, transform .15s;
+  box-shadow: 0 2px 10px rgba(0,0,0,.18);
+}
+.lc-tooltip.on { opacity: 1; transform: translateY(0); }
+
+/* 舊 bar chart 類（保留 class 結構，已不使用）*/
+.month-chart { display: none; }
+.month-chart-wrap { display: none; }
 
 /* ── 設定面板系統（SESE 3-tab 重構）────────────────────────────── */
 #stats-panel { overflow: hidden; }
@@ -276,8 +391,8 @@
 #sp-pane-notif .notif-list  { max-height: none; overflow-y: visible; }
 #sp-pane-notif .notif-item:last-child { border-bottom: 1px solid var(--border); }
 
-/* 統計 pane */
-#sp-pane-stats { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+/* 統計 pane（雙子頁籤：不自捲動，由 sp-inner-pane 各自捲動）*/
+#sp-pane-stats { overflow: hidden; }
 
 /* 偏好 pane */
 #sp-pane-prefs { overflow-y: auto; -webkit-overflow-scrolling: touch; }

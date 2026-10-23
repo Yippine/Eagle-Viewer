@@ -47,28 +47,47 @@
   border-radius: 0;
   user-select: none; -webkit-user-drag: none;
 }
-#mbox.img-mode #mbody img.iz-zoomed  { cursor: grab; animation: none; }
+#mbox.img-mode #mbody img         { cursor: grab; }
+#mbox.img-mode #mbody img.iz-zoomed  { animation: none; }
 #mbox.img-mode #mbody img.iz-dragging { cursor: grabbing; }
 #mbox.img-mode #mbody img.iz-animate  { transition: transform .25s ease; }
 
 /* ── 縮放倍率指示器 ──────────────────────────────────────────────── */
+/* ── 控制按鈕：overlay 在圖片右上角，永遠在視窗內 ─────────────── */
+#m-close, #m-vc-btn {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top, 12px));
+  width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(0,0,0,.52); color: #fff;
+  font-size: 17px; display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  transition: background .15s;
+  z-index: 9010;
+}
+#m-close { right: max(12px, env(safe-area-inset-right, 12px)); }
+#m-vc-btn { right: max(56px, calc(env(safe-area-inset-right, 0px) + 56px)); }
+#m-close:hover, #m-vc-btn:hover { background: rgba(0,0,0,.72); }
+#m-vc-btn.active { background: rgba(29,161,242,.65); }
+
+/* ── 縮放倍率指示器 ──────────────────────────────────────────────── */
 #m-zoom-ind {
-  position: absolute; top: 12px; right: 12px; z-index: 1;
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top, 12px));
+  left: max(12px, env(safe-area-inset-left, 12px));
+  z-index: 9010;
   background: rgba(0,0,0,.65); color: rgba(255,255,255,.9);
   font-size: 14px; font-weight: 700; border-radius: 8px;
   padding: 4px 12px; pointer-events: none;
   opacity: 0; transition: opacity .25s;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
 #m-zoom-ind.show { opacity: 1; }
-#m-close, #m-vc-btn {
-  position: absolute; top: -48px;
-  width: 36px; height: 36px; border-radius: 50%;
-  background: rgba(255,255,255,.15); color: #fff;
-  font-size: 17px; display: flex; align-items: center; justify-content: center;
-  backdrop-filter: blur(8px); transition: background .15s;
+
+.img-boundary-ov {
+  position: fixed; inset: 0; z-index: 9020;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 17px; font-weight: 600; color: rgba(255,255,255,.92);
+  background: rgba(0,0,0,.35); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  pointer-events: none; opacity: 0; transition: opacity .2s;
 }
-#m-close { right: -2px; }
-#m-vc-btn { right: 42px; }
-#m-close:hover, #m-vc-btn:hover { background: rgba(255,255,255,.3); }
-#m-vc-btn.active { background: rgba(255,255,255,.35); }
+.img-boundary-ov.show { opacity: 1; }

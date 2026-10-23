@@ -13,7 +13,71 @@ import * as Shuffle from './shuffle.js';
 let _settingsTab            = 'notif';  // 預設：通知（最時間敏感）
 let _settingsHistoryPushed  = false;
 
+const SP_TOP_KEY  = 'eagle-sp-top';
+const SP_TOP_MIN  = 40;   // px，最小距頂距離
+const SP_TOP_MAX  = 0.75; // 最多佔視窗 75%（避免面板太小）
+
 const _TABS = ['notif', 'stats', 'prefs'];
+
+/* ── Header drag（.sp-header 拖動調整面板高度）───────────────────── */
+function _initHeaderDrag() {
+  const header = document.querySelector('#stats-panel .sp-header');
+  const panel  = document.getElementById('stats-panel');
+  if (!header || !panel) return;
+
+  // 恢復上次儲存的 top
+  const saved = parseInt(localStorage.getItem(SP_TOP_KEY), 10);
+  if (!isNaN(saved)) panel.style.top = `${saved}px`;
+
+  let startY = 0, startTop = 0, moved = false;
+
+  function onMove(e) {
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const dy  = clientY - startY;
+    if (!moved && Math.abs(dy) < 3) return;
+    moved = true;
+    const max = window.innerHeight * SP_TOP_MAX;
+    const top = Math.min(max, Math.max(SP_TOP_MIN, startTop + dy));
+    panel.style.top = `${top}px`;
+  }
+
+  function onEnd() {
+    header.classList.remove('sp-dragging');
+    document.body.style.userSelect = '';
+    if (moved) {
+      const top = parseInt(panel.style.top, 10) || 0;
+      localStorage.setItem(SP_TOP_KEY, String(top));
+    }
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup',   onEnd);
+    window.removeEventListener('touchmove', onMove);
+    window.removeEventListener('touchend',  onEnd);
+  }
+
+  function onStart(e) {
+    // 排除關閉按鈕點擊
+    if (e.target.closest('.sp-close')) return;
+    e.preventDefault();
+    moved    = false;
+    startY   = e.touches ? e.touches[0].clientY : e.clientY;
+    startTop = parseInt(panel.style.top, 10) || 0;
+    header.classList.add('sp-dragging');
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup',   onEnd);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend',  onEnd);
+  }
+
+  header.addEventListener('mousedown',  onStart);
+  header.addEventListener('touchstart', onStart, { passive: false });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _initHeaderDrag);
+} else {
+  setTimeout(_initHeaderDrag, 0);
+}
 
 /* ── Open / Close ────────────────────────────────────────────────── */
 export function openSettingsPanel(tab = null) {
@@ -39,7 +103,7 @@ export function closeSettingsPanel(fromPopstate = false) {
   if (!panel?.classList.contains('open')) return;
   panel.classList.remove('open');
   document.getElementById('stats-backdrop')?.classList.remove('open');
-  if (!fromPopstate && _settingsHistoryPushed) history.back();
+  if (!fromPopstate && _settingsHistoryPushed) { window._skipPopstateCount = (window._skipPopstateCount || 0) + 1; history.back(); }
   _settingsHistoryPushed = false;
 }
 
@@ -71,6 +135,8 @@ async function _activateStatsPane() {
   const body = document.getElementById('sp-body');
   if (!body) return;
   body.innerHTML = '<div class="sp-loading"><div class="spin"></div><span>載入中…</span></div>';
+  const hist = document.getElementById('sp-body-history');
+  if (hist) hist.innerHTML = '';
   try {
     const ctrl = new AbortController();
     const tid  = setTimeout(() => ctrl.abort(), 4000);

@@ -43,11 +43,11 @@ import { buildDomainChips, buildFolderTree, setDomain, toggleFbar,
          selectFolderBranch, filterByFolderId, applyFolderFilter, closeFolderPopover,
          renderActiveFolderChips, updateSearchChips,
          buildPresetChips, togglePresetPanel, closePresetPanel,
-         setPresetFilter, clearPresetFilter }  from './ui-filters.js';
+         setPresetFilter, clearPresetFilter, removePresetFromFilter }  from './ui-filters.js';
 import { trackView }                from './api.js';
 import { renderStatsRow, showLoadError } from './renderer.js';
 import { openModal, closeModal }    from './modal.js';
-import { renderStatsPanel, delHistItem, clearAllHistory } from './stats.js';
+import { renderStatsPanel, delHistItem, clearAllHistory, clearDayHistory, filterHistoryDisplay, switchStatsTab, showLcTooltip, hideLcTooltip, toggleLcTooltip } from './stats.js';
 import { addNotification, updateNotifStatus, updateNotifNames, registerRetryFn,
          loadPersistedNotifs, clearMemoryNotifs } from './notifications.js';
 import { openItemInMobilePlayer, closeMobilePlayer,
@@ -61,7 +61,7 @@ import { vcSetFilter, vcSetTx, vcFlip, vcRotateBy, vcSetRotate,
          vcSetAbPoint, vcToggleAbLoop, vcClearAb, vcResetAll,
          vcResetFilters, vcResetTransform,
          vcGetVid, toggleVcPanel, closeVcPanel, vcInitDragHandle, vcSwitchTab,
-         vcSaveFilterPreset, vcApplyFilterPreset, vcDeleteFilterPreset, vcRenameFilterPreset, vcToggleVideoFilterPreset,
+         vcSaveFilterPreset, vcApplyFilterPreset, vcDeleteFilterPreset, vcRenameFilterPreset, vcToggleVideoFilterPreset, vcUndoDeletePreset, vcOverwriteFilterPreset,
          vcSaveTransformSnapshot, vcResetTransformSnapshot,
          vcSmartCrop, vcToggleCropMode, vcCancelCrop, vcApplyCrop, vcSetLoopMode, vcSetSpeed,
          vcRegisterAutoplayNext,
@@ -69,7 +69,10 @@ import { vcSetFilter, vcSetTx, vcFlip, vcRotateBy, vcSetRotate,
          vcImageZoom, vcImageZoomSet, vcImageFit, vcImageActualSize, vcSetModalBg, vcImageNav,
          vcRegisterImageNav,
          vcStartEyedropper, vcStopEyedropper, vcSetSelectiveHue, vcClearSelectiveColor,
-         vcAddSelectiveColor, vcSetActiveSelective, vcRemoveSelective } from './video-controls.js';
+         vcAddSelectiveColor, vcSetActiveSelective, vcRemoveSelective,
+         vcBindAbToSelective, vcUnbindAbFromSelective,
+         vcAbSpanEdit, vcAbSpanFocus,
+         vcSaveAbPreset, vcLoadAbPreset, vcDeleteAbPreset } from './video-controls.js';
 
 /* ── SSE（Server-Sent Events）────────────────────────────────────── */
 let _sseSource = null;
@@ -209,12 +212,30 @@ function _openUrl(url) {
 
 /* ── 圖片導覽 callback（ArrowLeft/Right + swipe）────────────────── */
 let _imageNavCurId = null;
+let _imgBndTimer;
+function _showImgBoundary(text) {
+  const modal = document.getElementById('modal');
+  if (!modal) return;
+  let ov = modal.querySelector('.img-boundary-ov');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.className = 'img-boundary-ov';
+    modal.appendChild(ov);
+  }
+  ov.textContent = text;
+  ov.classList.add('show');
+  clearTimeout(_imgBndTimer);
+  _imgBndTimer = setTimeout(() => ov.classList.remove('show'), 1200);
+}
 function _imageNavCallback(dir) {
   const imgs = state.filtered.filter(i => i.file && i.media_type === 'image');
   const idx = imgs.findIndex(i => i.id === _imageNavCurId);
   if (idx < 0) return;
   const next = dir === 'prev' ? imgs[idx - 1] : imgs[idx + 1];
-  if (!next) return;
+  if (!next) {
+    _showImgBoundary(dir === 'prev' ? '已是第一張' : '已是最後一張');
+    return;
+  }
   _imageNavCurId = next.id;
   trackView(next);
   openModal('/' + encodePath(next.file), 'image', next.id);
@@ -255,27 +276,21 @@ function _cbodyClick(event, itemId, url) {
 /** 從統計面板播放影片（分派至手機/桌面播放器） */
 function _playVideoItem(itemId) {
   const item = state.ALL.find(x => x.id === itemId); if (!item) return;
-  closeSettingsPanel();
-  // defer until history.back() popstate fires, avoiding race condition
-  setTimeout(() => {
-    if (isMobile()) { openItemInMobilePlayer(itemId); }
-    else {
-      if (item.file) openItemInDesktopPlayer(itemId);
-      else if (item.url) { trackView(item); _openUrl(item.url); }
-    }
-  }, 50);
+  // 不關閉統計面板，讓使用者可以繼續瀏覽記錄
+  if (isMobile()) { openItemInMobilePlayer(itemId); }
+  else {
+    if (item.file) openItemInDesktopPlayer(itemId);
+    else if (item.url) { trackView(item); _openUrl(item.url); }
+  }
 }
 
-/** 從統計面板開啟圖片（Modal Lightbox） */
+/** 從統計面板開啟圖片（Modal Lightbox）—— 不關閉統計面板 */
 function _openImageItem(itemId) {
   const item = state.ALL.find(x => x.id === itemId); if (!item?.file) return;
-  closeSettingsPanel();
-  setTimeout(() => {
-    trackView(item);
-    openModal('/' + encodePath(item.file), 'image', item.id);
-    _imageNavCurId = item.id;
-    vcRegisterImageNav(_imageNavCallback);
-  }, 50);
+  trackView(item);
+  openModal('/' + encodePath(item.file), 'image', item.id);
+  _imageNavCurId = item.id;
+  vcRegisterImageNav(_imageNavCallback);
 }
 
 /* ── 類型篩選 dropdown（P3 w018-dev）────────────────────────────── */
@@ -903,7 +918,7 @@ function wireEvents() {
       const doms = [...state.curDomains];
       setDomain(doms[doms.length - 1]); return;
     }
-    if (state.curPreset) { clearPresetFilter(); return; }
+    if (state.curPresets?.size) { clearPresetFilter(); return; }
   });
 
   // 全局鍵盤快捷鍵
@@ -934,7 +949,12 @@ function wireEvents() {
   });
 
   // 硬體返回鍵 / 瀏覽器返回：偵聽 popstate，依序關閉最上層的 overlay
+  // _skipPopstateCount：程式碼主動呼叫 history.back() 時遞增，
+  // 防止 popstate 誤關閉仍在畫面上的其他 overlay（如統計面板）。
+  // 使用計數器而非布林，確保多次快速呼叫時每個 history.back() 各自被攔截一次。
+  window._skipPopstateCount = 0;
   window.addEventListener('popstate', () => {
+    if (window._skipPopstateCount > 0) { window._skipPopstateCount--; return; }
     if (document.getElementById('mplayer').classList.contains('open')) {
       closeMobilePlayer(true);
     } else if (document.getElementById('dplayer').classList.contains('open')) {
@@ -1032,6 +1052,8 @@ window.buildPresetChips   = buildPresetChips;
 window.vcSaveFilterPreset          = vcSaveFilterPreset;
 window.vcApplyFilterPreset         = vcApplyFilterPreset;
 window.vcDeleteFilterPreset        = vcDeleteFilterPreset;
+window.vcUndoDeletePreset          = vcUndoDeletePreset;
+window.vcOverwriteFilterPreset     = vcOverwriteFilterPreset;
 window.vcRenameFilterPreset        = vcRenameFilterPreset;
 window.vcToggleVideoFilterPreset   = vcToggleVideoFilterPreset;
 // Video Controls — Transform Snapshot
@@ -1075,8 +1097,14 @@ window.applyFilter      = applyFilter;   // jumpToSeed / settings 觸發重排�
 // Stats（openStats/closeStats 改由 openSettingsPanel/closeSettingsPanel 統一管理）
 window.openStats        = () => openSettingsPanel('stats');
 window.closeStats       = closeSettingsPanel;
-window.clearAllHistory  = clearAllHistory;
-window._delHistItem     = delHistItem;
+window.clearAllHistory      = clearAllHistory;
+window.clearDayHistory      = clearDayHistory;
+window.filterHistoryDisplay = filterHistoryDisplay;
+window.switchStatsTab       = switchStatsTab;
+window.showLcTooltip        = showLcTooltip;
+window.hideLcTooltip        = hideLcTooltip;
+window.toggleLcTooltip      = toggleLcTooltip;
+window._delHistItem         = delHistItem;
 window._playVideoItem   = _playVideoItem;
 window._openImageItem   = _openImageItem;
 window.trackView        = trackView;
@@ -1107,6 +1135,8 @@ window.vcClearSelectiveColor  = vcClearSelectiveColor;
 window.vcAddSelectiveColor    = vcAddSelectiveColor;
 window.vcSetActiveSelective   = vcSetActiveSelective;
 window.vcRemoveSelective      = vcRemoveSelective;
+window.vcBindAbToSelective    = vcBindAbToSelective;
+window.vcUnbindAbFromSelective = vcUnbindAbFromSelective;
 window._vcTx            = (key, val) => vcSetTx(key, val);
 window._vcFlip          = (axis)     => vcFlip(axis);
 window._vcRotateBy      = (deg)      => vcRotateBy(deg);
@@ -1115,6 +1145,11 @@ window._vcSetA          = ()         => vcSetAbPoint(vcGetVid(), 'a');
 window._vcSetB          = ()         => vcSetAbPoint(vcGetVid(), 'b');
 window._vcToggleAb      = ()         => vcToggleAbLoop();
 window._vcClearAb       = ()         => vcClearAb();
+window._vcAbSpanEdit    = (pt, el)   => vcAbSpanEdit(pt, el);
+window._vcAbSpanFocus   = (el)       => vcAbSpanFocus(el);
+window.vcSaveAbPreset   = ()         => vcSaveAbPreset();
+window.vcLoadAbPreset   = (id)       => vcLoadAbPreset(id);
+window.vcDeleteAbPreset = (id)       => vcDeleteAbPreset(id);
 window._vcResetAll      = ()         => vcResetAll();
 
 // Modal

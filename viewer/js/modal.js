@@ -1,7 +1,7 @@
 'use strict';
 /* ── modal.js  ▸  Lightbox 模態視窗（桌面圖片 / 影片預覽）─────────────── */
 
-import { vcRegisterImageZoom, vcInitMedia, closeVcPanel, vcSyncPanel, vcImageNav, vcApplyTransform } from './video-controls.js';
+import { vcRegisterImageZoom, vcInitMedia, vcSetMediaType, closeVcPanel, vcSyncPanel, vcImageNav, vcApplyTransform, vcSyncGlCanvas } from './video-controls.js';
 
 let _modalHistoryPushed = false;
 
@@ -44,18 +44,20 @@ function _izEnsureCenter() {
 
 /* 套用 transform 到 img（合併 _IZ 縮放/平移 + _VCS 幾何變換，避免互相覆蓋） */
 function _izApply(img) {
-  if (_IZ.s <= 1.001) {
-    vcApplyTransform(img);  // 還原 _VCS 幾何變換（翻轉/旋轉）而非清空
+  vcApplyTransform(img);  // 先套用 _VCS 幾何變換（翻轉/旋轉）
+  const hasPan = _IZ.px !== 0 || _IZ.py !== 0;
+  if (_IZ.s <= 1.001 && !hasPan) {
     img.classList.remove('iz-zoomed', 'iz-dragging');
   } else {
-    vcApplyTransform(img);  // 先套用 _VCS 幾何變換
     const baseTransform = img.style.transform || '';
     img.style.transform =
       `translate(${_IZ.px.toFixed(1)}px,${_IZ.py.toFixed(1)}px) scale(${_IZ.s.toFixed(3)})` +
       (baseTransform ? ` ${baseTransform}` : '');
-    img.classList.add('iz-zoomed');
+    img.classList.toggle('iz-zoomed', _IZ.s > 1.001);
     img.classList.toggle('iz-dragging', _IZ.dragging);
   }
+  // GL canvas 對齊 img 的 layout 尺寸、位置、transform（尺寸不對會導致圖片變形）
+  vcSyncGlCanvas(img);
 }
 
 /* 顯示縮放倍率指示器 */
@@ -104,7 +106,7 @@ function _izWheel(e) {
 
 /* ── 拖曳平移（縮放時才作用）────────────────────────────────────── */
 function _izMouseDown(e) {
-  if (!_IZ.active || _IZ.s <= 1 || e.button !== 0) return;
+  if (!_IZ.active || e.button !== 0) return;
   _IZ.dragging = true;
   _IZ.didDrag  = false;
   _IZ.lastX    = e.clientX;
@@ -116,6 +118,7 @@ function _izMouseDown(e) {
 
 function _izMouseMove(e) {
   if (!_IZ.dragging) return;
+  e.preventDefault();  // 阻止拖動傳播到背景
   const dx = e.clientX - _IZ.lastX;
   const dy = e.clientY - _IZ.lastY;
   if (Math.abs(dx) + Math.abs(dy) > 2) _IZ.didDrag = true;
@@ -222,17 +225,90 @@ function _izKeyNav(e) {
   if (e.key === 'ArrowRight') { e.preventDefault(); vcImageNav('next'); }
 }
 
-/* ── 圖片模式觸控 swipe 導覽（水平 > 50px）─────────────────────── */
-let _izSwipeX = null;
+/* ── 圖片模式觸控手勢（pinch zoom + pan + swipe 導覽）──────────── */
+const _izTouch = {
+  pinchDist : null,   // 捏合起始距離
+  pinchBaseS: 1,      // 捏合起始 scale
+  panStart  : null,   // 單指 pan 起始點 {x,y}
+  panBaseX  : 0,      // pan 起始 _IZ.px
+  panBaseY  : 0,
+  swipeX    : null,   // swipe 切換起始 X（s=1 時）
+  didPan    : false,  // 是否已拖動（防 touchend 誤觸發 swipe）
+};
+
 function _izTouchStart(e) {
-  if (e.touches.length === 1) _izSwipeX = e.touches[0].clientX;
+  if (e.touches.length === 2) {
+    const t1 = e.touches[0], t2 = e.touches[1];
+    _izTouch.pinchDist  = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+    _izTouch.pinchBaseS = _IZ.s;
+    _izTouch.panStart   = null;
+    _izTouch.swipeX     = null;
+    // 更新縮放焦點至兩指中心
+    if (_izEnsureCenter()) {
+      const mx = (t1.clientX + t2.clientX) / 2;
+      const my = (t1.clientY + t2.clientY) / 2;
+      _IZ.px += (mx - _IZ.ncx) * (1 - 1 / (_izTouch.pinchBaseS || 1));
+      _IZ.py += (my - _IZ.ncy) * (1 - 1 / (_izTouch.pinchBaseS || 1));
+    }
+  } else if (e.touches.length === 1) {
+    _izTouch.pinchDist = null;
+    const t = e.touches[0];
+    _izTouch.panStart  = { x: t.clientX, y: t.clientY };
+    _izTouch.panBaseX  = _IZ.px;
+    _izTouch.panBaseY  = _IZ.py;
+    _izTouch.swipeX    = t.clientX;
+    _izTouch.didPan    = false;
+  }
 }
+
+function _izTouchMove(e) {
+  // 雙指捏合縮放
+  if (e.touches.length === 2 && _izTouch.pinchDist !== null) {
+    e.preventDefault();
+    const t1 = e.touches[0], t2 = e.touches[1];
+    const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+    const newS = Math.max(1, Math.min(8, _izTouch.pinchBaseS * (dist / _izTouch.pinchDist)));
+    _IZ.s = newS;
+    if (newS <= 1.001) { _IZ.px = 0; _IZ.py = 0; }
+    const img = document.querySelector('#mbody img');
+    if (img) _izApply(img);
+    _izIndicator();
+    return;
+  }
+  // 單指 pan / swipe preview（s=1 也跟手指走，touchend 判斷導覽或 snap-back）
+  if (e.touches.length === 1 && _izTouch.panStart !== null) {
+    e.preventDefault();
+    const t = e.touches[0];
+    const dx = t.clientX - _izTouch.panStart.x;
+    const dy = t.clientY - _izTouch.panStart.y;
+    if (_IZ.s > 1.01 && Math.abs(dx) + Math.abs(dy) > 3) _izTouch.didPan = true;
+    _IZ.px = _izTouch.panBaseX + dx;
+    _IZ.py = _izTouch.panBaseY + dy;
+    const img = document.querySelector('#mbody img');
+    if (img) _izApply(img);
+  }
+}
+
 function _izTouchEnd(e) {
-  if (_izSwipeX === null) return;
-  const dx = e.changedTouches[0].clientX - _izSwipeX;
-  _izSwipeX = null;
-  if (Math.abs(dx) < 50) return;
-  vcImageNav(dx < 0 ? 'next' : 'prev');
+  // 捏合結束：整理 scale
+  if (_izTouch.pinchDist !== null && e.touches.length < 2) {
+    _izTouch.pinchDist = null;
+    if (_IZ.s <= 1.05) { _IZ.s = 1; _IZ.px = 0; _IZ.py = 0; }
+    const img = document.querySelector('#mbody img');
+    if (img) _izApply(img);
+    vcSyncPanel();
+    return;
+  }
+  // 縮放中不切換圖片
+  if (_IZ.s > 1.01) { _izTouch.panStart = null; return; }
+  // s=1：dx >= 80px → 切換圖片；否則保持拖動後位置（讓使用者能把圖片往上移露出控制面板）
+  if (_izTouch.swipeX === null) return;
+  const dx = e.changedTouches[0].clientX - _izTouch.swipeX;
+  _izTouch.swipeX = null;
+  if (Math.abs(dx) >= 80) {
+    _IZ.px = 0; _IZ.py = 0;
+    vcImageNav(dx < 0 ? 'next' : 'prev');
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -245,6 +321,7 @@ export function openModal(src, type, itemId) {
   mbody.innerHTML = '';
 
   if (type === 'image') {
+    vcSetMediaType('image');   // 立即同步 tab，不等圖片載入
     mbox.classList.add('img-mode');
     _IZ.active = true;
 
@@ -278,9 +355,10 @@ export function openModal(src, type, itemId) {
 
     /* 鍵盤 ArrowLeft/Right 切換上下張（圖片模式） */
     document.addEventListener('keydown', _izKeyNav);
-    /* 手指左右 swipe 切換上下張 */
+    /* 手機觸控：pinch zoom / pan / swipe 切換 */
     mbox.addEventListener('touchstart', _izTouchStart, { passive: true });
-    mbox.addEventListener('touchend',   _izTouchEnd);
+    mbox.addEventListener('touchmove',  _izTouchMove,  { passive: false });
+    mbox.addEventListener('touchend',   _izTouchEnd,   { passive: true });
   } else {
     mbox.classList.remove('img-mode');
     const vid = document.createElement('video');
@@ -305,6 +383,7 @@ export function closeModal(fromPopstate = false) {
   const mbox = document.getElementById('mbox');
   mbox.removeEventListener('click',      _izMboxClick);
   mbox.removeEventListener('touchstart', _izTouchStart);
+  mbox.removeEventListener('touchmove',  _izTouchMove);
   mbox.removeEventListener('touchend',   _izTouchEnd);
   document.removeEventListener('wheel',     _izWheel,       { capture: true });
   document.removeEventListener('mousemove', _izMouseMove);
@@ -314,6 +393,6 @@ export function closeModal(fromPopstate = false) {
 
   _izReset();
   closeVcPanel();
-  if (!fromPopstate && _modalHistoryPushed) history.back();
+  if (!fromPopstate && _modalHistoryPushed) { window._skipPopstateCount = (window._skipPopstateCount || 0) + 1; history.back(); }
   _modalHistoryPushed = false;
 }

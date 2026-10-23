@@ -176,6 +176,12 @@
   font-size: 14px; color: rgba(255,255,255,.55);
   font-variant-numeric: tabular-nums; min-width: 40px;
 }
+.vc-ab-editable {
+  cursor: text; border-radius: 4px; padding: 1px 3px;
+  outline: none; transition: background .15s, color .15s;
+}
+.vc-ab-editable:hover  { background: rgba(255,255,255,.08); color: rgba(255,255,255,.8); }
+.vc-ab-editable:focus  { background: rgba(255,255,255,.13); color: #fff; }
 
 .vc-ab-row {
   display: flex; gap: 8px; align-items: center;
@@ -291,12 +297,14 @@
 }
 .vc-preset-name:hover { color: #007aff; }
 
-.vc-preset-edit, .vc-preset-del {
+.vc-preset-edit, .vc-preset-del, .vc-preset-overwrite {
   width: 26px; flex-shrink: 0; font-size: 13px;
   background: none; opacity: 0; transition: opacity .15s;
 }
 .vc-preset-row:hover .vc-preset-edit,
-.vc-preset-row:hover .vc-preset-del { opacity: 1; }
+.vc-preset-row:hover .vc-preset-del,
+.vc-preset-row:hover .vc-preset-overwrite { opacity: 1; }
+.vc-preset-row.active .vc-preset-overwrite { color: #007aff; }
 
 @media (min-width: 769px) {
   .vc-preset-del, .vc-snapshot-reset { filter: invert(1); }
@@ -446,6 +454,13 @@
   .vc-slider-row input[type="range"]::-webkit-slider-thumb {
     width: 24px; height: 24px;
   }
+
+  /* ── 選擇性調色 mobile overrides ────────────────────────────────── */
+  .vc-sel-section-label { font-size: 14px; }
+  .vc-sel-add-btn       { font-size: 17px; }
+  .vc-sel-chip          { width: 34px; height: 34px; }
+  .vc-sel-pick-hint     { font-size: 13px; }
+  .vc-sel-deltas-title  { font-size: 13px; }
 }
 
 /* ── 手動裁切 Overlay ───────────────────────────────────────────── */
@@ -544,12 +559,22 @@
 }
 
 /* ── 選擇性調色 ─────────────────────────────────────────────────── */
-.vc-sel-chips-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+/* 選擇性調色 header */
+.vc-sel-header-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 8px 0 4px;
+}
+.vc-sel-section-label { font-size: 12px; color: rgba(255,255,255,.55); }
+.vc-sel-add-btn { font-size: 15px; line-height: 1; padding: 2px 6px; }
+
+/* chips */
+.vc-sel-chips-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
 .vc-sel-chip {
   position: relative; width: 28px; height: 28px; border-radius: 50%;
   cursor: pointer; border: 2px solid transparent; flex-shrink: 0;
+  transition: border-color .15s, transform .1s;
 }
-.vc-sel-chip.vc-on { border-color: #fff; }
+.vc-sel-chip.vc-on  { border-color: #fff; }
 .vc-sel-chip-rm {
   position: absolute; top: -4px; right: -4px;
   width: 14px; height: 14px; border-radius: 50%;
@@ -557,33 +582,54 @@
   border: none; cursor: pointer; display: none;
   line-height: 14px; text-align: center; padding: 0;
 }
-.vc-sel-chip:hover .vc-sel-chip-rm { display: block; }
-.vc-sel-add-btn { margin: 2px 0 6px; font-size: 12px; }
+/* 僅限有真實 hover 能力的裝置（滑鼠）才啟用 */
+@media (hover: hover) {
+  .vc-sel-chip:hover { transform: scale(1.1); }
+  .vc-sel-chip:hover .vc-sel-chip-rm { display: block; }
+}
+/* 觸控裝置：tap active chip 顯示 × */
+@media (hover: none) {
+  .vc-sel-chip.vc-on .vc-sel-chip-rm { display: block; }
+}
+
+/* eyedropper row */
 .vc-sel-eyedropper-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
 }
-.vc-eyedropper-btn {
-  flex: 1;
-  height: 30px;
-  font-size: 12px;
-  background: rgba(255,255,255,.08);
-  color: rgba(255,255,255,.8);
-  border: 1px solid rgba(255,255,255,.2);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background .15s;
+.vc-sel-pick-hint {
+  flex: 1; font-size: 11px; color: #007aff;
+  font-style: italic; animation: vc-hint-pulse 1s ease-in-out infinite;
 }
-.vc-eyedropper-btn:hover  { background: rgba(0,122,255,.28); }
-.vc-eyedropper-btn.vc-on  { background: rgba(0,122,255,.5); border-color: #007aff; color: #fff; }
+@keyframes vc-hint-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .5; }
+}
+.vc-sel-repick-btn {
+  font-size: 14px; padding: 2px 5px;
+  transition: transform .1s;
+}
+@media (hover: hover) {
+  .vc-sel-repick-btn:hover { transform: scale(1.15); }
+}
+.vc-sel-repick-btn.vc-on      { color: #007aff; }
+.vc-sel-clear-btn { font-size: 13px; padding: 2px 5px; }
+
 .vc-sel-swatch {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 2px solid rgba(255,255,255,.3);
-  flex-shrink: 0;
-  background: transparent;
-  transition: background .2s;
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,.3); flex-shrink: 0;
+  background: transparent; transition: background .2s;
+}
+@keyframes vc-swatch-flash {
+  0%   { box-shadow: 0 0 0 0 rgba(255,255,255,.8); transform: scale(1); }
+  50%  { box-shadow: 0 0 0 6px rgba(255,255,255,0); transform: scale(1.2); }
+  100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); transform: scale(1); }
+}
+.vc-sel-swatch.vc-swatch-flash { animation: vc-swatch-flash .55s ease-out; }
+
+/* 調整選取色彩 sub-header */
+.vc-sel-deltas-title {
+  font-size: 11px; color: rgba(255,255,255,.4);
+  text-transform: uppercase; letter-spacing: .04em;
+  margin: 4px 0 6px; padding-top: 6px;
+  border-top: 1px solid rgba(255,255,255,.08);
 }

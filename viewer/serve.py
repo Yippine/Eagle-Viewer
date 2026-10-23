@@ -25,7 +25,7 @@ from config import (
 from extract import (
     _find_local_files, _index_library, _list_libraries,
     _run_incremental, _run_one,
-    _index_folder, _list_folder_sources,
+    _index_folder, _list_folder_sources, _prune_stale_folder_items,
 )
 from api_helpers import (
     _add_link, _build_folder_map, _get_folder_tree, _get_item_meta,
@@ -1193,6 +1193,14 @@ def main():
             else:
                 _run_one(lib_name)
         print("索引完成。")
+
+    if FOLDER_PATHS:
+        print("清理 folder sources 過期項目...")
+        for folder_name in sorted(FOLDER_PATHS):
+            pruned = _prune_stale_folder_items(folder_name)
+            if pruned > 0:
+                print(f"  [{folder_name}] 移除 {pruned} 個已刪除的檔案紀錄")
+        print("Folder 清理完成。")
 
     port = 8765
     if len(sys.argv) > 1:

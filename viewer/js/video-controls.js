@@ -6,11 +6,13 @@
 ══════════════════════════════════════════════════════════════════════*/
 
 import { fmtTime } from './utils.js';
+import { state }   from './state.js';
 
 const _selDefault = (id = null) =>
   ({ id: id ?? Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-     targetHue: null, range: 30, hueShift: 0,
-     brightness: 0, contrast: 0, saturate: 0, sepia: 0 });
+     targetHue: null, pickedRgb: null, range: 30, hueShift: 0,
+     brightness: 0, contrast: 0, saturate: 0, sepia: 0,
+     abStart: null, abEnd: null });
 
 const _newSelItem = () => _selDefault();
 const _getActive = () =>
@@ -33,6 +35,324 @@ const _VCS = {
   _imgOriginalSrc:     null,   // 圖片原始 src（Canvas 處理前保存）
   _canvasObjectURL:    null,   // Canvas 輸出的 blob URL
 };
+
+/* ── WebGL1 Selective Color Backend ──────────────────────────── */
+let _gl         = null;
+let _glCanvas   = null;
+let _glProgram  = null;
+let _glTexture  = null;
+let _glTexSrc   = null;
+let _glLocs     = null;
+let _glPosBuf   = null;
+let _videoRafId = null;
+const _GL_QUAD  = new Float32Array([0,0, 0,1, 1,0, 1,1]);
+
+const _GL_VERT = `
+  attribute vec2 aPosition;
+  varying vec2 vTexCoord;
+  void main() {
+    vTexCoord   = aPosition;
+    gl_Position = vec4(aPosition * 2.0 - 1.0, 0.0, 1.0);
+  }
+`;
+
+const _GL_FRAG = `
+  precision highp float;
+  uniform sampler2D uTexture;
+  varying vec2 vTexCoord;
+  uniform int   uSelCount;
+  uniform float uTargetHue[8];
+  uniform float uRange[8];
+  uniform float uDeltaH[8];
+  uniform float uDeltaS[8];
+  uniform float uDeltaL[8];
+  uniform float uContrast[8];
+  uniform float uSepia[8];
+
+  vec3 hue2rgb(float p, float q, float t) {
+    if (t < 0.0) t += 1.0;
+    if (t > 1.0) t -= 1.0;
+    if (t < 1.0/6.0) return vec3(p + (q - p) * 6.0 * t);
+    if (t < 1.0/2.0) return vec3(q);
+    if (t < 2.0/3.0) return vec3(p + (q - p) * (2.0/3.0 - t) * 6.0);
+    return vec3(p);
+  }
+
+  vec3 RGBtoHSL(vec3 c) {
+    float maxC = max(c.r, max(c.g, c.b));
+    float minC = min(c.r, min(c.g, c.b));
+    float l    = (maxC + minC) * 0.5;
+    float d    = maxC - minC;
+    if (d < 0.00001) return vec3(0.0, 0.0, l);
+    float s = l > 0.5 ? d / (2.0 - maxC - minC) : d / (maxC + minC);
+    float h;
+    if (maxC == c.r)      h = (c.g - c.b) / d + (c.g < c.b ? 6.0 : 0.0);
+    else if (maxC == c.g) h = (c.b - c.r) / d + 2.0;
+    else                  h = (c.r - c.g) / d + 4.0;
+    return vec3(h / 6.0, s, l);
+  }
+
+  vec3 HSLtoRGB(vec3 hsl) {
+    if (hsl.y < 0.00001) return vec3(hsl.z);
+    float q = hsl.z < 0.5 ? hsl.z * (1.0 + hsl.y) : hsl.z + hsl.y - hsl.z * hsl.y;
+    float p = 2.0 * hsl.z - q;
+    return vec3(
+      hue2rgb(p, q, hsl.x + 1.0/3.0).r,
+      hue2rgb(p, q, hsl.x).r,
+      hue2rgb(p, q, hsl.x - 1.0/3.0).r
+    );
+  }
+
+  float hueDist(float h1, float h2) {
+    float d = abs(h1 - h2);
+    return min(d, 1.0 - d);
+  }
+
+  vec3 applySepia(vec3 c) {
+    return vec3(
+      dot(c, vec3(0.393, 0.769, 0.189)),
+      dot(c, vec3(0.349, 0.686, 0.168)),
+      dot(c, vec3(0.272, 0.534, 0.131))
+    );
+  }
+
+  void main() {
+    vec2 uv    = vec2(vTexCoord.x, 1.0 - vTexCoord.y);
+    vec4 texel = texture2D(uTexture, uv);
+    vec3 rgb   = texel.rgb;
+
+    for (int i = 0; i < 8; i++) {
+      if (i >= uSelCount) break;
+      vec3  hsl  = RGBtoHSL(rgb);
+      float dist = hueDist(hsl.x, uTargetHue[i]);
+      float mask = 1.0 - smoothstep(uRange[i] * 0.8, uRange[i], dist);
+      if (mask > 0.001) {
+        vec3 adj = vec3(fract(hsl.x + uDeltaH[i]),
+                       clamp(hsl.y + uDeltaS[i], 0.0, 1.0),
+                       clamp(hsl.z + uDeltaL[i], 0.0, 1.0));
+        vec3 newRgb = HSLtoRGB(adj);
+        newRgb = clamp(0.5 + (1.0 + uContrast[i]) * (newRgb - 0.5), 0.0, 1.0);
+        newRgb = mix(newRgb, applySepia(newRgb), uSepia[i]);
+        rgb = mix(rgb, newRgb, mask);
+      }
+    }
+    gl_FragColor = vec4(rgb, texel.a);
+  }
+`;
+
+function _glInit(img) {
+  // Re-parent canvas if the target img has changed (singleton GL context, movable canvas)
+  if (_gl) {
+    if (_glCanvas && img && img.parentElement && _glCanvas.parentElement !== img.parentElement) {
+      // 不修改 parent 的 position：讓 GL canvas 自然冒泡至最近 positioned ancestor
+      img.parentElement.appendChild(_glCanvas);
+    }
+    return true;
+  }
+  _glCanvas = document.createElement('canvas');
+  _glCanvas.id = 'vc-gl';
+  _glCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;touch-action:none;display:none';
+  if (img && img.parentElement) {
+    img.parentElement.appendChild(_glCanvas);
+  }
+  _gl = _glCanvas.getContext('webgl', {
+    alpha: false, premultipliedAlpha: false,
+    depth: false, stencil: false, antialias: false
+  });
+  if (!_gl) return false;
+  const gl = _gl;
+  const vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, _GL_VERT); gl.compileShader(vs);
+  const fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fs, _GL_FRAG); gl.compileShader(fs);
+  _glProgram = gl.createProgram();
+  gl.attachShader(_glProgram, vs); gl.attachShader(_glProgram, fs); gl.linkProgram(_glProgram);
+  if (!gl.getProgramParameter(_glProgram, gl.LINK_STATUS)) {
+    console.error('[GL] link error:', gl.getProgramInfoLog(_glProgram));
+    console.error('[GL] vert log:', gl.getShaderInfoLog(vs));
+    console.error('[GL] frag log:', gl.getShaderInfoLog(fs));
+    _gl = null; _glCanvas = null; _glProgram = null; return false;
+  }
+  _glTexture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, _glTexture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  _glPosBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, _glPosBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, _GL_QUAD, gl.STATIC_DRAW);
+  const p = _glProgram;
+  _glLocs = {
+    uTexture:  gl.getUniformLocation(p, 'uTexture'),
+    uSelCount: gl.getUniformLocation(p, 'uSelCount'),
+    uTargetHue:gl.getUniformLocation(p, 'uTargetHue'),
+    uRange:    gl.getUniformLocation(p, 'uRange'),
+    uDeltaH:   gl.getUniformLocation(p, 'uDeltaH'),
+    uDeltaS:   gl.getUniformLocation(p, 'uDeltaS'),
+    uDeltaL:   gl.getUniformLocation(p, 'uDeltaL'),
+    uContrast: gl.getUniformLocation(p, 'uContrast'),
+    uSepia:    gl.getUniformLocation(p, 'uSepia'),
+  };
+  return true;
+}
+
+function _glUploadTexture(img) {
+  const src = _VCS._imgOriginalSrc || img.src;
+  if (_glTexSrc === src) return;
+  const gl = _gl;
+  _glCanvas.width  = img.naturalWidth  || img.width;
+  _glCanvas.height = img.naturalHeight || img.height;
+  gl.viewport(0, 0, _glCanvas.width, _glCanvas.height);
+  gl.bindTexture(gl.TEXTURE_2D, _glTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+  _glTexSrc = src;
+}
+
+function _glUploadVideoFrame(vid) {
+  const gl = _gl;
+  const w = vid.videoWidth, h = vid.videoHeight;
+  if (!w || !h) return;
+  gl.bindTexture(gl.TEXTURE_2D, _glTexture);
+  if (_glCanvas.width !== w || _glCanvas.height !== h) {
+    _glCanvas.width = w; _glCanvas.height = h;
+    gl.viewport(0, 0, w, h);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vid);
+  } else {
+    // 使用 texSubImage2D 前確保影片 readyState >= 2（有可用幀）
+    if (vid.readyState < 2) return;
+    try {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, vid);
+    } catch (e) {
+      // 影片解碼尺寸不符（尺寸剛改變但 readyState 未更新）→ 回退 texImage2D
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vid);
+    }
+  }
+}
+
+function _hasActiveSel() {
+  return _VCS.selectiveList && _VCS.selectiveList.some(s => s.targetHue !== null);
+}
+
+function _getTimedSelective() {
+  const t = _VCS._vid?.currentTime ?? 0;
+  return _VCS.selectiveList.filter(s =>
+    s.targetHue !== null &&
+    (s.abStart === null || (t >= s.abStart && t <= s.abEnd))
+  );
+}
+
+function _startVideoRafLoop() {
+  if (_videoRafId) return;
+  function loop() {
+    if (!_VCS._vid || _VCS._mediaType !== 'video' || !_hasActiveSel()) {
+      _videoRafId = null; return;
+    }
+    if (!_abSeeking) {
+      const _active = _getTimedSelective();
+      if (_active.length && _VCS._vid.videoWidth && _VCS._vid.videoHeight &&
+        _VCS._vid.readyState >= 2) {
+        _glUploadVideoFrame(_VCS._vid);
+        _glRender(_active);
+        _glShowCanvas(true);
+      } else {
+        _glShowCanvas(false);
+      }
+    }
+    _videoRafId = requestAnimationFrame(loop);
+  }
+  _videoRafId = requestAnimationFrame(loop);
+}
+
+function _stopVideoRafLoop() {
+  if (_videoRafId) { cancelAnimationFrame(_videoRafId); _videoRafId = null; }
+}
+
+function _glRender(selectiveList) {
+  const gl = _gl, locs = _glLocs;
+  const n = Math.min((selectiveList || []).length, 8);
+  gl.useProgram(_glProgram);
+  gl.bindBuffer(gl.ARRAY_BUFFER, _glPosBuf);
+  const aPos = gl.getAttribLocation(_glProgram, 'aPosition');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, _glTexture);
+  gl.uniform1i(locs.uTexture, 0);
+  gl.uniform1i(locs.uSelCount, n);
+  const pad = (arr, len) => arr.concat(new Array(len - arr.length).fill(0));
+  const sl = (selectiveList || []).slice(0, n);
+  gl.uniform1fv(locs.uTargetHue, new Float32Array(pad(sl.map(s => ((s.targetHue||0)/360)), 8)));
+  gl.uniform1fv(locs.uRange,     new Float32Array(pad(sl.map(s => ((s.range||30)/360)), 8)));
+  gl.uniform1fv(locs.uDeltaH,    new Float32Array(pad(sl.map(s => (s.hueShift||0)/360), 8)));
+  // slider 值域 [-1,1]，直接傳入；shader 以 hsl.y + uDeltaS / hsl.z + uDeltaL 做加法 delta
+  gl.uniform1fv(locs.uDeltaS,    new Float32Array(pad(sl.map(s => (s.saturate||0)), 8)));
+  gl.uniform1fv(locs.uDeltaL,    new Float32Array(pad(sl.map(s => (s.brightness||0)), 8)));
+  gl.uniform1fv(locs.uContrast,  new Float32Array(pad(sl.map(s => (s.contrast||0)), 8)));
+  gl.uniform1fv(locs.uSepia,     new Float32Array(pad(sl.map(s => (s.sepia||0)), 8)));
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function _glDestroy() {
+  if (!_gl) return;
+  _stopVideoRafLoop();
+  _gl.deleteProgram(_glProgram);
+  _gl.deleteTexture(_glTexture);
+  _gl.deleteBuffer(_glPosBuf);
+  if (_glCanvas && _glCanvas.parentElement) _glCanvas.parentElement.removeChild(_glCanvas);
+  _gl = _glCanvas = _glProgram = _glTexture = _glPosBuf = _glLocs = _glTexSrc = null;
+}
+
+function _glShowCanvas(show) {
+  if (_glCanvas) _glCanvas.style.display = show ? '' : 'none';
+}
+
+/**
+ * GL canvas 的 CSS 尺寸／位置對齊 img 的實際內容區域。
+ *
+ * 定位策略：用 parent.clientWidth/Height（pre-transform layout 尺寸）計算置中偏移，
+ * 再把 img.style.transform 拷貝給 canvas，讓 translate/flip/rotate 只套用一次。
+ * getBoundingClientRect 是 post-transform，若同時拷貝 transform 會雙重位移，故不用。
+ *
+ * 前提：_glInit 不再修改 parent 的 position，canvas(position:absolute) 的 containing block
+ * 因此冒泡至 mp-video-wrap / dp-video-wrap（正確的 positioned ancestor）。
+ * parent（mp-zoom-wrapper / dp-zoom-wrapper）的 clientWidth/Height 等於 video-wrap 尺寸，
+ * 算出的 left/top 恰好是相對於 video-wrap 的正確偏移。
+ */
+export function vcSyncGlCanvas(img) {
+  if (!_glCanvas || !img) return;
+  const parent = img.parentElement;
+  if (!parent) return;
+  const pw = parent.clientWidth;
+  const ph = parent.clientHeight;
+  if (!pw || !ph) return;
+
+  let w, h, left, top;
+  if (img.tagName === 'VIDEO') {
+    const vw = img.videoWidth || 0;
+    const vh = img.videoHeight || 0;
+    if (vw && vh) {
+      const scl = Math.min(pw / vw, ph / vh);
+      w = Math.round(vw * scl);
+      h = Math.round(vh * scl);
+    } else {
+      w = img.clientWidth || pw; h = img.clientHeight || ph;
+    }
+  } else {
+    w = img.clientWidth || pw; h = img.clientHeight || ph;
+  }
+  left = Math.round((pw - w) / 2);
+  top  = Math.round((ph - h) / 2);
+
+  _glCanvas.style.width  = w + 'px';
+  _glCanvas.style.height = h + 'px';
+  _glCanvas.style.left   = left + 'px';
+  _glCanvas.style.top    = top  + 'px';
+  _glCanvas.style.right  = '';
+  _glCanvas.style.bottom = '';
+  _glCanvas.style.transform       = img.style.transform;
+  _glCanvas.style.transformOrigin = img.style.transformOrigin || 'center center';
+}
 
 export function vcGetVid() { return _VCS._vid; }
 
@@ -87,7 +407,7 @@ async function _syncLoad() {
   }
   _CACHE.loaded = true;
   vcRenderFilterPresets();
-  if (window.buildPresetChips) window.buildPresetChips();
+  document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
   document.dispatchEvent(new CustomEvent('vc-snaps-synced'));
 }
 
@@ -103,7 +423,7 @@ async function _syncPoll() {
       Object.entries(_CACHE.transformSnapshots).forEach(([id, snap]) =>
         localStorage.setItem(_txKey(id), JSON.stringify(snap)));
       vcRenderFilterPresets();
-      if (window.buildPresetChips) window.buildPresetChips();
+      document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
       document.dispatchEvent(new CustomEvent('vc-snaps-synced'));
     }
   } catch (_) {}
@@ -356,8 +676,9 @@ function _applySelectiveHue(imgData, sel) {
     if (_hueDist(h, targetHue) > range) continue;
 
     const h2 = (h + hueShift + 360) % 360;
-    const s2 = clamp(s * (1 + dSat));
-    const l2 = clamp(l * (1 + dBri));
+    // shader 路徑：additive（hsl.y + uDeltaS）；JS fallback：additive delta（slider 值域 [-1,1]）
+    const s2 = clamp(s + dSat);
+    const l2 = clamp(l + dBri);
 
     let [r, g, b] = _hslToRgb(h2, s2, l2);
 
@@ -385,11 +706,12 @@ function _applySelectiveHue(imgData, sel) {
 }
 
 /* ── Canvas Pipeline ──────────────────────────────────────────── */
-let _canvasTimer = null;
+let _canvasRaf = null;
 
 function _needsCanvas() {
-  return _VCS._mediaType === 'image' &&
-         (_VCS.filter.sharpness > 0 || _VCS.selectiveList.some(s => s.targetHue !== null));
+  const hasSelective = _VCS.selectiveList.some(s => s.targetHue !== null);
+  if (_VCS._mediaType === 'video') return hasSelective;
+  return (_VCS.filter.sharpness > 0 || hasSelective);
 }
 
 function _releaseCanvas() {
@@ -397,13 +719,27 @@ function _releaseCanvas() {
 }
 
 function _scheduleCanvasUpdate() {
-  clearTimeout(_canvasTimer);
-  _canvasTimer = setTimeout(_runCanvasPipeline, 180);
+  if (_canvasRaf) return;
+  _canvasRaf = requestAnimationFrame(() => { _canvasRaf = null; _runCanvasPipeline(); });
 }
 
 async function _runCanvasPipeline() {
   const img = _VCS._vid;
-  if (!img || _VCS._mediaType !== 'image') return;
+  if (!img) return;
+  if (_VCS._mediaType === 'video') {
+    const vid = img;
+    if (!vid.videoWidth || !vid.videoHeight) { _glShowCanvas(false); return; }
+    if (vid.readyState < 2) { _glShowCanvas(false); return; }  // 尚未解碼第一幀，避免顯示舊紋理
+    const _tActive = _getTimedSelective();
+    if (!_tActive.length) { _glShowCanvas(false); return; }
+    if (_glInit(vid)) {
+      _glUploadVideoFrame(vid);
+      _glRender(_tActive);
+      _glShowCanvas(true);
+      vcSyncGlCanvas(vid);
+    }
+    return;
+  }
   // 必須在 img.src 被替換成 blob 之前捕捉 originalSrc
   if (!_VCS._imgOriginalSrc) _VCS._imgOriginalSrc = img.src;
   const src = _VCS._imgOriginalSrc;
@@ -413,10 +749,23 @@ async function _runCanvasPipeline() {
   srcImg.src = src;
   if (!srcImg.complete) await new Promise((res, rej) => { srcImg.onload = res; srcImg.onerror = rej; });
 
+  // WebGL selective color path（優先）——只在至少一個 item 已取色時啟用
+  const hasActiveSel = _hasActiveSel();
+  if (hasActiveSel) {
+    if (_glInit(img)) {
+      _glUploadTexture(srcImg);
+      _glRender(_VCS.selectiveList);
+      _glShowCanvas(true);
+      vcSyncGlCanvas(img);   // 對齊 img 的 layout 尺寸、位置、transform
+      return;
+    }
+  }
+  _glShowCanvas(false);
+
   const canvas = document.createElement('canvas');
   canvas.width  = srcImg.naturalWidth  || srcImg.width;
   canvas.height = srcImg.naturalHeight || srcImg.height;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true, desynchronized: true });
   ctx.drawImage(srcImg, 0, 0);
 
   let imgData;
@@ -454,46 +803,151 @@ let _eyedropperActive = false;
 let _eyedropperHandler = null;
 
 export function vcStartEyedropper() {
-  const img = _VCS._vid;
-  if (!img || _VCS._mediaType !== 'image') return;
+  const vid = _VCS._vid;
+  if (!vid) return;
+  if (_VCS._mediaType === 'video' && !vid.paused) vid.pause();
   _eyedropperActive = true;
   document.getElementById('vc-eyedropper-btn')?.classList.add('vc-on');
-  img.style.cursor = 'crosshair';
+  const hint = document.getElementById('vc-sel-pick-hint');
+  const swatch = document.getElementById('vc-sel-swatch');
+  if (hint)   hint.style.display   = '';
+  if (swatch) swatch.style.display = 'none';
+  vid.style.cursor = 'crosshair';
 
-  _eyedropperHandler = (e) => {
-    if (!_eyedropperActive) return;
-    e.preventDefault();
-    // offsetX/offsetY 是 element 本地座標（不受 CSS transform 影響）
-    const px = Math.round(e.offsetX * (img.naturalWidth  || img.offsetWidth)  / img.offsetWidth);
-    const py = Math.round(e.offsetY * (img.naturalHeight || img.offsetHeight) / img.offsetHeight);
+  // viewport 座標 → 媒體原始像素座標
+  // 正確處理所有 CSS transform（flip/rotate/scale/translate）+ letterbox 補正
+  const _pickAt = (clientX, clientY) => {
+    const rect = vid.getBoundingClientRect();
 
+    // 元素版面尺寸（pre-CSS-transform，offsetWidth/Height 不受 transform 影響）
+    const elemW = vid.offsetWidth;
+    const elemH = vid.offsetHeight;
+
+    // 讀取 transform 狀態（與 vcApplyTransform 使用相同來源）
+    const { rotate: txRot = 0, flipH = false, flipV = false,
+            scaleX: baseScaleX = 1, scaleY: baseScaleY = 1,
+            translateX = 0, translateY = 0 } = _VCS.tx || {};
+    const totalRot = (((txRot + (_VCS._autoRotate || 0)) % 360) + 360) % 360;
+
+    // 90°/270° 旋轉的額外 fit 縮放（與 vcApplyTransform 完全一致）
+    let fitFactor = 1;
+    if (totalRot === 90 || totalRot === 270) {
+      const ctr = vid.parentElement;
+      const cw  = ctr ? ctr.clientWidth  : 0;
+      const ch  = ctr ? ctr.clientHeight : 0;
+      const mw0 = vid.videoWidth  || vid.naturalWidth  || 0;
+      const mh0 = vid.videoHeight || vid.naturalHeight || 0;
+      if (cw > 0 && ch > 0 && mw0 > 0 && mh0 > 0) {
+        const ofit = Math.min(cw / mw0, ch / mh0);
+        fitFactor   = Math.min(cw / (mh0 * ofit), ch / (mw0 * ofit));
+      }
+    }
+
+    // 實際 CSS transform sx/sy（含翻轉符號 + fit 縮放）
+    const sxActual = (flipH ? -1 : 1) * baseScaleX * fitFactor;
+    const syActual = (flipV ? -1 : 1) * baseScaleY * fitFactor;
+
+    // ---- 逆 CSS transform：viewport 點 → 元素版面座標 ----
+    // CSS transform 正向：V = Scale(sx,sy) · Translate(tx,ty) · Rotate(deg) · P（以元素中心為原點）
+    // 逆向：M⁻¹ = Rotate(-deg) · Translate(-tx,-ty) · Scale(1/sx,1/sy)
+
+    const cxVp = rect.left + rect.width  / 2;  // 元素中心（viewport 空間）
+    const cyVp = rect.top  + rect.height / 2;
+    let dx = clientX - cxVp;
+    let dy = clientY - cyVp;
+
+    // Step 1：逆縮放
+    if (sxActual !== 0) dx /= sxActual;
+    if (syActual !== 0) dy /= syActual;
+    // Step 2：逆位移（translateX/Y 在縮放後、旋轉前的空間中）
+    dx -= translateX;
+    dy -= translateY;
+    // Step 3：逆旋轉 → 得到元素版面空間的位移
+    let dex, dey;
+    if      (totalRot ===  90) { dex =  dy; dey = -dx; }
+    else if (totalRot === 180) { dex = -dx; dey = -dy; }
+    else if (totalRot === 270) { dex = -dy; dey =  dx; }
+    else                       { dex =  dx; dey =  dy; }
+
+    // 元素版面座標（左上角為原點）
+    const elemX = elemW / 2 + dex;
+    const elemY = elemH / 2 + dey;
+
+    // ---- letterbox 補正（在元素版面空間計算）→ 媒體像素 ----
+    const mw  = vid.videoWidth  || vid.naturalWidth  || elemW;
+    const mh  = vid.videoHeight || vid.naturalHeight || elemH;
+    const scl = Math.min(elemW / mw, elemH / mh);
+    const cx0 = (elemW - mw * scl) / 2;
+    const cy0 = (elemH - mh * scl) / 2;
+    const px  = Math.max(0, Math.min(mw - 1, Math.round((elemX - cx0) / scl)));
+    const py  = Math.max(0, Math.min(mh - 1, Math.round((elemY - cy0) / scl)));
+
+    // ---- drawImage + 取色 ----
     const canvas = document.createElement('canvas');
-    canvas.width  = img.naturalWidth  || img.offsetWidth;
-    canvas.height = img.naturalHeight || img.offsetHeight;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    // 直接從 img 元素 drawImage（已在記憶體，無 async，無 src 切換問題）
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.width = mw; canvas.height = mh;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true, desynchronized: true });
+    ctx.drawImage(vid, 0, 0, mw, mh);
     try {
       const d = ctx.getImageData(px, py, 1, 1).data;
-      const [h] = _rgbToHsl(d[0], d[1], d[2]);
+      const [h, s] = _rgbToHsl(d[0], d[1], d[2]);
       const _a = _getActive();
-      if (_a) { _a.targetHue = Math.round(h); }
-      // 確保 originalSrc 在第一次 canvas op 前已捕捉
-      if (!_VCS._imgOriginalSrc) _VCS._imgOriginalSrc = img.src;
+      // 低飽和度像素（接近黑/灰/白）的 HSL hue 數值極不穩定：
+      // 例如 (8,8,10) 的 B 僅多 2 單位就得到 hue=240°，不代表真實色相。
+      // 飽和度 < 20% 視為中性區域，不更新 targetHue 並給予提示。
+      if (s < 0.20) {
+        // 中性像素：顯示警告 toast，不寫入 targetHue
+        const hint = document.getElementById('vc-sel-pick-hint');
+        if (hint) {
+          hint.textContent = '此區域接近中性（無明顯色相）';
+          hint.style.display = '';
+          setTimeout(() => { if (hint) { hint.textContent = '點擊取色'; hint.style.display = 'none'; } }, 2000);
+        }
+        vcStopEyedropper();
+        return;
+      }
+      if (_a) { _a.targetHue = Math.round(h); _a.pickedRgb = [d[0], d[1], d[2]]; }
+      if (_VCS._mediaType === 'image' && !_VCS._imgOriginalSrc) _VCS._imgOriginalSrc = vid.src;
       vcStopEyedropper();
       vcSyncPanel();
+      const sw = document.getElementById('vc-sel-swatch');
+      if (sw) { sw.classList.add('vc-swatch-flash'); setTimeout(() => sw.classList.remove('vc-swatch-flash'), 600); }
       _scheduleCanvasUpdate();
     } catch { vcStopEyedropper(); }
   };
 
-  img.addEventListener('click', _eyedropperHandler);
+  let _touchHandled = false;
+  _eyedropperHandler = (e) => {
+    if (!_eyedropperActive) return;
+    e.preventDefault();
+    if (e.type === 'touchend') {
+      // 手機：用原始 touch 座標，避免合成 click 的 clientX/Y 偏差
+      _touchHandled = true;
+      const t = e.changedTouches[0];
+      if (t) _pickAt(t.clientX, t.clientY);
+    } else {
+      // 桌機 click；若已由 touchend 處理則跳過（避免雙觸發）
+      if (_touchHandled) { _touchHandled = false; return; }
+      _pickAt(e.clientX, e.clientY);
+    }
+  };
+
+  vid.addEventListener('click',    _eyedropperHandler);
+  vid.addEventListener('touchend', _eyedropperHandler);
 }
 
 export function vcStopEyedropper() {
   _eyedropperActive = false;
   document.getElementById('vc-eyedropper-btn')?.classList.remove('vc-on');
+  const hint = document.getElementById('vc-sel-pick-hint');
+  const swatch = document.getElementById('vc-sel-swatch');
+  if (hint)   hint.style.display   = 'none';
+  if (swatch) swatch.style.display = '';
   const img = _VCS._vid;
-  if (img) { img.style.cursor = ''; img.removeEventListener('click', _eyedropperHandler); }
+  if (img) {
+    img.style.cursor = '';
+    img.removeEventListener('click',    _eyedropperHandler);
+    img.removeEventListener('touchend', _eyedropperHandler);
+  }
   _eyedropperHandler = null;
 }
 
@@ -542,13 +996,37 @@ export function vcRemoveSelective(id) {
   vcSyncPanel();
 }
 
+export function vcBindAbToSelective() {
+  const item = _getActive();
+  if (!item || _VCS.ab.a === null || _VCS.ab.b === null) return;
+  let start = _VCS.ab.a, end = _VCS.ab.b;
+  if (start > end) { [start, end] = [end, start]; }
+  item.abStart = start;
+  item.abEnd   = end;
+  _scheduleCanvasUpdate();
+  vcSyncPanel();
+  vcRenderSelectiveChips();
+  _showToast(`<span>已綁定 ${fmtTime(start)}–${fmtTime(end)}</span>`);
+}
+
+export function vcUnbindAbFromSelective() {
+  const item = _getActive();
+  if (!item) return;
+  item.abStart = null; item.abEnd = null;
+  _scheduleCanvasUpdate();
+  vcSyncPanel();
+  vcRenderSelectiveChips();
+}
+
 export function vcRenderSelectiveChips() {
   const container = document.getElementById('vc-sel-chips');
   if (!container) return;
   container.innerHTML = '';
   for (const item of _VCS.selectiveList) {
     const isActive = item.id === _VCS._activeSelectiveId;
-    const bg = item.targetHue !== null ? `hsl(${item.targetHue},70%,50%)` : '#888';
+    const bg = item.targetHue !== null
+      ? (item.pickedRgb ? `rgb(${item.pickedRgb[0]},${item.pickedRgb[1]},${item.pickedRgb[2]})` : `hsl(${item.targetHue},70%,50%)`)
+      : '#888';
     const chip = document.createElement('span');
     chip.className = 'vc-sel-chip' + (isActive ? ' vc-on' : '');
     chip.style.background = bg;
@@ -559,6 +1037,13 @@ export function vcRenderSelectiveChips() {
     rm.textContent = '×';
     rm.title = '刪除此色塊';
     rm.onclick = (e) => { e.stopPropagation(); vcRemoveSelective(item.id); };
+    if (item.abStart !== null) {
+      const badge = document.createElement('span');
+      badge.className = 'vc-sel-chip-time';
+      badge.textContent = '⏱';
+      badge.title = `${fmtTime(item.abStart)}–${fmtTime(item.abEnd)}`;
+      chip.appendChild(badge);
+    }
     chip.appendChild(rm);
     container.appendChild(chip);
   }
@@ -602,7 +1087,7 @@ function _isTxDefault(t) {
 
 export function vcSaveFilterPreset(force = false) {
   vcDismissToast();
-  if (_isFilterDefault(_VCS.filter)) {
+  if (_isFilterDefault(_VCS.filter) && _isSelectiveDefault(_VCS.selectiveList)) {
     _showToast('<span>目前為預設色調，無需儲存。</span>');
     return;
   }
@@ -654,7 +1139,7 @@ export function vcSaveFilterPreset(force = false) {
     _saveVideoFilterData(_VCS._itemId, vfl);
   }
   vcRenderFilterPresets();
-  if (window.buildPresetChips) window.buildPresetChips();
+  document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
 }
 
 export function vcApplyFilterPreset(id) {
@@ -670,14 +1155,12 @@ export function vcApplyFilterPreset(id) {
   }
   _VCS._activeSelectiveId = _VCS.selectiveList[0]?.id ?? null;
   _VCS._activeFilterPresetId = id;
-  // 記錄此素材最後套用的濾鏡，並加入 presetIds（供 header 篩選計數）
+  // 僅記錄 lastUsed（下次開啟自動恢復），不寫入 presetIds
+  // presetIds 只由 🔖（vcToggleVideoFilterPreset）管理
   if (_VCS._itemId) {
     const vfl = _loadVideoFilterData(_VCS._itemId);
     vfl.lastUsed = id;
-    if (!vfl.presetIds) vfl.presetIds = [];
-    if (!vfl.presetIds.includes(id)) vfl.presetIds.push(id);
     _saveVideoFilterData(_VCS._itemId, vfl);
-    if (window.buildPresetChips) window.buildPresetChips();
   }
   vcApplyFilter(_VCS._vid);
   vcSyncPanel();
@@ -700,20 +1183,52 @@ export function vcToggleVideoFilterPreset(presetId) {
   }
   _saveVideoFilterData(_VCS._itemId, vfl);
   vcRenderFilterPresets();
-  if (window.buildPresetChips) window.buildPresetChips();
+  document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
 }
 
 export function vcDeleteFilterPreset(id) {
   const presets = _loadFilterPresets();
   const preset  = presets.find(p => p.id === id);
   if (!preset) return;
-  if (!confirm(`刪除濾鏡「${preset.name}」？`)) return;
   preset.deleted    = true;
   preset.modifiedAt = Date.now();
   _saveFilterPresets(presets);
   if (_VCS._activeFilterPresetId === id) _VCS._activeFilterPresetId = null;
+  _unlinkPresetFromAllItems(id);
   vcRenderFilterPresets();
-  if (window.buildPresetChips) window.buildPresetChips();
+  document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
+  const name = preset.name;
+  _showToast(
+    `<span>已刪除「${name}」</span>` +
+    `<button onclick="vcUndoDeletePreset('${id}')">復原</button>`,
+    5000
+  );
+}
+
+export function vcUndoDeletePreset(id) {
+  const presets = _loadFilterPresets();
+  const preset  = presets.find(p => p.id === id);
+  if (!preset) return;
+  preset.deleted    = false;
+  preset.modifiedAt = Date.now();
+  _saveFilterPresets(presets);
+  vcDismissToast();
+  vcRenderFilterPresets();
+  document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
+}
+
+function _unlinkPresetFromAllItems(presetId) {
+  Object.keys(localStorage)
+    .filter(k => k.startsWith('eagle-media-filter-'))
+    .forEach(k => {
+      try {
+        const d = JSON.parse(localStorage.getItem(k) || '{}');
+        if (!d.presetIds?.includes(presetId)) return;
+        d.presetIds = d.presetIds.filter(x => x !== presetId);
+        if (d.lastUsed === presetId) d.lastUsed = d.presetIds[0] || null;
+        localStorage.setItem(k, JSON.stringify(d));
+      } catch (_) {}
+    });
 }
 
 export function vcRenameFilterPreset(id) {
@@ -726,7 +1241,24 @@ export function vcRenameFilterPreset(id) {
   preset.modifiedAt = Date.now();
   _saveFilterPresets(presets);
   vcRenderFilterPresets();
-  if (window.buildPresetChips) window.buildPresetChips();
+  document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
+}
+
+export function vcOverwriteFilterPreset(id) {
+  if (_isFilterDefault(_VCS.filter) && _isSelectiveDefault(_VCS.selectiveList)) {
+    _showToast('<span>目前為預設色調，無法覆蓋。</span>');
+    return;
+  }
+  const presets = _loadFilterPresets();
+  const preset  = presets.find(p => p.id === id);
+  if (!preset) return;
+  preset.filter     = { ..._VCS.filter };
+  preset.selective  = _VCS.selectiveList.map(s => ({ ...s }));
+  preset.modifiedAt = Date.now();
+  _saveFilterPresets(presets);
+  vcRenderFilterPresets();
+  document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
+  _showToast(`<span>「${preset.name}」已更新。</span>`);
 }
 
 export function vcRenderFilterPresets() {
@@ -754,6 +1286,7 @@ export function vcRenderFilterPresets() {
         ? `<button class="${bmCls}" onclick="vcToggleVideoFilterPreset('${p.id}')" title="${bmTip}">🔖</button>`
         : '') +
       `<button class="vc-preset-name" onclick="vcApplyFilterPreset('${p.id}')">${p.name}</button>` +
+      (isActive ? `<button class="vc-preset-overwrite" onclick="vcOverwriteFilterPreset('${p.id}')" title="以當前色調覆蓋此預設">↺</button>` : '') +
       `<button class="vc-preset-edit" onclick="vcRenameFilterPreset('${p.id}')" title="重新命名">✏️</button>` +
       `<button class="vc-preset-del"  onclick="vcDeleteFilterPreset('${p.id}')"  title="刪除">🗑</button>` +
     `</div>`;
@@ -1342,7 +1875,16 @@ export function vcOnVideoEnded() {
 export function vcInitVid(vid, itemId) {
   _VCS._mediaType      = 'video';
   vcStopEyedropper();
+  _stopVideoRafLoop();
+  _glShowCanvas(false);
   _releaseCanvas();
+  _glTexSrc = null;
+  // 清除 GL 紋理舊幀，防止切換影片時短暫顯示上一部影片的定格畫面
+  if (_gl && _glTexture) {
+    _gl.bindTexture(_gl.TEXTURE_2D, _glTexture);
+    _gl.texImage2D(_gl.TEXTURE_2D, 0, _gl.RGBA, 1, 1, 0, _gl.RGBA, _gl.UNSIGNED_BYTE,
+      new Uint8Array([0, 0, 0, 0]));
+  }
   _VCS._imgOriginalSrc = null;
   // 切換影片時靜默清理裁切框（不觸發 panel toggle）
   if (_cropState) {
@@ -1356,21 +1898,66 @@ export function vcInitVid(vid, itemId) {
   _migrateOnce();
   _migrateVideoFilterLinks();
 
+  const _prevItemId = _VCS._itemId;   // 切換前的影片 ID（判斷是否重開同一部影片）
   _VCS._vid        = vid;
   _VCS._itemId     = itemId || null;
   _VCS._autoRotate = 0;
   _VCS.ab          = { a: null, b: null, active: false };
+  _abSeeking       = false;
 
-  // 重置色彩濾鏡，再嘗試套用此影片已儲存的濾鏡
-  _VCS.filter               = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
+  // filter + selectiveList 保留為臨時狀態延續到新影片（只清除上部影片專屬的時間戳）
+  for (const s of _VCS.selectiveList) { s.abStart = null; s.abEnd = null; }
+  const _isSameItem = !!itemId && itemId === _prevItemId;
+  const _hasTempFilter = !_isFilterDefault(_VCS.filter) || !_isSelectiveDefault(_VCS.selectiveList);
   _VCS._activeFilterPresetId = null;
-  if (itemId) {
-    const vfl = _loadVideoFilterData(itemId);
-    if (vfl.lastUsed) {
-      const preset = _loadFilterPresets().find(p => p.id === vfl.lastUsed && !p.deleted);
+
+  // 離開有未儲存臨時濾鏡的影片時，提示是否儲存
+  if (_hasTempFilter && !_isSameItem && _prevItemId) {
+    _showToast(
+      `<span>有未儲存的濾鏡設定，是否儲存？</span>` +
+      `<button onclick="vcSaveFilterPreset()">儲存</button>` +
+      `<button onclick="vcDismissToast()">略過</button>`,
+      8000
+    );
+  }
+
+  if (_isSameItem && _hasTempFilter) {
+    // 重開同一部影片：保留現有臨時濾鏡狀態，不套用已儲存濾鏡
+  } else if (itemId) {
+    const vfl      = _loadVideoFilterData(itemId);
+    const presets  = _loadFilterPresets();
+    const curPresets = state.curPresets;
+    let targetId = null;
+    if (curPresets?.size === 1) {
+      const [pid] = curPresets;
+      if ((vfl.presetIds || []).includes(pid)) targetId = pid;
+    }
+    if (!targetId && vfl.lastUsed) targetId = vfl.lastUsed;
+    if (targetId) {
+      const preset = presets.find(p => p.id === targetId && !p.deleted);
       if (preset) {
-        _VCS.filter               = { sepia: 0, sharpness: 0, ...preset.filter };
-        _VCS._activeFilterPresetId = preset.id;
+        if (_hasTempFilter) {
+          // 有臨時濾鏡狀態：提示使用者選擇套用此影片的已儲存濾鏡或保留臨時狀態
+          _showToast(
+            `<span>此影片有已儲存的濾鏡「${preset.name}」</span>` +
+            `<button onclick="vcApplyFilterPreset('${preset.id}')">套用</button>` +
+            `<button onclick="vcDismissToast()">略過</button>`,
+            8000
+          );
+          // 繼續套用臨時狀態（不覆蓋），讓使用者自行決定
+        } else {
+          // 無臨時狀態（預設值）：靜默套用此影片已儲存的濾鏡
+          _VCS.filter               = { sepia: 0, sharpness: 0, ...preset.filter };
+          _VCS._activeFilterPresetId = preset.id;
+          if (Array.isArray(preset.selective)) {
+            _VCS.selectiveList = preset.selective.map(s => ({ ..._selDefault(s.id), ...s }));
+          } else if (preset.selective && preset.selective.targetHue != null) {
+            _VCS.selectiveList = [{ ..._selDefault(), ...preset.selective }];
+          } else {
+            _VCS.selectiveList = [];
+          }
+          _VCS._activeSelectiveId = _VCS.selectiveList[0]?.id ?? null;
+        }
       }
     }
   }
@@ -1397,11 +1984,33 @@ export function vcInitVid(vid, itemId) {
   // autoplay next 綁定
   vid.addEventListener('ended', vcOnVideoEnded, { once: false });
 
+  // selective color 影片事件（先移除舊 listener 防止重複累積）
+  if (vid._vcPlayHandler)     vid.removeEventListener('play',            vid._vcPlayHandler);
+  if (vid._vcPauseHandler)    vid.removeEventListener('pause',           vid._vcPauseHandler);
+  if (vid._vcSeekedHandler)   vid.removeEventListener('seeked',          vid._vcSeekedHandler);
+  if (vid._vcMetaHandler)     vid.removeEventListener('loadedmetadata',  vid._vcMetaHandler);
+  vid._vcPlayHandler   = () => { if (_VCS._mediaType === 'video' && _hasActiveSel()) _startVideoRafLoop(); };
+  vid._vcPauseHandler  = () => _stopVideoRafLoop();
+  vid._vcSeekedHandler = () => { if (_VCS._mediaType === 'video' && vid.paused && _hasActiveSel()) _scheduleCanvasUpdate(); };
+  vid._vcMetaHandler   = () => { if (_VCS._mediaType === 'video' && _hasActiveSel()) _scheduleCanvasUpdate(); };
+  vid.addEventListener('play',           vid._vcPlayHandler);
+  vid.addEventListener('pause',          vid._vcPauseHandler);
+  vid.addEventListener('seeked',         vid._vcSeekedHandler);
+  vid.addEventListener('loadedmetadata', vid._vcMetaHandler);
+
   vcApplyFilter(vid);
   vcApplyTransform(vid);
   vcSyncPanel();
   vcRenderFilterPresets();
   vcRenderTransformActions();
+  vcRenderAbPresets();
+  const abSection = document.getElementById('vc-ab-preset-section');
+  if (abSection) abSection.style.display = _VCS._itemId ? '' : 'none';
+}
+
+/** 立即設定 mediaType（供 openModal 在圖片載入前同步 tab 顯示用） */
+export function vcSetMediaType(mediaType) {
+  _VCS._mediaType = mediaType || 'video';
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1410,7 +2019,10 @@ export function vcInitVid(vid, itemId) {
 export function vcInitMedia(el, itemId, mediaType) {
   _VCS._mediaType = mediaType || 'video';
   vcStopEyedropper();
+  _stopVideoRafLoop();
   _releaseCanvas();
+  _glShowCanvas(false);       // 圖片切換時隱藏舊的 GL canvas，重新掛載前保持隱藏
+  _glTexSrc = null;           // 強制下次 _glUploadTexture 重傳新圖片紋理
   _VCS._imgOriginalSrc = null;
   if (mediaType === 'image') {
     _migrateOnce();
@@ -1422,10 +2034,31 @@ export function vcInitMedia(el, itemId, mediaType) {
     _VCS.filter               = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
     _VCS._activeFilterPresetId = null;
     if (itemId) {
-      const vfl = _loadVideoFilterData(itemId);
-      if (vfl.lastUsed) {
-        const preset = _loadFilterPresets().find(p => p.id === vfl.lastUsed && !p.deleted);
-        if (preset) { _VCS.filter = { ...preset.filter }; _VCS._activeFilterPresetId = preset.id; }
+      const vfl     = _loadVideoFilterData(itemId);
+      const presets = _loadFilterPresets();
+      // 優先：若格線目前只篩選一個濾鏡且該 item 有此標記，直接套用（UX：點哪個濾鏡看哪個）
+      const curPresets = state.curPresets;
+      let targetId = null;
+      if (curPresets?.size === 1) {
+        const [pid] = curPresets;
+        if ((vfl.presetIds || []).includes(pid)) targetId = pid;
+      }
+      // fallback：lastUsed
+      if (!targetId && vfl.lastUsed) targetId = vfl.lastUsed;
+      if (targetId) {
+        const preset = presets.find(p => p.id === targetId && !p.deleted);
+        if (preset) {
+          _VCS.filter = { sepia: 0, sharpness: 0, ...preset.filter };
+          _VCS._activeFilterPresetId = preset.id;
+          if (Array.isArray(preset.selective)) {
+            _VCS.selectiveList = preset.selective.map(s => ({ ..._selDefault(s.id), ...s }));
+          } else if (preset.selective && preset.selective.targetHue != null) {
+            _VCS.selectiveList = [{ ..._selDefault(), ...preset.selective }];
+          } else {
+            _VCS.selectiveList = [];
+          }
+          _VCS._activeSelectiveId = _VCS.selectiveList[0]?.id ?? null;
+        }
       }
     }
 
@@ -1523,6 +2156,7 @@ export function vcApplyTransform(vid) {
     vid.style.transform       = '';
     vid.style.transformOrigin = '';
     if (_cropState) _vcRefreshCropOverlay();
+    if (_hasActiveSel()) _scheduleCanvasUpdate();
     return;
   }
 
@@ -1554,6 +2188,8 @@ export function vcApplyTransform(vid) {
 
   // 裁切框模式中若有翻轉/旋轉/位移調整，刷新 overlay 手把的視窗座標
   if (_cropState) _vcRefreshCropOverlay();
+  // GL canvas overlay 需跟著幾何變更重新對位（位移/翻轉/旋轉重置後同步）
+  if (_hasActiveSel()) _scheduleCanvasUpdate();
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1601,6 +2237,26 @@ export function vcSetAbPoint(vid, point) {
   }
   vcSyncPanel();
 }
+export function vcAbSpanFocus(el) {
+  if (el.textContent.trim() === '–') el.textContent = '';
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+export function vcAbSpanEdit(point, el) {
+  const raw = el.textContent.trim().replace(/[^\d:.]/g, '');
+  const m = raw.match(/^(\d+):(\d{2}(?:\.\d+)?)$/);
+  let sec = m ? +m[1] * 60 + +m[2] : parseFloat(raw);
+  if (!isNaN(sec) && sec >= 0) {
+    const dur = _VCS._vid?.duration;
+    _VCS.ab[point] = (dur && isFinite(dur)) ? Math.min(sec, dur) : sec;
+  }
+  vcSyncPanel();
+}
+
 export function vcToggleAbLoop() {
   if (_VCS.ab.a === null || _VCS.ab.b === null) return;
   _VCS.ab.active = !_VCS.ab.active;
@@ -1608,12 +2264,84 @@ export function vcToggleAbLoop() {
 }
 export function vcClearAb() {
   _VCS.ab = { a: null, b: null, active: false };
+  _abSeeking = false;
   vcSyncPanel();
 }
+
+let _abSeeking = false;
+
 export function vcAbTimeUpdate(vid) {
-  if (!_VCS.ab.active || _VCS.ab.a === null || _VCS.ab.b === null) return;
-  if (vid.currentTime >= _VCS.ab.b || vid.currentTime < _VCS.ab.a)
+  if (!_VCS.ab.active || _VCS.ab.a === null || _VCS.ab.b === null || _abSeeking) return;
+  if (vid.currentTime >= _VCS.ab.b || vid.currentTime < _VCS.ab.a) {
+    _abSeeking = true;
     vid.currentTime = _VCS.ab.a;
+    vid.addEventListener('seeked', () => { _abSeeking = false; }, { once: true });
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   AB Preset（localStorage-only, per-video）
+══════════════════════════════════════════════════════════════════ */
+const _abPresetKey = id => `eagle-ab-preset-${id}`;
+
+function _loadAbPresets(itemId) {
+  try { return JSON.parse(localStorage.getItem(_abPresetKey(itemId)) || '[]'); }
+  catch { return []; }
+}
+function _saveAbPresets(itemId, arr) {
+  localStorage.setItem(_abPresetKey(itemId), JSON.stringify(arr));
+}
+
+export function vcSaveAbPreset() {
+  if (!_VCS._itemId) { _showToast('無法辨識影片 ID，無法儲存。'); return; }
+  const { a, b } = _VCS.ab;
+  if (a === null || b === null) { _showToast('請先設定 A / B 點。'); return; }
+  const name = prompt('AB 設定名稱：', `${fmtTime(a)}–${fmtTime(b)}`);
+  if (!name) return;
+  const presets = _loadAbPresets(_VCS._itemId);
+  presets.push({ id: `abp-${Date.now()}`, name: name.trim(), abStart: a, abEnd: b });
+  _saveAbPresets(_VCS._itemId, presets);
+  vcRenderAbPresets();
+}
+
+export function vcLoadAbPreset(id) {
+  const p = _loadAbPresets(_VCS._itemId).find(x => x.id === id);
+  if (!p) return;
+  _VCS.ab = { a: p.abStart, b: p.abEnd, active: false };
+  vcSyncPanel();
+}
+
+export function vcDeleteAbPreset(id) {
+  const presets = _loadAbPresets(_VCS._itemId).filter(x => x.id !== id);
+  _saveAbPresets(_VCS._itemId, presets);
+  vcRenderAbPresets();
+}
+
+export function vcRenameAbPreset(id) {
+  const presets = _loadAbPresets(_VCS._itemId);
+  const p = presets.find(x => x.id === id);
+  if (!p) return;
+  const name = prompt('重新命名：', p.name);
+  if (!name) return;
+  p.name = name.trim() || p.name;
+  _saveAbPresets(_VCS._itemId, presets);
+  vcRenderAbPresets();
+}
+
+export function vcRenderAbPresets() {
+  const el = document.getElementById('vc-ab-presets');
+  if (!el || !_VCS._itemId) return;
+  const presets = _loadAbPresets(_VCS._itemId);
+  if (!presets.length) {
+    el.innerHTML = '<div class="vc-preset-empty">尚無 AB 設定</div>'; return;
+  }
+  el.innerHTML = presets.map(p =>
+    `<div class="vc-preset-row">` +
+    `<button class="vc-preset-name" onclick="vcLoadAbPreset('${p.id}')">${p.name}</button>` +
+    `<button class="vc-preset-edit" onclick="vcRenameAbPreset('${p.id}')" title="重新命名">✏️</button>` +
+    `<button class="vc-preset-del"  onclick="vcDeleteAbPreset('${p.id}')"  title="刪除">🗑</button>` +
+    `</div>`
+  ).join('');
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1624,6 +2352,8 @@ export function vcResetFilters() {
   _VCS.selectiveList = []; _VCS._activeSelectiveId = null;
   _VCS._activeFilterPresetId = null;
   vcStopEyedropper();
+  _stopVideoRafLoop();
+  _glShowCanvas(false);
   _restoreOriginalSrc();
   _VCS._imgOriginalSrc = null;
   if (_VCS._itemId) {
@@ -1641,7 +2371,7 @@ export function vcResetTransform() {
                         rotate: 0, flipH: false, flipV: false };
   _VCS._autoRotate = 0;
   const vid = _VCS._vid;
-  if (vid) { vid.style.transform = ''; vid.style.transformOrigin = ''; }
+  if (vid) vcApplyTransform(vid);  // 必須透過 vcApplyTransform，才會同步 GL canvas
   vcSyncPanel();
 }
 export function vcResetAll() {
@@ -1656,7 +2386,7 @@ export function vcResetAll() {
   _restoreOriginalSrc();
   _VCS._imgOriginalSrc = null;
   const vid = _VCS._vid;
-  if (vid) { vid.style.filter = ''; vid.style.transform = ''; vid.style.transformOrigin = ''; }
+  if (vid) { vcApplyFilter(vid); vcApplyTransform(vid); }
   vcSyncPanel();
   vcRenderFilterPresets();
   vcRenderTransformActions();
@@ -1696,13 +2426,13 @@ function _attachToastSwipe(el) {
   };
 }
 
-function _showToast(html) {
+function _showToast(html, duration = 5000) {
   const el = document.getElementById('vc-toast');
   if (!el) return;
   el.innerHTML = html + '<button class="vc-toast-close" onclick="vcDismissToast()" aria-label="關閉">✕</button>';
   el.classList.add('show');
   clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => vcDismissToast(), 5000);
+  _toastTimer = setTimeout(() => vcDismissToast(), duration);
   _attachToastSwipe(el);
 }
 
@@ -1752,6 +2482,7 @@ export function toggleVcPanel() {
   panel.classList.toggle('open');
   _syncVcBtn(opening);
   if (opening) {
+    vcSyncPanel();
     vcRenderFilterPresets();
     vcRenderTransformActions();
   }
@@ -1868,13 +2599,25 @@ export function vcSyncPanel() {
   const swatchEl   = document.getElementById('vc-sel-swatch');
   const deltasEl   = document.getElementById('vc-sel-deltas');
   const hasActive  = sel !== null;
-  const hasPick    = sel?.targetHue !== null;
+  const hasPick    = sel !== null && sel.targetHue !== null;
   if (eyedropRow) eyedropRow.style.display = hasActive ? '' : 'none';
   if (swatchEl) {
-    swatchEl.style.background = hasPick ? `hsl(${sel.targetHue},70%,50%)` : 'transparent';
+    swatchEl.style.background = hasPick
+      ? (sel.pickedRgb ? `rgb(${sel.pickedRgb[0]},${sel.pickedRgb[1]},${sel.pickedRgb[2]})` : `hsl(${sel.targetHue},70%,50%)`)
+      : 'transparent';
     swatchEl.title = hasPick ? `色相 ${sel.targetHue}°` : '未取色';
   }
   if (deltasEl) deltasEl.style.display = hasPick ? '' : 'none';
+  const bindAbBtn = document.getElementById('vc-sel-bind-ab-btn');
+  if (bindAbBtn) {
+    const canBind = _VCS._activeSelectiveId !== null &&
+                    _VCS.ab.a !== null && _VCS.ab.b !== null;
+    bindAbBtn.style.display = canBind ? '' : 'none';
+  }
+  const unbindAbBtn = document.getElementById('vc-sel-unbind-ab-btn');
+  if (unbindAbBtn) {
+    unbindAbBtn.style.display = (sel !== null && sel.abStart !== null) ? '' : 'none';
+  }
   const _fmtDelta = v => (v > 0 ? '+' : '') + v.toFixed(2);
   const _s = sel ?? { hueShift: 0, range: 30, brightness: 0, contrast: 0, saturate: 0, sepia: 0 };
   _setSlider('vc-sel-hueshift',   _s.hueShift,   (_s.hueShift > 0 ? '+' : '') + _s.hueShift + '°');
@@ -1928,9 +2671,9 @@ export function vcSyncPanel() {
   if (imageTabBtn)  imageTabBtn.style.display  = isImage ? '' : 'none';
   if (imageTabPane) imageTabPane.style.display = isImage ? '' : 'none';
 
-  // 自動切換 tab
+  // 自動切換 tab（圖片模式不得停在 playback；影片模式不得停在 image）
   if (isImage  && _currentTab === 'playback') vcSwitchTab('image');
-  if (!isImage && _currentTab === 'image')    vcSwitchTab('filters');
+  if (!isImage && _currentTab === 'image')    vcSwitchTab('playback');
 
   vcSyncPlayback();
   vcRenderTransformActions();

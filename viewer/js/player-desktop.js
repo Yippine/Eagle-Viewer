@@ -16,36 +16,37 @@ import { vcInitVid, vcAbTimeUpdate, vcApplyTransform, closeVcPanel,
 /* ── 播放器狀態 ────────────────────────────────────────────────────── */
 const _DP = {
   items: [], idx: 0, vid: null,
-  zoomWrapper: null,          // zoom 專用包裝 div（保留游標焦點縮放）
+  zoomWrapper: null,          // zoom 專用包裝 div
   playStart: null, sessionDur: 0,
-  uiHideTimer: null, zoomScale: 1, zoomHideTimer: null,
+  uiHideTimer: null, zoomScale: 1, zoomTx: 0, zoomTy: 0, zoomHideTimer: null,
   hintsTimer: null, dblTimer: null,
+  dragActive: false, dragStartX: 0, dragStartY: 0, dragStartTx: 0, dragStartTy: 0,
   windowMode: 'windowed',   // 'windowed' | 'maximized' | 'fullscreen'
 };
+let _dpSavedScrollY = 0;
 
 /* ── 開啟 ────────────────────────────────────────────────────────── */
 export function openItemInDesktopPlayer(itemId) {
   const clicked = state.ALL.find(i => i.id === itemId);
   if (!clicked) return;
+  // 清單直接取 state.filtered 的影片子序列，與卡池順序及數量完全一致
   let list = state.filtered.filter(i => i.file && i.media_type === 'video');
   let idx  = list.findIndex(i => i.id === itemId);
   if (idx === -1) {
+    // fallback：項目不在當前篩選中（例如從統計面板開啟），以全庫同 domain 洗牌
     const base = state.ALL.filter(i => i.file && i.media_type === 'video' && i.domain === clicked.domain);
     list = seededShuffle(base, currentSeed());
     idx  = list.findIndex(i => i.id === itemId);
     if (idx === -1) return;
-  } else if (!state.curDomains?.size) {
-    const dl = list.filter(i => i.domain === clicked.domain);
-    const di = dl.findIndex(i => i.id === itemId);
-    if (di !== -1) { list = dl; idx = di; }
   }
-  _DP.items = list; _DP.idx = idx; _DP.zoomScale = 1; _DP.zoomWrapper = null; _DP.windowMode = 'windowed';
+  _DP.items = list; _DP.idx = idx; _DP.zoomScale = 1; _DP.zoomTx = 0; _DP.zoomTy = 0; _DP.zoomWrapper = null; _DP.windowMode = 'windowed';
   // 暫停任何正在播放的卡片縮圖影片，避免雙軌播放
   document.querySelectorAll('#grid video').forEach(v => { v.pause(); });
   const el = document.getElementById('dplayer');
   el.classList.remove('ui-hidden', 'dp-fullscreen');
   el.classList.add('open');
   document.getElementById('dplayer-backdrop').classList.add('open');
+  _dpSavedScrollY = window.scrollY;
   document.body.style.overflow = 'hidden';
   history.pushState({ overlay: 'dplayer' }, '');
   _dpHistoryPushed = true;
@@ -67,8 +68,9 @@ export function closeDesktopPlayer(fromPopstate = false) {
   el.classList.remove('open', 'ui-hidden', 'dp-fullscreen');
   document.getElementById('dplayer-backdrop').classList.remove('open');
   document.body.style.overflow = '';
-  if (!fromPopstate && _dpHistoryPushed) history.back();
+  if (!fromPopstate && _dpHistoryPushed) { window._skipPopstateCount = (window._skipPopstateCount || 0) + 1; history.back(); }
   _dpHistoryPushed = false;
+  window.scrollTo(0, _dpSavedScrollY);
 }
 
 /* ── Duration tracking ────────────────────────────────────────────── */
@@ -86,7 +88,7 @@ export function dpCommitDuration() {
         (state.VIEWS[item.id].total_watch_time || 0) + Math.round(_DP.sessionDur);
       fetch('/api/track', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: item.id, name: item.name, domain: item.domain, duration: Math.round(_DP.sessionDur) }),
+        body: JSON.stringify({ id: item.id, name: item.name, domain: item.domain, duration: Math.round(_DP.sessionDur), lib: state.activeLib }),
       }).catch(() => {});
     }
   }
@@ -98,7 +100,7 @@ function _dpLoad() {
   const item = _DP.items[_DP.idx]; if (!item) return;
   dpCommitDuration();
   if (_DP.vid) { _DP.vid.pause(); _DP.vid.src = ''; }
-  _DP.zoomScale = 1;
+  _DP.zoomScale = 1; _DP.zoomTx = 0; _DP.zoomTy = 0;
   const wrap = document.getElementById('dp-wrap');
   wrap.style.background = '#000';
 
@@ -137,10 +139,12 @@ function _dpLoad() {
   const zi = document.getElementById('dp-zoom-ind');
   if (zi) { zi.classList.remove('show'); zi.textContent = ''; }
 
-  vid.addEventListener('play',       () => { _DP.playStart = Date.now(); _dpSetPlayBtn(false); });
-  vid.addEventListener('pause',      () => { dpAccumDur(); _dpSetPlayBtn(true); });
-  vid.addEventListener('ended',      () => { dpAccumDur(); });
-  vid.addEventListener('timeupdate', () => { _dpUpdateProgress(); vcAbTimeUpdate(vid); });
+  vid.addEventListener('play',            () => { _DP.playStart = Date.now(); _dpSetPlayBtn(false); });
+  vid.addEventListener('pause',           () => { dpAccumDur(); _dpSetPlayBtn(true); });
+  vid.addEventListener('ended',           () => { dpAccumDur(); });
+  vid.addEventListener('loadedmetadata',  () => _dpUpdateProgress());
+  vid.addEventListener('seeked',          () => _dpUpdateProgress());
+  vid.addEventListener('timeupdate',      () => { _dpUpdateProgress(); vcAbTimeUpdate(vid); });
   vid.play().catch(() => {});
   trackView(item);
 }
@@ -167,7 +171,10 @@ function _dpUpdateProgress() {
 }
 
 export function dpSeekTo(val) {
-  if (_DP.vid && _DP.vid.duration) _DP.vid.currentTime = (val / 100) * _DP.vid.duration;
+  if (!_DP.vid || !_DP.vid.duration) return;
+  _DP.vid.currentTime = (val / 100) * _DP.vid.duration;
+  const r = document.getElementById('dp-prog-range');
+  if (r) r.style.setProperty('--pct', parseFloat(val).toFixed(1) + '%');
 }
 export function dpTogglePlay() {
   if (!_DP.vid) return;
@@ -186,9 +193,18 @@ export function dpToggleMute() {
   const b = document.getElementById('dp-vol-btn');
   if (b) b.textContent = _DP.vid.muted ? '🔇' : '🔊';
 }
+function _dpShowSwipeOv(text) {
+  const ov = document.getElementById('dp-swipe-ov');
+  if (!ov) return;
+  ov.textContent = text; ov.classList.add('show');
+  clearTimeout(ov._t); ov._t = setTimeout(() => ov.classList.remove('show'), 1200);
+}
 export function dpSwitch(dir) {
   const next = _DP.idx + dir;
-  if (next < 0 || next >= _DP.items.length) return;
+  if (next < 0 || next >= _DP.items.length) {
+    _dpShowSwipeOv(dir < 0 ? '已是第一部' : '已是最後一部');
+    return;
+  }
   _DP.idx = next; _dpLoad();
 }
 /* ── 三模式視窗切換：windowed → maximized → fullscreen → windowed ── */
@@ -256,22 +272,36 @@ function _dpShowHints() {
   _DP.hintsTimer = setTimeout(() => h.classList.remove('show'), 3500);
 }
 
-/* ── 滾輪縮放（作用於 zoomWrapper，保留游標焦點；panel 幾何變換作用於 vid）── */
+/* ── 統一套用 zoomWrapper transform ─────────────────────────────── */
+function _dpApplyTransform() {
+  const zw = _DP.zoomWrapper; if (!zw) return;
+  if (_DP.zoomScale <= 1.005 && _DP.zoomTx === 0 && _DP.zoomTy === 0) {
+    zw.style.transform = '';
+  } else {
+    zw.style.transform = `translate(${_DP.zoomTx.toFixed(2)}px, ${_DP.zoomTy.toFixed(2)}px) scale(${_DP.zoomScale.toFixed(3)})`;
+  }
+  zw.style.cursor = _DP.zoomScale > 1.005 ? 'grab' : '';
+}
+
+/* ── 滾輪縮放（游標焦點縮放 + 維持平移狀態）────────────────────── */
 function _dpHandleWheel(e) {
   e.preventDefault();
   const zw = _DP.zoomWrapper; if (!zw) return;
-  const delta = e.deltaY < 0 ? 0.12 : -0.12;
-  _DP.zoomScale = Math.max(1, Math.min(4, _DP.zoomScale + delta));
-  if (_DP.zoomScale <= 1.01) {
-    _DP.zoomScale = 1;
-    zw.style.transform = ''; zw.style.transformOrigin = 'center center';
-  } else {
-    const rect = zw.getBoundingClientRect();
-    const ox = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width)  * 100));
-    const oy = Math.max(0, Math.min(100, ((e.clientY - rect.top)  / rect.height) * 100));
-    zw.style.transformOrigin = `${ox.toFixed(1)}% ${oy.toFixed(1)}%`;
-    zw.style.transform = `scale(${_DP.zoomScale.toFixed(3)})`;
-  }
+  const oldScale = _DP.zoomScale;
+  const newScale = Math.max(1, Math.min(4, oldScale + (e.deltaY < 0 ? 0.12 : -0.12)));
+  if (newScale === oldScale) return;
+
+  // 以游標為焦點縮放：維持游標下的影像點不動
+  const rect = zw.getBoundingClientRect();
+  const cx = e.clientX - (rect.left + rect.width  / 2);
+  const cy = e.clientY - (rect.top  + rect.height / 2);
+  _DP.zoomTx = cx * (1 - newScale / oldScale) + _DP.zoomTx * (newScale / oldScale);
+  _DP.zoomTy = cy * (1 - newScale / oldScale) + _DP.zoomTy * (newScale / oldScale);
+  _DP.zoomScale = newScale;
+
+  if (newScale <= 1.005) { _DP.zoomScale = 1; _DP.zoomTx = 0; _DP.zoomTy = 0; }
+  _dpApplyTransform();
+
   const zi = document.getElementById('dp-zoom-ind');
   if (zi) {
     zi.textContent = _DP.zoomScale > 1.01 ? `${Math.round(_DP.zoomScale * 100)}%` : '';
@@ -281,14 +311,53 @@ function _dpHandleWheel(e) {
   }
 }
 
+/* ── 拖曳平移 ────────────────────────────────────────────────────── */
+function _dpHandleDragStart(e) {
+  if (document.getElementById('modal')?.classList.contains('open')) return; // modal 打開時禁用
+  if (e.target.closest('.dp-controls') || e.target.closest('.dp-topbar')) return;
+  if (!_DP.zoomWrapper || e.button !== 0) return;
+  _DP.dragActive = false; // 先不啟動，等移動超過閾值才啟動
+  _DP.dragStartX = e.clientX; _DP.dragStartY = e.clientY;
+  _DP.dragStartTx = _DP.zoomTx; _DP.dragStartTy = _DP.zoomTy;
+}
+function _dpHandleDragMove(e) {
+  if (document.getElementById('modal')?.classList.contains('open')) return; // modal 打開時禁用
+  if (_DP.dragStartX === undefined) return;
+  const dx = e.clientX - _DP.dragStartX, dy = e.clientY - _DP.dragStartY;
+  if (!_DP.dragActive) {
+    if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return; // 閾值：5px 才觸發 drag
+    _DP.dragActive = true;
+  }
+  _DP.zoomTx = _DP.dragStartTx + dx;
+  _DP.zoomTy = _DP.dragStartTy + dy;
+  _dpApplyTransform();
+  if (_DP.zoomWrapper) _DP.zoomWrapper.style.cursor = 'grabbing';
+}
+function _dpHandleDragEnd() {
+  if (document.getElementById('modal')?.classList.contains('open')) {
+    _DP.dragActive = false;
+    _DP.dragStartX = undefined;
+    return;
+  }
+  if (_DP.dragActive) {
+    _dpApplyTransform(); // 恢復 grab/default cursor
+    _DP._wasDragging = true;
+    setTimeout(() => { _DP._wasDragging = false; }, 0);
+  }
+  _DP.dragActive = false;
+  _DP.dragStartX = undefined;
+}
+
 /* ── 影片區點擊（單擊=播/暫停，雙擊=全螢幕）防抖 ────────────────── */
 function _dpHandleClick(e) {
   if (e.target.closest('.dp-controls') || e.target.closest('.dp-topbar')) return;
+  if (_DP._wasDragging) return; // drag 結束後的 click 事件忽略
   clearTimeout(_DP.dblTimer);
   _DP.dblTimer = setTimeout(() => { _DP.dblTimer = null; dpTogglePlay(); }, 260);
 }
 function _dpHandleDblClick(e) {
   if (e.target.closest('.dp-controls') || e.target.closest('.dp-topbar')) return;
+  if (_DP._wasDragging) return;
   clearTimeout(_DP.dblTimer); _DP.dblTimer = null;
   dpCycleWindowMode();
 }
@@ -298,9 +367,13 @@ export function wireDesktopPlayer() {
   const el   = document.getElementById('dplayer');
   const wrap = document.getElementById('dp-wrap');
 
-  wrap.addEventListener('click',    _dpHandleClick);
-  wrap.addEventListener('dblclick', _dpHandleDblClick);
-  wrap.addEventListener('wheel',    _dpHandleWheel, { passive: false });
+  wrap.addEventListener('click',       _dpHandleClick);
+  wrap.addEventListener('dblclick',    _dpHandleDblClick);
+  wrap.addEventListener('wheel',       _dpHandleWheel, { passive: false });
+  wrap.addEventListener('pointerdown', _dpHandleDragStart);
+  window.addEventListener('pointermove', _dpHandleDragMove);
+  window.addEventListener('pointerup',   _dpHandleDragEnd);
+  window.addEventListener('pointercancel', _dpHandleDragEnd);
 
   el.addEventListener('mousemove',  () => { if (el.classList.contains('open')) _dpResetUITimer(); });
   el.addEventListener('mouseleave', () => {
@@ -316,7 +389,13 @@ export function wireDesktopPlayer() {
       _dpUpdateFsBtn();
     }
   });
-  document.getElementById('dp-prog-range')?.addEventListener('mousedown', e => e.stopPropagation());
+  const range = document.getElementById('dp-prog-range');
+  range?.addEventListener('mousedown', e => e.stopPropagation());
+  range?.addEventListener('change', e => dpSeekTo(e.target.value));
+
+  document.getElementById('dp-controls')?.addEventListener('mouseenter', () => {
+    if (el.classList.contains('open')) _dpResetUITimer();
+  });
 }
 
 /** 供外部判斷播放器是否開啟 */

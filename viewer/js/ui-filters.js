@@ -532,7 +532,7 @@ export function toggleTagPanel() {
     history.pushState({ overlay: 'tagpanel' }, '');
     _tagHistoryPushed = true;
   } else {
-    if (_tagHistoryPushed) history.back();
+    if (_tagHistoryPushed) { window._skipPopstateCount = (window._skipPopstateCount || 0) + 1; history.back(); }
     _tagHistoryPushed = false;
   }
 }
@@ -543,7 +543,7 @@ export function closeTagPanel(fromPopstate = false) {
   _syncPanelHeights();  // ← 先算好 custom property，再移除 class
   document.getElementById('tag-panel').classList.remove('open');
   document.getElementById('tag-tog-inline')?.classList.remove('open');
-  if (!fromPopstate && _tagHistoryPushed) history.back();
+  if (!fromPopstate && _tagHistoryPushed) { window._skipPopstateCount = (window._skipPopstateCount || 0) + 1; history.back(); }
   _tagHistoryPushed = false;
 }
 
@@ -657,10 +657,16 @@ export function closeFolderPopover() {
 }
 
 /* ── Preset Filter Panel ─────────────────────────────────────────── */
-/** 計算每個 preset 有多少 item 套用（BUG 5）
- *  迭代 state.ALL 一次，從 localStorage 讀取各 item 的 presetIds，
- *  複雜度 O(items)：大型資料庫仍可接受 */
+let _presetCountCache = null;
+let _presetCountCacheSize = -1;
+
+/** 失效快取（vc-filter-presets-changed 事件時呼叫）*/
+export function _invalidatePresetCountCache() { _presetCountCache = null; _presetCountCacheSize = -1; }
+
+/** 計算每個 preset 有多少 item 套用；結果快取至 _presetCountCache，state.ALL 長度變化時自動失效 */
 function _buildPresetCountMap() {
+  if (_presetCountCache && _presetCountCacheSize === state.ALL.length) return _presetCountCache;
+  _presetCountCacheSize = state.ALL.length;
   const counts = {};
   state.ALL.forEach(item => {
     try {
@@ -670,6 +676,7 @@ function _buildPresetCountMap() {
       });
     } catch {}
   });
+  _presetCountCache = counts;
   return counts;
 }
 
@@ -706,18 +713,28 @@ export function closePresetPanel() {
   document.getElementById('preset-tog-inline')?.classList.remove('open');
 }
 
-/** 切換單一濾鏡（單選：點擊已選則取消，否則取代）*/
+/** 切換單一濾鏡（單選模式：點擊已選則取消，否則取代當前選取）*/
 export function setPresetFilter(id) {
   if (!state.curPresets) state.curPresets = new Set();
   if (state.curPresets.has(id)) {
-    state.curPresets.delete(id);   // 再次點擊 → 取消選取
+    state.curPresets.delete(id);
   } else {
-    state.curPresets.clear();      // 單選：清除舊選取
+    state.curPresets.clear();
     state.curPresets.add(id);
   }
   buildPresetChips();
   updateSearchChips();
   applyFilter();
+}
+
+/** 當濾鏡預設被刪除時，同步移除 Header 篩選狀態中的孤兒 ID */
+export function removePresetFromFilter(id) {
+  if (state.curPresets?.has(id)) {
+    state.curPresets.delete(id);
+    buildPresetChips();
+    updateSearchChips();
+    applyFilter();
+  }
 }
 
 /** 清除全部濾鏡篩選 (w020) */
@@ -730,3 +747,20 @@ export function clearPresetFilter() {
 
 // 互斥面板關閉 - 掛 window 供 main.js toggleTypeMenu 呼叫（w019）
 window._closeOtherPanels = _closeOtherPanels;
+
+// video-controls.js 透過 CustomEvent 通知濾鏡預設變更，解耦 window.buildPresetChips 依賴
+document.addEventListener('vc-filter-presets-changed', () => {
+  _invalidatePresetCountCache();
+  buildPresetChips();
+  // 清理 Header 篩選中已刪除預設的孤兒 ID
+  if (state.curPresets?.size) {
+    let presets = [];
+    try { presets = JSON.parse(localStorage.getItem('eagle-filter-presets') || '[]'); } catch {}
+    const alive = new Set(presets.filter(p => !p.deleted).map(p => p.id));
+    let dirty = false;
+    for (const id of state.curPresets) {
+      if (!alive.has(id)) { state.curPresets.delete(id); dirty = true; }
+    }
+    if (dirty) { updateSearchChips(); applyFilter(); }
+  }
+});

@@ -623,3 +623,45 @@ def _index_folder(folder_name: str) -> dict:
             return {"ok": False, "error": f"_run_one_folder returned False for '{folder_name}'"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+
+def _prune_stale_folder_items(folder_name: str) -> int:
+    """Remove items from urls_data.json whose files no longer exist on disk.
+    Uses a single os.walk scan instead of per-item .exists() to avoid WSL2 I/O slowness.
+    Returns number of items pruned, or -1 on error."""
+    folder_root = FOLDER_PATHS.get(folder_name)
+    if folder_root is None:
+        return -1
+    data_path = DATA_DIR / folder_name / "urls_data.json"
+    if not data_path.exists():
+        return 0
+    try:
+        raw = json.loads(data_path.read_text(encoding="utf-8"))
+        items = raw if isinstance(raw, list) else raw.get("items", [])
+        prefix = f"folder-images/{folder_name}/"
+        # Build set of all existing relative paths in one pass
+        existing: set[str] = set()
+        root_str = str(folder_root)
+        for dirpath, _dirs, files in os.walk(folder_root):
+            rel_dir = os.path.relpath(dirpath, root_str)
+            rel_dir = "" if rel_dir == "." else rel_dir + "/"
+            for fname in files:
+                existing.add(rel_dir + fname)
+        kept, pruned = [], 0
+        for item in items:
+            file_field = item.get("file", "")
+            if file_field.startswith(prefix):
+                rel = file_field[len(prefix):]
+                if rel not in existing:
+                    pruned += 1
+                    continue
+            kept.append(item)
+        if pruned:
+            result = kept if isinstance(raw, list) else {**raw, "items": kept}
+            tmp = data_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(data_path)
+        return pruned
+    except Exception as e:
+        print(f"[prune] {folder_name} 清理失敗: {e}", file=sys.stderr)
+        return -1
