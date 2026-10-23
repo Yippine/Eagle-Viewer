@@ -331,6 +331,12 @@
   padding: var(--sp-2) var(--sp-1) var(--sp-1);
   color: var(--text3); font-size: var(--fs-xs);
 }
+.coll-sub-act {
+  margin-left: auto; border: 0; background: none; color: var(--accent);
+  cursor: pointer; font-size: var(--fs-xs); padding: 2px 6px; border-radius: 4px;
+  min-height: 24px;                                  /* 手機觸控目標 */
+}
+.coll-sub-act:hover { background: var(--accent-bg); }
 .coll-row { position: relative; }
 .coll-row .chip-x {
   visibility: hidden;

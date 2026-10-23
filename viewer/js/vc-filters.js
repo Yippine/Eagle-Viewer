@@ -4,7 +4,7 @@
    （自 video-controls.js 拆分；行為不變）
 ══════════════════════════════════════════════════════════════════════*/
 
-import { fmtTime } from './utils.js';
+import { fmtTime, fmtTimeF } from './utils.js';
 import { _VCS, _getActive, _newSelItem,
          _loadFilterPresets, _loadVideoFilterData, _saveVideoFilterData }
   from './vc-state.js';
@@ -12,7 +12,7 @@ import { _glShowCanvas, _stopVideoRafLoop,
          _glResetTexSrc, _glClearTexture } from './vc-webgl.js';
 import { _rgbToHsl, _scheduleCanvasUpdate,
          _restoreOriginalSrc, _needsCanvas } from './vc-canvas.js';
-import { vcRenderFilterPresets } from './vc-presets.js';
+import { vcRenderFilterPresets, vcRenderAbPresets } from './vc-presets.js';
 import { _showToast, vcDismissToast, vcSyncPanel } from './vc-panel.js';
 
 /* ── 臨時濾鏡狀態機 ───────────────────────────────────────────── */
@@ -158,23 +158,14 @@ export function vcStartEyedropper() {
     ctx.drawImage(vid, 0, 0, mw, mh);
     try {
       const d = ctx.getImageData(px, py, 1, 1).data;
-      const [h, s] = _rgbToHsl(d[0], d[1], d[2]);
       const _a = _getActive();
       // 低飽和度像素（接近黑/灰/白）的 HSL hue 數值極不穩定：
       // 例如 (8,8,10) 的 B 僅多 2 單位就得到 hue=240°，不代表真實色相。
       // 飽和度 < 20% 視為中性區域，不更新 targetHue 並給予提示。
-      if (s < 0.20) {
-        // 中性像素：顯示警告 toast，不寫入 targetHue
-        const hint = document.getElementById('vc-sel-pick-hint');
-        if (hint) {
-          hint.textContent = '此區域接近中性（無明顯色相）';
-          hint.style.display = '';
-          setTimeout(() => { if (hint) { hint.textContent = '點擊取色'; hint.style.display = 'none'; } }, 2000);
-        }
-        vcStopEyedropper();
-        return;
-      }
-      if (_a) { _a.targetHue = Math.round(h); _a.pickedRgb = [d[0], d[1], d[2]]; _markTempFilterDirty(); }
+      // 黑白灰（飽和度 < 20%）的 hue 不穩定 → 改以「明度選取」模式（Resolve Luminance Qualifier 語彙），
+      // 仍可調亮度/對比/飽和(上色)/復古；色調滑桿在此模式下 = 上色色相。
+      if (_a) _applyPickedColor(_a, d[0], d[1], d[2]);
+      if (_a?.mode === 'lum') _showToast(`<span>已選取中性色（明度 ${Math.round((_a.targetLum ?? 0) * 100)}%）——以明度範圍選取，色調滑桿 = 上色色相</span>`);
       if (_VCS._mediaType === 'image' && !_VCS._imgOriginalSrc) _VCS._imgOriginalSrc = vid.src;
       vcStopEyedropper();
       vcSyncPanel();
@@ -229,10 +220,109 @@ export function vcSetSelectiveHue(key, val) {
   vcSyncPanel();
 }
 
+/** 寫入取色結果（取色筆／顏色圓盤共用）：S<20% → 明度模式，否則色相模式 */
+function _applyPickedColor(item, r, g, b) {
+  const [h, sat, l] = _rgbToHsl(r, g, b);
+  item.pickedRgb = [r, g, b];
+  if (sat < 0.20) { item.mode = 'lum'; item.targetLum = l; item.targetHue = Math.round(h); }
+  else            { item.mode = 'hue'; item.targetLum = null; item.targetHue = Math.round(h); }
+  _markTempFilterDirty();
+}
+export function vcSetSelectiveRgb(r, g, b) {
+  const a = _getActive();
+  if (!a) return;
+  _applyPickedColor(a, r, g, b);
+  _scheduleCanvasUpdate(); vcSyncPanel();
+}
+export function vcSetSelectiveHex(hex) {
+  const m = String(hex || '').trim().replace(/^#/, '').match(/^([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!m) return false;
+  let x = m[1]; if (x.length === 3) x = x.split('').map(c => c + c).join('');
+  vcSetSelectiveRgb(parseInt(x.slice(0, 2), 16), parseInt(x.slice(2, 4), 16), parseInt(x.slice(4, 6), 16));
+  return true;
+}
+export function vcSetSelectiveHueDeg(deg) {      // 顏色圓盤點選：以色相 + 中飽和中明度代表色
+  const a = _getActive();
+  if (!a) return;
+  const hh = ((deg % 360) + 360) % 360;
+  const [r, g, b] = _hslToRgb(hh / 360, 0.75, 0.5);
+  _applyPickedColor(a, r, g, b);
+  _scheduleCanvasUpdate(); vcSyncPanel();
+}
+function _hslToRgb(h, s, l) {
+  const f = n => { const k = (n + h * 12) % 12; const a = s * Math.min(l, 1 - l);
+    return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+  return [f(0), f(8), f(4)];
+}
+export function vcGetActiveSelectiveColor() {
+  const a = _getActive();
+  if (!a || a.targetHue === null) return null;
+  const rgb = a.pickedRgb || _hslToRgb(a.targetHue / 360, 0.7, 0.5);
+  return { rgb, hex: '#' + rgb.map(v => v.toString(16).padStart(2, '0')).join(''), hue: a.targetHue, mode: a.mode || 'hue', lum: a.targetLum };
+}
+
+/* 顏色圓盤 popover（Figma colour popover／iOS UIColorPicker 語彙：預覽 + 色環 + HEX/RGB 直接輸入 + 清除） */
+let _wheelDrag = false;
+export function vcToggleColorPopover(force) {
+  const pop = document.getElementById('vc-sel-color-pop');
+  if (!pop) return;
+  const show = force !== undefined ? !!force : pop.hidden;
+  pop.hidden = !show;
+  document.getElementById('vc-sel-swatch')?.classList.toggle('vc-on', show);
+  if (show) { _wheelDraw(); vcSyncColorPopover(); }
+}
+function _wheelDraw() {
+  const c = document.getElementById('vc-sel-wheel');
+  if (!c || c._drawn) return;
+  const ctx = c.getContext('2d'), W = c.width, R = W / 2;
+  for (let a = 0; a < 360; a++) {
+    ctx.beginPath(); ctx.moveTo(R, R);
+    ctx.arc(R, R, R, (a - 91) * Math.PI / 180, (a - 89) * Math.PI / 180);
+    ctx.closePath(); ctx.fillStyle = `hsl(${a},100%,50%)`; ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.beginPath(); ctx.arc(R, R, R * 0.58, 0, Math.PI * 2); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+  c._drawn = true;
+  const pick = (e) => {
+    const r = c.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    const dx = p.clientX - (r.left + r.width / 2), dy = p.clientY - (r.top + r.height / 2);
+    const deg = (Math.atan2(dy, dx) * 180 / Math.PI + 90 + 360) % 360;
+    vcSetSelectiveHueDeg(Math.round(deg));
+  };
+  c.addEventListener('mousedown', e => { _wheelDrag = true; pick(e); });
+  window.addEventListener('mousemove', e => { if (_wheelDrag) pick(e); });
+  window.addEventListener('mouseup', () => { _wheelDrag = false; });
+  c.addEventListener('touchstart', e => { e.preventDefault(); pick(e); }, { passive: false });
+  c.addEventListener('touchmove',  e => { e.preventDefault(); pick(e); }, { passive: false });
+}
+export function vcSyncColorPopover() {
+  const pop = document.getElementById('vc-sel-color-pop');
+  if (!pop || pop.hidden) return;
+  const col = vcGetActiveSelectiveColor();
+  const prev = document.getElementById('vc-sel-color-prev');
+  if (prev) prev.style.background = col ? col.hex : 'transparent';
+  const set = (id, v) => { const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = v; };
+  set('vc-sel-hex', col ? col.hex.toUpperCase() : '');
+  set('vc-sel-r', col ? col.rgb[0] : ''); set('vc-sel-g', col ? col.rgb[1] : ''); set('vc-sel-b', col ? col.rgb[2] : '');
+  const dot = document.getElementById('vc-sel-wheel-dot');
+  if (dot) {
+    if (col && col.mode === 'hue') {
+      const rad = (col.hue - 90) * Math.PI / 180, R = 0.79;     // 環中心半徑（0.58–1.0 的中點）
+      dot.style.display = '';
+      dot.style.left = `${50 + 50 * R * Math.cos(rad)}%`; dot.style.top = `${50 + 50 * R * Math.sin(rad)}%`;
+    } else dot.style.display = 'none';
+  }
+  const modeEl = document.getElementById('vc-sel-color-mode');
+  if (modeEl) modeEl.textContent = !col ? '尚未取色' : col.mode === 'lum'
+    ? `明度選取（中性色 ${Math.round((col.lum ?? 0) * 100)}%）` : `色相選取 ${col.hue}°`;
+}
+
 export function vcClearSelectiveColor() {
   const a = _getActive();
   if (!a) return;
-  a.targetHue  = null;
+  a.targetHue  = null; a.mode = 'hue'; a.targetLum = null; a.pickedRgb = null;
   a.range      = 30;
   a.hueShift   = 0;
   a.brightness = 0;
@@ -254,12 +344,41 @@ export function vcAddSelectiveColor() {
   vcStartEyedropper();
 }
 
+/* ── 色塊複製（Figma/Photoshop Duplicate 語彙；貼到清單末端）──
+   時段接續律：來源有時段 → 新時段 = [T, T + len]，T = 所有有時段色塊的最大終點
+   （不一定是清單最後一個）；len = 來源時段長度；超出片長則夾住；無時段 → 原樣複製。 */
+export function vcDuplicateSelective(id) {
+  const src = id != null ? _VCS.selectiveList.find(s => s.id === id) : _getActive();
+  if (!src) return;
+  const dup = { ..._newSelItem(), ...JSON.parse(JSON.stringify(src)), id: _newSelItem().id };
+  if (src.abStart !== null && src.abEnd !== null) {
+    const len = Math.max(0, src.abEnd - src.abStart);
+    const tail = _VCS.selectiveList.reduce((m, s) => (s.abEnd !== null ? Math.max(m, s.abEnd) : m), 0);
+    const dur = _VCS._vid?.duration;
+    let a = tail, b = tail + len;
+    if (dur && isFinite(dur)) { a = Math.min(a, dur); b = Math.min(b, dur); }
+    dup.abStart = a; dup.abEnd = b;
+  }
+  _VCS.selectiveList.push(dup);
+  _VCS._activeSelectiveId = dup.id;
+  _markTempFilterDirty();
+  _scheduleCanvasUpdate();
+  vcSyncPanel();
+  vcRenderSelectiveChips();
+  try { navigator.vibrate?.(15); } catch (_) {}
+  _showToast(dup.abStart !== null
+    ? `<span>已複製色塊 → 時段 ${fmtTimeF(dup.abStart)}–${fmtTimeF(dup.abEnd)}${dup.abEnd - dup.abStart < (src.abEnd - src.abStart) - 0.01 ? '（已達片尾，時段被截短）' : ''}</span>`
+    : `<span>已複製色塊</span>`);
+}
+
 export function vcSetActiveSelective(id) {
   _VCS._activeSelectiveId = id;
   vcSyncPanel();
 }
 
+export function vcRemoveActiveSelective() { const a = _getActive(); if (a) vcRemoveSelective(a.id); }
 export function vcRemoveSelective(id) {
+  _releaseDerivedAb(id);
   _VCS.selectiveList = _VCS.selectiveList.filter(s => s.id !== id);
   if (_VCS._activeSelectiveId === id) {
     _VCS._activeSelectiveId = _VCS.selectiveList.at(-1)?.id ?? null;
@@ -279,7 +398,7 @@ export function vcBindAbToSelective() {
   _scheduleCanvasUpdate();
   vcSyncPanel();
   vcRenderSelectiveChips();
-  _showToast(`<span>已綁定 ${fmtTime(start)}–${fmtTime(end)}</span>`);
+  _showToast(`<span>已綁定 ${fmtTimeF(start)}–${fmtTimeF(end)}</span>`);
 }
 
 /** 選色時段直接輸入（m:ss 或秒）：只設一端時另一端補 0／片長，確保時段有效 */
@@ -299,34 +418,79 @@ export function vcSelAbEdit(point, el) {
     else                   { item.abEnd = sec;   if (item.abStart === null) item.abStart = 0; }
     if (item.abStart > item.abEnd) [item.abStart, item.abEnd] = [item.abEnd, item.abStart];
   }
+  _followDerivedAb(item);
   _scheduleCanvasUpdate();
   vcSyncPanel();
   vcRenderSelectiveChips();
 }
-/** 以目前播放位置設定選色時段端點 */
+/** 選色時段 A／B 鈕：播放頁籤已設定該端點 → 對照播放 A／B（SSOT，不隨目前進度漂移）；
+    未設定 → 退回目前播放位置 */
 export function vcSelAbNow(point) {
   const item = _getActive();
   const vid = _VCS._vid;
   if (!item || !vid) return;
-  const t = vid.currentTime || 0, dur = vid.duration;
+  const fromAb = point === 'start' ? _VCS.ab.a : _VCS.ab.b;
+  const t = (fromAb !== null && fromAb !== undefined) ? fromAb : (vid.currentTime || 0), dur = vid.duration;
   if (point === 'start') { item.abStart = t; if (item.abEnd === null) item.abEnd = (dur && isFinite(dur)) ? dur : t; }
   else                   { item.abEnd = t;   if (item.abStart === null) item.abStart = 0; }
   if (item.abStart > item.abEnd) [item.abStart, item.abEnd] = [item.abEnd, item.abStart];
+  _followDerivedAb(item);
   _scheduleCanvasUpdate();
   vcSyncPanel();
   vcRenderSelectiveChips();
-  _showToast(`<span>時段 ${fmtTime(item.abStart)}–${fmtTime(item.abEnd)}</span>`);
+  _showToast(`<span>時段 ${fmtTimeF(item.abStart)}–${fmtTimeF(item.abEnd)}</span>`);
 }
 
 export function vcUnbindAbFromSelective() {
   const item = _getActive();
   if (!item) return;
   item.abStart = null; item.abEnd = null;
+  if (_releaseDerivedAb(item.id)) _showToast(`<span>已移除時段，並停止由它派生的 AB 循環</span>`);
   _scheduleCanvasUpdate();
   vcSyncPanel();
   vcRenderSelectiveChips();
 }
 
+/* ── 色塊時段一鍵播放（業界語彙：Resolve range marker → In/Out + Loop；YouTube chapter 分段）──
+   套用 = 寫入播放 AB（SSOT _VCS.ab）+ seek 至起點 + 播放；同一時段循環中再按 = 停止（toggle）。 */
+export function vcIsSelectiveLooping(item) {
+  return !!item && item.abStart !== null && _VCS.ab.active &&
+         _VCS.ab.a !== null && _VCS.ab.b !== null &&
+         Math.abs(_VCS.ab.a - item.abStart) < 0.05 && Math.abs(_VCS.ab.b - item.abEnd) < 0.05;
+}
+/* Provenance（派生律）：播放 AB 若由色塊派生（_VCS.ab.srcSel = item.id）→
+   來源時段被移除／色塊被刪 → 釋放 AB（停止循環 + 清空）；來源時段被編輯 → AB 跟隨；
+   使用者在播放頁籤手動改 AB → 解除綁定（vc-playback 寫入時清 srcSel）。 */
+function _releaseDerivedAb(itemId) {
+  if (_VCS.ab.srcSel !== itemId) return false;
+  _VCS.ab = { a: null, b: null, active: false, srcSel: null };
+  return true;
+}
+function _followDerivedAb(item) {
+  if (_VCS.ab.srcSel !== item.id) return;
+  if (item.abStart === null) { _releaseDerivedAb(item.id); return; }
+  _VCS.ab.a = item.abStart; _VCS.ab.b = item.abEnd;
+}
+
+export function vcPlaySelectiveRange(id) {
+  const item = id != null ? _VCS.selectiveList.find(s => s.id === id) : _getActive();
+  const vid = _VCS._vid;
+  if (!item || !vid || item.abStart === null) return;
+  if (vcIsSelectiveLooping(item)) {
+    _VCS.ab = { a: null, b: null, active: false, srcSel: null };     // 停止 = 釋放派生 AB（不殘留）
+    _showToast(`<span>已停止時段循環</span>`);
+  } else {
+    _VCS.ab.a = item.abStart; _VCS.ab.b = item.abEnd; _VCS.ab.active = true; _VCS.ab.srcSel = item.id;
+    if (_VCS._activeSelectiveId !== item.id) { _VCS._activeSelectiveId = item.id; }
+    vid.currentTime = item.abStart;
+    vid.play?.().catch?.(() => {});
+    _showToast(`<span>只播放此色塊時段 ${fmtTimeF(item.abStart)}–${fmtTimeF(item.abEnd)}（時段列「⏹ 停止循環」可取消）</span>`);
+  }
+  vcSyncPanel();
+  vcRenderSelectiveChips();
+}
+
+let _lpFiredAt = 0;   // 最近一次長按複製的時間戳（chips 重繪後仍可擋掉合成 click）
 export function vcRenderSelectiveChips() {
   const container = document.getElementById('vc-sel-chips');
   if (!container) return;
@@ -339,23 +503,45 @@ export function vcRenderSelectiveChips() {
     const chip = document.createElement('span');
     chip.className = 'vc-sel-chip' + (isActive ? ' vc-on' : '');
     chip.style.background = bg;
-    chip.title = item.targetHue !== null ? `色相 ${item.targetHue}°` : '未取色';
-    chip.onclick = () => vcSetActiveSelective(item.id);
-    const rm = document.createElement('button');
-    rm.className = 'vc-sel-chip-rm';
-    rm.textContent = '×';
-    rm.title = '刪除此色塊';
-    rm.onclick = (e) => { e.stopPropagation(); vcRemoveSelective(item.id); };
-    if (item.abStart !== null) {
-      const badge = document.createElement('span');
-      badge.className = 'vc-sel-chip-time';
-      badge.textContent = '⏱';
-      badge.title = `${fmtTime(item.abStart)}–${fmtTime(item.abEnd)}`;
-      chip.appendChild(badge);
+    const hasRange = item.abStart !== null;
+    const looping = hasRange && vcIsSelectiveLooping(item);
+    if (looping) chip.classList.add('vc-sel-chip-looping');
+    chip.title = (item.targetHue !== null ? (item.mode === 'lum' ? '中性色（明度選取）' : `色相 ${item.targetHue}°`) : '未取色')
+      + (hasRange ? `｜時段 ${fmtTimeF(item.abStart)}–${fmtTimeF(item.abEnd)}（點選即播放此時段）` : '')
+      + '｜Ctrl+D／長按 = 複製';
+    chip.tabIndex = 0;
+    chip.setAttribute('role', 'button');
+    chip.setAttribute('aria-label', chip.title);
+    /* 點選 = 切換色塊；有時段者同時套用為播放 AB 循環（派生，來源消失即釋放） */
+    chip.onclick = () => {
+      if (Date.now() - _lpFiredAt < 600) return;          // 長按後的合成 click 忽略
+      vcSetActiveSelective(item.id);
+      if (hasRange && !vcIsSelectiveLooping(item)) vcPlaySelectiveRange(item.id);
+    };
+    chip.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') { e.preventDefault(); vcDuplicateSelective(item.id); } };
+    /* 手機：長按 500ms = 複製（iOS context-menu 語彙；震動回饋）；移動超過 10px 取消 */
+    let lpTimer = 0, lpX = 0, lpY = 0;
+    chip.addEventListener('touchstart', (e) => {
+      lpX = e.touches[0].clientX; lpY = e.touches[0].clientY;
+      clearTimeout(lpTimer);
+      lpTimer = setTimeout(() => { _lpFiredAt = Date.now(); vcDuplicateSelective(item.id); }, 500);
+    }, { passive: true });
+    chip.addEventListener('touchmove', (e) => {
+      if (Math.abs(e.touches[0].clientX - lpX) > 10 || Math.abs(e.touches[0].clientY - lpY) > 10) clearTimeout(lpTimer);
+    }, { passive: true });
+    chip.addEventListener('touchend', () => clearTimeout(lpTimer), { passive: true });
+    chip.addEventListener('touchcancel', () => clearTimeout(lpTimer), { passive: true });
+    chip.addEventListener('contextmenu', (e) => e.preventDefault());
+    if (hasRange) {                                        // 時段指示點（純顯示，不可點 → 手機不誤觸）
+      const dot = document.createElement('span');
+      dot.className = 'vc-sel-chip-time' + (looping ? ' vc-on' : '');
+      dot.textContent = looping ? '⟲' : '⏱';
+      chip.appendChild(dot);
     }
-    chip.appendChild(rm);
     container.appendChild(chip);
   }
+  vcRenderAbPresets();                                    // AB 設定庫的「色塊時段」群組隨色塊同步
+  document.dispatchEvent(new CustomEvent('vc-ranges-changed'));
 }
 
 /* ══════════════════════════════════════════════════════════════════

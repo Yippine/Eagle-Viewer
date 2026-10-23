@@ -13,7 +13,7 @@ import { store } from './store.js';
 import { mediaURL } from './api.js';
 import { navigate, parseRoute, parseLibId } from './router.js';
 import { h, serializeTerms } from './items.js';
-import { vcInitVid, vcInitMedia, vcSetMediaType, vcAbTimeUpdate,
+import { vcState, vcInitVid, vcInitMedia, vcSetMediaType, vcAbTimeUpdate,
          vcRegisterAutoplayNext, vcRegisterImageZoom, vcRegisterImageNav,
          vcApplyTransform, vcSyncGlCanvas, vcSyncPanel, vcCancelCrop }
   from '../../viewer/js/video-controls.js';
@@ -201,6 +201,7 @@ function _buildVideo(it, zoom) {
   vid.addEventListener('pause', () => { _accumDur(); _setPlayBtn(true); });
   vid.addEventListener('ended', _accumDur);
   vid.addEventListener('loadedmetadata', _updateProg);
+  vid.addEventListener('loadedmetadata', _renderRanges);
   vid.addEventListener('seeked', _updateProg);
   vid.addEventListener('timeupdate', () => { _updateProg(); vcAbTimeUpdate(vid); });
   vid.play().catch(() => {});
@@ -252,11 +253,32 @@ function _izApply() {
   _zoomInd(V.iz.s);
 }
 
-function _izZoom(delta, absolute) {
+/** 錨點縮放：以螢幕座標 (ax, ay) 為不動點（省略 = 畫面中心）。
+    幾何：元素以自身中心 O 為 transform-origin，螢幕點 p = O + t + s·u；
+    保持 u 不變 → t' = (p−O)(1−s'/s) + t·(s'/s)；O = 目前 rect 中心 − t。 */
+function _anchorTranslate(el, t, sOld, sNew, ax, ay) {
+  const r = el.getBoundingClientRect();
+  const ox = r.left + r.width / 2 - t.x, oy = r.top + r.height / 2 - t.y;
+  const px = (ax ?? (ox + t.x)) - ox, py = (ay ?? (oy + t.y)) - oy;
+  const k = sNew / sOld;
+  return { x: px * (1 - k) + t.x * k, y: py * (1 - k) + t.y * k };
+}
+
+function _izZoom(delta, absolute, ax, ay) {
   if (V.kind !== 'image') return;
-  V.iz.s = Math.max(1, Math.min(8, absolute !== undefined ? absolute : V.iz.s + delta));
+  const old = V.iz.s;
+  const s = Math.max(1, Math.min(8, absolute !== undefined ? absolute : old + delta));
+  if (s !== old && V.media) {
+    const t = _anchorTranslate(V.media, { x: V.iz.px, y: V.iz.py }, old, s, ax, ay);
+    V.iz.px = t.x; V.iz.py = t.y;
+  }
+  V.iz.s = s;
   if (V.iz.s <= 1.001) { V.iz.px = 0; V.iz.py = 0; }
   _izApply(); vcSyncPanel();
+}
+function _izPanBy(dx, dy) {
+  if (V.kind !== 'image' || V.iz.s <= 1.001) return;
+  V.iz.px += dx; V.iz.py += dy; _izApply();
 }
 function _izFit() {
   if (V.kind !== 'image') return;
@@ -287,31 +309,30 @@ vcRegisterAutoplayNext(() => { if (V.open) _nav(1); });
 
 /* ── 影片 Ctrl+滾輪縮放（游標焦點 1–4×，zoomWrapper transform）───────── */
 
-/** 影片縮放（絕對倍率，捏合手勢用；置中縮放） */
-function _vzSet(s) {
+function _vzApply() {
   const zoom = $('uv-zoom');
-  V.vz.s = Math.max(1, Math.min(4, s));
   if (V.vz.s <= 1.005) V.vz = { s: 1, tx: 0, ty: 0 };
   zoom.style.transform = V.vz.s === 1 ? '' :
     `translate(${V.vz.tx.toFixed(1)}px,${V.vz.ty.toFixed(1)}px) scale(${V.vz.s.toFixed(3)})`;
   _zoomInd(V.vz.s);
 }
-
-function _vzWheel(e) {
-  const zoom = $('uv-zoom');
+/** 影片縮放（絕對倍率）：以螢幕座標 (ax, ay) 為錨點（滾輪游標／捏合中點），省略 = 置中 */
+function _vzSet(s, ax, ay) {
   const old = V.vz.s;
-  const s = Math.max(1, Math.min(4, old + (e.deltaY < 0 ? 0.12 : -0.12)));
-  if (s === old) return;
-  const rect = zoom.getBoundingClientRect();
-  const cx = e.clientX - (rect.left + rect.width / 2);
-  const cy = e.clientY - (rect.top + rect.height / 2);
-  V.vz.tx = cx * (1 - s / old) + V.vz.tx * (s / old);
-  V.vz.ty = cy * (1 - s / old) + V.vz.ty * (s / old);
+  s = Math.max(1, Math.min(4, s));
+  if (s !== old) {
+    const t = _anchorTranslate($('uv-zoom'), { x: V.vz.tx, y: V.vz.ty }, old, s, ax, ay);
+    V.vz.tx = t.x; V.vz.ty = t.y;
+  }
   V.vz.s = s;
-  if (s <= 1.005) V.vz = { s: 1, tx: 0, ty: 0 };
-  zoom.style.transform = V.vz.s === 1 ? '' :
-    `translate(${V.vz.tx.toFixed(1)}px,${V.vz.ty.toFixed(1)}px) scale(${V.vz.s.toFixed(3)})`;
-  _zoomInd(V.vz.s);
+  _vzApply();
+}
+function _vzPanBy(dx, dy) {
+  if (V.vz.s <= 1.005) return;
+  V.vz.tx += dx; V.vz.ty += dy; _vzApply();
+}
+function _vzWheel(e) {
+  _vzSet(V.vz.s + (e.deltaY < 0 ? 0.12 : -0.12), e.clientX, e.clientY);
 }
 
 /* ── 播放控制列 ──────────────────────────────────────────────────────── */
@@ -328,6 +349,31 @@ function _seekBy(sec) {
 function _setPlayBtn(paused) {
   $('uv-play').innerHTML = `<svg class="icon" aria-hidden="true"><use href="#i-${paused ? 'play' : 'pause'}"/></svg>`;
 }
+/* 進度條色塊時段標記（vc-ranges-changed：選色時段／AB 變更時重繪；切片時亦重繪） */
+function _renderRanges() {
+  const box = $('uv-ranges');
+  if (!box) return;
+  const v = V.media;
+  if (V.kind !== 'video' || !v || !v.duration || !isFinite(v.duration)) { box.innerHTML = ''; return; }
+  const st = vcState();
+  const d = v.duration;
+  const segs = [];
+  for (const it of (st.selectiveList || [])) {
+    if (it.abStart === null || it.targetHue === null) continue;
+    const color = it.pickedRgb ? `rgb(${it.pickedRgb[0]},${it.pickedRgb[1]},${it.pickedRgb[2]})` : `hsl(${it.targetHue},70%,50%)`;
+    const looping = st.ab.active && st.ab.a !== null && st.ab.b !== null &&
+      Math.abs(st.ab.a - it.abStart) < 0.05 && Math.abs(st.ab.b - it.abEnd) < 0.05;
+    segs.push({ a: it.abStart, b: it.abEnd, color, looping, title: `色塊時段 ${_fmt(it.abStart)}–${_fmt(it.abEnd)}` });
+  }
+  /* 播放 AB（非色塊來源）也以中性色標示 */
+  if (st.ab.a !== null && st.ab.b !== null && !segs.some(s => s.looping))
+    segs.push({ a: st.ab.a, b: st.ab.b, color: 'rgba(255,255,255,.7)', looping: st.ab.active, title: `AB ${_fmt(st.ab.a)}–${_fmt(st.ab.b)}` });
+  box.innerHTML = segs.map(s =>
+    `<div class="uv-range${s.looping ? ' looping' : ''}" title="${s.title}" style="left:${(Math.max(0, s.a) / d * 100).toFixed(2)}%;width:${(Math.max(0.3, (Math.min(d, s.b) - Math.max(0, s.a)) / d * 100)).toFixed(2)}%;background:${s.color}"></div>`
+  ).join('');
+}
+document.addEventListener('vc-ranges-changed', _renderRanges);
+
 function _updateProg() {
   const v = V.media;
   if (V.kind !== 'video' || !v) return;
@@ -478,9 +524,15 @@ export function initViewer(resolvers = {}) {
   $('uv-tags').addEventListener('click', _toggleTagsPop);
   $('uv-kbd-btn').addEventListener('click', () => { $('uv-kbd').hidden = !$('uv-kbd').hidden; });
   $('uv-kbd').addEventListener('click', () => { $('uv-kbd').hidden = true; });
-  $('uv-btn-info').addEventListener('click', () => toggleDrawer('info'));
-  $('uv-btn-ctrl').addEventListener('click', () =>
-    toggleDrawer(V.kind === 'video' ? 'playback' : 'image'));
+  /* 單一入口：開啟至上次使用的 tab（drawer 內可切 資訊/播放/濾鏡/幾何）；再按 = 關閉 */
+  $('uv-btn-ctrl').addEventListener('click', () => {
+    if (isDrawerOpen()) { closeDrawer(); return; }
+    let tab = null;
+    try { tab = localStorage.getItem('ev-vc-last-tab'); } catch (_) {}
+    if (tab === 'playback' && V.kind !== 'video') tab = 'image';
+    if (tab === 'image' && V.kind === 'video') tab = 'playback';
+    toggleDrawer(tab || (V.kind === 'video' ? 'playback' : 'image'));
+  });
   $('uv-prog').addEventListener('input', e => {
     const v = V.media;
     if (V.kind === 'video' && v?.duration) v.currentTime = (+e.target.value / 100) * v.duration;
@@ -492,7 +544,7 @@ export function initViewer(resolvers = {}) {
     if (!V.open) return;
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
-      V.kind === 'video' ? _vzWheel(e) : _izZoom(e.deltaY < 0 ? 0.15 : -0.15);
+      V.kind === 'video' ? _vzWheel(e) : _izZoom(e.deltaY < 0 ? 0.15 : -0.15, undefined, e.clientX, e.clientY);
       return;
     }
     const now = Date.now();
@@ -537,7 +589,8 @@ export function initViewer(resolvers = {}) {
     togglePlay: _togglePlay,
     toggleUi: () => { $('uviewer').classList.toggle('ui-hidden'); clearTimeout(V.uiTimer); },
     getZoom: () => (V.kind === 'video' ? V.vz.s : V.iz.s),
-    zoomTo: s => { V.kind === 'video' ? _vzSet(s) : _izZoom(0, s); },
+    zoomTo: (s, ax, ay) => { V.kind === 'video' ? _vzSet(s, ax, ay) : _izZoom(0, s, ax, ay); },
+    panBy: (dx, dy) => { V.kind === 'video' ? _vzPanBy(dx, dy) : _izPanBy(dx, dy); },
   });
 
   document.addEventListener('mousemove', e => {

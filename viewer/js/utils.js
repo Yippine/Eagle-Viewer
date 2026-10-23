@@ -25,6 +25,15 @@ export function fmtTime(s) {
   return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
 }
 
+/** AB／時段用：保留 0.1s 精度（m:ss.d），整秒時省略小數——避免 floor 後「4s 看起來像 3s」 */
+export function fmtTimeF(s) {
+  if (s == null || isNaN(s)) return '0:00';
+  const t = Math.round(s * 10) / 10;
+  const m = Math.floor(t / 60), sec = t - m * 60;
+  const whole = Math.floor(sec), dec = Math.round((sec - whole) * 10);
+  return `${m}:${String(whole).padStart(2, '0')}${dec ? '.' + dec : ''}`;
+}
+
 /** "X分Y秒" 格式化 */
 export function fmtDuration(s) {
   if (!s || s < 1) return '';

@@ -211,6 +211,22 @@ export function initShell(ctx = {}) {
   });
   $('tab-browse').addEventListener('click', _toggleDrawer);
   $('shell-backdrop').addEventListener('click', () => closeSideDrawer());
+  // 抽屜左滑關閉（M3 navigation drawer／Google Photos 標配）：dx < -60 且 |dy| < 40
+  {
+    let sx = 0, sy = 0, tracking = false;
+    const sb = $('sidebar');
+    sb.addEventListener('touchstart', e => {
+      if (!sb.classList.contains('open') || e.touches.length !== 1) return;
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true;
+    }, { passive: true });
+    sb.addEventListener('touchmove', e => {
+      if (!tracking) return;
+      const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
+      if (Math.abs(dy) > 40) { tracking = false; return; }
+      if (dx < -60) { tracking = false; closeSideDrawer(); }
+    }, { passive: true });
+    sb.addEventListener('touchend', () => { tracking = false; }, { passive: true });
+  }
 
   $('btn-inspector').addEventListener('click', () => {
     if (_isNarrow()) {                                // 平板 overlay / 手機 sheet
@@ -250,9 +266,10 @@ export function initShell(ctx = {}) {
     _moreMenu(e.currentTarget, trashHash, openNotifs));
   $('btn-notifs')?.addEventListener('click', openNotifs);
 
-  /* 側欄內點庫/資料夾（無 Ctrl 疊加）= 導覽 → 收抽屜（guard 同步丟棄） */
+  /* 側欄內點庫/資料夾/相簿/智慧集合（無 Ctrl 疊加）= 導覽 → 收抽屜（guard 同步丟棄）；
+     濾鏡集為多選 OR toggle → 留在抽屜內（URL 一致性由 router _curHref 補回機制保證） */
   $('sidebar').addEventListener('click', e => {
-    if (e.target.closest('[data-lib], [data-folder]') && !e.ctrlKey && !e.metaKey)
+    if (e.target.closest('[data-lib], [data-folder], [data-coll], [data-smart]') && !e.ctrlKey && !e.metaKey)
       closeSideDrawer({ navigating: true });
   });
 

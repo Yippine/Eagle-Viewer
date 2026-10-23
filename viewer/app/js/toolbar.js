@@ -157,6 +157,11 @@ export function togglePresetFilter(id) {
   });
 }
 
+/** 濾鏡集一鍵全選／清除（collections.js 呼叫）：ids = 全部 preset id；已全選 → 清空 */
+export function setPresetFilter(ids) {
+  _patch(f => { f.presets = [...ids]; });
+}
+
 /** presetId → 顯示名（chips 用；刪除的 preset 仍以 id 前 6 碼顯示） */
 function _presetName(id) {
   try {

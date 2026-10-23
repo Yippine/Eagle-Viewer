@@ -4,10 +4,10 @@
    （自 video-controls.js 拆分；行為不變）
 ══════════════════════════════════════════════════════════════════════*/
 
-import { fmtTime } from './utils.js';
+import { fmtTime, fmtTimeF } from './utils.js';
 import { _VCS, _getActive } from './vc-state.js';
 import { _restoreOriginalSrc } from './vc-canvas.js';
-import { vcRenderSelectiveChips, vcStopEyedropper, vcApplyFilter } from './vc-filters.js';
+import { vcRenderSelectiveChips, vcStopEyedropper, vcApplyFilter, vcIsSelectiveLooping, vcSyncColorPopover } from './vc-filters.js';
 import { vcRenderFilterPresets } from './vc-presets.js';
 import { vcApplyTransform, vcRenderTransformActions } from './vc-transform.js';
 import { vcSyncPlayback } from './vc-playback.js';
@@ -132,6 +132,7 @@ export function vcDismissToast() {
 let _currentTab = 'playback';
 
 export function vcSwitchTab(tab) {
+  try { localStorage.setItem('ev-vc-last-tab', tab); } catch (_) {}   // 控制中心單一入口：記住上次 tab
   _currentTab = tab;
   document.querySelectorAll('.vc-tab-btn').forEach(btn =>
     btn.classList.toggle('active', btn.dataset.tab === tab));
@@ -334,9 +335,15 @@ export function vcSyncPanel() {
     swatchEl.style.background = hasPick
       ? (sel.pickedRgb ? `rgb(${sel.pickedRgb[0]},${sel.pickedRgb[1]},${sel.pickedRgb[2]})` : `hsl(${sel.targetHue},70%,50%)`)
       : 'transparent';
-    swatchEl.title = hasPick ? `色相 ${sel.targetHue}°` : '未取色';
+    swatchEl.title = (hasPick ? (sel.mode === 'lum' ? `中性色（明度 ${Math.round((sel.targetLum ?? 0) * 100)}%）` : `色相 ${sel.targetHue}°`) : '未取色') + '——點開顏色圓盤';
+    swatchEl.classList.toggle('vc-sel-swatch-empty', !hasPick);
   }
   if (deltasEl) deltasEl.style.display = hasPick ? '' : 'none';
+  const isLum = hasPick && sel.mode === 'lum';
+  const hl = document.getElementById('vc-sel-hueshift-l'), rl = document.getElementById('vc-sel-range-l');
+  if (hl) hl.textContent = isLum ? '上色色調' : '色調';
+  if (rl) rl.textContent = isLum ? '明度寬度' : '選色寬度';
+  vcSyncColorPopover();
   const bindAbBtn = document.getElementById('vc-sel-bind-ab-btn');
   if (bindAbBtn) {
     const canBind = _VCS._activeSelectiveId !== null &&
@@ -347,13 +354,30 @@ export function vcSyncPanel() {
   if (unbindAbBtn) {
     unbindAbBtn.style.display = (sel !== null && sel.abStart !== null) ? '' : 'none';
   }
+  const playRangeBtn = document.getElementById('vc-sel-play-range-btn');
+  if (playRangeBtn) {
+    const has = sel !== null && sel.abStart !== null;
+    playRangeBtn.style.display = has ? '' : 'none';
+    if (has) {
+      const looping = vcIsSelectiveLooping(sel);
+      playRangeBtn.textContent = looping ? '⏹ 停止循環' : '▶ 只播此時段';
+      playRangeBtn.classList.toggle('active', looping);
+    }
+  }
+  document.dispatchEvent(new CustomEvent('vc-ranges-changed'));
   // 選色時段列（併入濾鏡 tab 後可直接輸入；取色後即顯示）
   const abRow = document.getElementById('vc-sel-ab-row');
   if (abRow) {
     abRow.style.display = hasPick ? '' : 'none';
     const sEl = document.getElementById('vc-sel-ab-start'), eEl = document.getElementById('vc-sel-ab-end');
-    if (sEl && document.activeElement !== sEl) sEl.textContent = sel && sel.abStart !== null ? fmtTime(sel.abStart) : '–';
-    if (eEl && document.activeElement !== eEl) eEl.textContent = sel && sel.abEnd   !== null ? fmtTime(sel.abEnd)   : '–';
+    // A／B 鈕提示：對照播放頁籤 A/B 或目前位置（vcSelAbNow 同一規則）
+    abRow.querySelectorAll('.vc-sel-ab-now').forEach((btn, i) => {
+      const v = i === 0 ? _VCS.ab.a : _VCS.ab.b, lbl = i === 0 ? '起點' : '終點';
+      btn.title = v !== null ? `套用播放頁籤 ${i === 0 ? 'A' : 'B'}（${fmtTimeF(v)}）為${lbl}` : `以目前播放位置設為${lbl}（播放頁籤未設 ${i === 0 ? 'A' : 'B'}）`;
+      btn.classList.toggle('vc-sel-ab-linked', v !== null);
+    });
+    if (sEl && document.activeElement !== sEl) sEl.textContent = sel && sel.abStart !== null ? fmtTimeF(sel.abStart) : '–';
+    if (eEl && document.activeElement !== eEl) eEl.textContent = sel && sel.abEnd   !== null ? fmtTimeF(sel.abEnd)   : '–';
   }
   const _fmtDelta = v => (v > 0 ? '+' : '') + v.toFixed(2);
   const _s = sel ?? { hueShift: 0, range: 30, brightness: 0, contrast: 0, saturate: 0, sepia: 0 };
@@ -380,8 +404,8 @@ export function vcSyncPanel() {
   const tog  = document.getElementById('vc-ab-toggle');
   const btnA = document.getElementById('vc-btn-a');
   const btnB = document.getElementById('vc-btn-b');
-  if (aEl)  aEl.textContent = ab.a !== null ? fmtTime(ab.a) : '–';
-  if (bEl)  bEl.textContent = ab.b !== null ? fmtTime(ab.b) : '–';
+  if (aEl)  aEl.textContent = ab.a !== null ? fmtTimeF(ab.a) : '–';
+  if (bEl)  bEl.textContent = ab.b !== null ? fmtTimeF(ab.b) : '–';
   if (tog)  { tog.textContent = ab.active ? 'AB 開啟' : 'AB 關閉'; tog.classList.toggle('vc-on', ab.active); }
   if (btnA) btnA.classList.toggle('vc-on', ab.a !== null);
   if (btnB) btnB.classList.toggle('vc-on', ab.b !== null);

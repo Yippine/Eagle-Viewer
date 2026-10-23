@@ -284,6 +284,7 @@
 }
 .vc-sel-ab-time:focus { outline: 1px solid #007aff; background: rgba(0,0,0,.35); }
 .vc-sel-ab-now { width: 26px; height: 26px; font-size: 12px; }
+.vc-sel-ab-now.vc-sel-ab-linked { border-color: #007aff; color: #4da3ff; }   /* 已對照播放頁籤 A/B */
 
 /* ── Preset Panel（vc-panel 內）────────────────────────────────────── */
 .vc-preset-group {
@@ -446,7 +447,6 @@
   .vc-content { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; }
   .vc-close-btn, .vc-icon-btn { width: 44px; height: 44px; }
   .vc-preset-edit, .vc-preset-del, .vc-preset-overwrite { width: 40px; min-height: 40px; opacity: 1; }
-  .vc-sel-chip-rm { width: 24px; height: 24px; }
   .vc-preset-empty, .vc-sel-pick-hint, .vc-sel-deltas-title { font-size: 14px; }
 
   /* ── 拖動把手 ─────────────────────────────────────────────────── */
@@ -499,6 +499,17 @@
   .vc-sel-section-label { font-size: 14px; }
   .vc-sel-add-btn       { font-size: 17px; }
   .vc-sel-chip          { width: 34px; height: 34px; }
+  .vc-sel-chip-time     { width: 16px; height: 16px; font-size: 9px; line-height: 14px; right: -4px; bottom: -4px; }
+  .vc-sel-chips-row     { gap: 12px; }
+  .vc-sel-swatch        { width: 40px; height: 40px; }
+  .vc-sel-eyedropper-row { gap: 12px; }
+  .vc-sel-color-body    { flex-direction: column; align-items: center; }
+  .vc-sel-wheel-wrap    { width: 200px; height: 200px; }
+  .vc-sel-color-inputs  { width: 100%; }
+  .vc-sel-color-inputs .vc-input { padding: 10px; font-size: 16px; }   /* iOS 防自動縮放 */
+  .vc-sel-color-inputs .vc-sel-clear-btn { align-self: stretch; min-height: 40px; }
+  .vc-sel-ab-row        { flex-wrap: wrap; }
+  .vc-sel-play-range-btn { flex-basis: 100%; margin-left: 0; min-height: 40px; }
   .vc-sel-pick-hint     { font-size: 13px; }
   .vc-sel-deltas-title  { font-size: 13px; }
 }
@@ -615,22 +626,28 @@
   transition: border-color .15s, transform .1s;
 }
 .vc-sel-chip.vc-on  { border-color: #fff; }
-.vc-sel-chip-rm {
-  position: absolute; top: -4px; right: -4px;
-  width: 14px; height: 14px; border-radius: 50%;
-  background: #333; color: #fff; font-size: 10px;
-  border: none; cursor: pointer; display: none;
-  line-height: 14px; text-align: center; padding: 0;
-}
 /* 僅限有真實 hover 能力的裝置（滑鼠）才啟用 */
 @media (hover: hover) {
   .vc-sel-chip:hover { transform: scale(1.1); }
-  .vc-sel-chip:hover .vc-sel-chip-rm { display: block; }
-}
+  .vc-sel-chip:hover }
 /* 觸控裝置：tap active chip 顯示 × */
 @media (hover: none) {
-  .vc-sel-chip.vc-on .vc-sel-chip-rm { display: block; }
+  .vc-sel-chip.vc-on }
+/* 色塊時段徽章：▶ 一鍵只播此時段 / ⟲ 循環中（常駐可見，次要動作獨立 affordance） */
+.vc-sel-chip-time {
+  position: absolute; right: -4px; bottom: -4px; pointer-events: none;   /* 純指示，不可點（手機免誤觸） */
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #1c1c1e; color: #fff; border: 1px solid rgba(255,255,255,.35);
+  font-size: 8px; line-height: 12px; text-align: center; padding: 0;
 }
+.vc-sel-chip-time.vc-on { background: #30d158; border-color: #30d158; color: #000; }
+.vc-sel-chip-looping { animation: vc-chip-pulse 1.4s ease-in-out infinite; }
+@keyframes vc-chip-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(48,209,88,.55); }
+  50%      { box-shadow: 0 0 0 5px rgba(48,209,88,0); }
+}
+.vc-sel-play-range-btn { margin-left: auto; white-space: nowrap; }
+.vc-sel-play-range-btn.active { background: #30d158; color: #000; }
 
 /* eyedropper row */
 .vc-sel-eyedropper-row {
@@ -655,10 +672,42 @@
 .vc-sel-clear-btn { font-size: 13px; padding: 2px 5px; }
 
 .vc-sel-swatch {
-  width: 24px; height: 24px; border-radius: 50%;
+  width: 28px; height: 28px; border-radius: 50%; padding: 0; cursor: pointer;
   border: 2px solid rgba(255,255,255,.3); flex-shrink: 0;
-  background: transparent; transition: background .2s;
+  background: transparent; transition: background .2s, border-color .15s, transform .1s;
 }
+.vc-sel-swatch:hover { transform: scale(1.1); }
+.vc-sel-swatch.vc-on { border-color: #007aff; box-shadow: 0 0 0 2px rgba(0,122,255,.35); }
+.vc-sel-swatch-empty { background: repeating-conic-gradient(#555 0 25%, #333 0 50%) 0 0 / 10px 10px !important; }
+.vc-sel-rm-btn:hover { color: #ff453a; }
+
+/* 顏色圓盤 popover */
+.vc-sel-color-pop {
+  margin: 0 0 10px; padding: 10px; border-radius: 10px;
+  background: rgba(30,30,34,.98); border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 8px 24px rgba(0,0,0,.45);
+}
+.vc-sel-color-pop[hidden] { display: none; }
+.vc-sel-color-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.vc-sel-color-prev { width: 22px; height: 22px; border-radius: 6px; border: 1px solid rgba(255,255,255,.25); flex-shrink: 0; }
+.vc-sel-color-mode { flex: 1; font-size: 12px; color: rgba(255,255,255,.7); }
+.vc-sel-color-body { display: flex; gap: 12px; align-items: flex-start; }
+.vc-sel-wheel-wrap { position: relative; width: 160px; height: 160px; flex-shrink: 0; touch-action: none; }
+.vc-sel-wheel-wrap canvas { width: 100%; height: 100%; display: block; cursor: crosshair; border-radius: 50%; }
+.vc-sel-wheel-dot {
+  position: absolute; width: 14px; height: 14px; border-radius: 50%; pointer-events: none;
+  border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6); transform: translate(-50%, -50%);
+}
+.vc-sel-color-inputs { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.vc-sel-color-inputs label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: rgba(255,255,255,.7); }
+.vc-sel-color-inputs .vc-input {
+  flex: 1; min-width: 0; width: 100%; padding: 6px 8px; font-size: 13px; border-radius: 6px;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15); color: #fff; font-variant-numeric: tabular-nums;
+}
+.vc-sel-rgb-row { display: flex; gap: 6px; }
+.vc-sel-rgb-row label { flex: 1; }
+.vc-sel-color-note { margin: 0; font-size: 11px; line-height: 1.4; color: rgba(255,255,255,.45); }
+.vc-sel-color-inputs .vc-sel-clear-btn { align-self: flex-start; font-size: 12px; padding: 4px 10px; }
 @keyframes vc-swatch-flash {
   0%   { box-shadow: 0 0 0 0 rgba(255,255,255,.8); transform: scale(1); }
   50%  { box-shadow: 0 0 0 6px rgba(255,255,255,0); transform: scale(1.2); }
@@ -673,3 +722,12 @@
   margin: 4px 0 6px; padding-top: 6px;
   border-top: 1px solid rgba(255,255,255,.08);
 }
+
+/* AB 設定庫：色塊時段群組 */
+.vc-preset-group-hd { font-size: 11px; color: rgba(255,255,255,.45); margin: 8px 0 4px; letter-spacing: .04em; }
+.vc-ab-chip-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.35); }
+.vc-preset-row-derived .vc-preset-name { color: rgba(255,255,255,.85); }
+
+/* 資訊 tab：文字可選取／可複製（面板整體 user-select:none 的例外；按鈕仍不可選） */
+#vc-pane-info { user-select: text; -webkit-user-select: text; cursor: auto; }
+#vc-pane-info button, #vc-pane-info .btn { user-select: none; -webkit-user-select: none; }

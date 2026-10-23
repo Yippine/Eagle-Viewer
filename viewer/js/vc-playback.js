@@ -278,6 +278,7 @@ export function vcInitMedia(el, itemId, mediaType) {
 export function vcSetAbPoint(vid, point) {
   if (!vid) return;
   const t = vid.currentTime;
+  _VCS.ab.srcSel = null;              // 手動設定 = 解除與色塊時段的派生綁定
   if (point === 'a') {
     _VCS.ab.a = t;
     if (_VCS.ab.b !== null && _VCS.ab.b <= t + 0.3) _VCS.ab.b = null;
@@ -297,6 +298,7 @@ export function vcAbSpanFocus(el) {
 }
 
 export function vcAbSpanEdit(point, el) {
+  _VCS.ab.srcSel = null;              // 手動輸入 = 解除派生綁定
   const raw = el.textContent.trim().replace(/[^\d:.]/g, '');
   const m = raw.match(/^(\d+):(\d{2}(?:\.\d+)?)$/);
   let sec = m ? +m[1] * 60 + +m[2] : parseFloat(raw);
@@ -313,7 +315,7 @@ export function vcToggleAbLoop() {
   vcSyncPanel();
 }
 export function vcClearAb() {
-  _VCS.ab = { a: null, b: null, active: false };
+  _VCS.ab = { a: null, b: null, active: false, srcSel: null };
   _setAbSeeking(false);
   vcSyncPanel();
 }

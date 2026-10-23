@@ -39,6 +39,8 @@ const _GL_FRAG = `
   uniform int   uSelCount;
   uniform float uTargetHue[8];
   uniform float uRange[8];
+  uniform float uMode[8];        // 0 = 色相選取；1 = 明度選取（黑白灰系，Resolve Luminance Qualifier 語彙）
+  uniform float uTargetLum[8];
   uniform float uDeltaH[8];
   uniform float uDeltaS[8];
   uniform float uDeltaL[8];
@@ -100,10 +102,18 @@ const _GL_FRAG = `
     for (int i = 0; i < 8; i++) {
       if (i >= uSelCount) break;
       vec3  hsl  = RGBtoHSL(rgb);
-      float dist = hueDist(hsl.x, uTargetHue[i]);
-      float mask = 1.0 - smoothstep(uRange[i] * 0.8, uRange[i], dist);
+      float mask;
+      if (uMode[i] > 0.5) {
+        // 明度模式：|L − 目標| 在寬度內，且僅低飽和（中性）像素；uRange 以 0–1 明度差量傳入
+        float dl = abs(hsl.z - uTargetLum[i]);
+        mask = (1.0 - smoothstep(uRange[i] * 0.8, uRange[i], dl)) * (1.0 - smoothstep(0.15, 0.30, hsl.y));
+      } else {
+        float dist = hueDist(hsl.x, uTargetHue[i]);
+        mask = 1.0 - smoothstep(uRange[i] * 0.8, uRange[i], dist);
+      }
       if (mask > 0.001) {
-        vec3 adj = vec3(fract(hsl.x + uDeltaH[i]),
+        // 明度模式下 hue 無定義 → 「色調」滑桿直接指定上色色相（飽和 > 0 時才可見）
+        vec3 adj = vec3(uMode[i] > 0.5 ? uDeltaH[i] : fract(hsl.x + uDeltaH[i]),
                        clamp(hsl.y + uDeltaS[i], 0.0, 1.0),
                        clamp(hsl.z + uDeltaL[i], 0.0, 1.0));
         vec3 newRgb = HSLtoRGB(adj);
@@ -166,6 +176,8 @@ export function _glInit(img) {
     uSelCount: gl.getUniformLocation(p, 'uSelCount'),
     uTargetHue:gl.getUniformLocation(p, 'uTargetHue'),
     uRange:    gl.getUniformLocation(p, 'uRange'),
+    uMode:     gl.getUniformLocation(p, 'uMode'),
+    uTargetLum:gl.getUniformLocation(p, 'uTargetLum'),
     uDeltaH:   gl.getUniformLocation(p, 'uDeltaH'),
     uDeltaS:   gl.getUniformLocation(p, 'uDeltaS'),
     uDeltaL:   gl.getUniformLocation(p, 'uDeltaL'),
@@ -235,12 +247,16 @@ export function _startVideoRafLoop() {
     }
     if (!_getAbSeeking()) {
       const _active = _getTimedSelective();
-      if (_active.length && _VCS._vid.videoWidth && _VCS._vid.videoHeight &&
-        _VCS._vid.readyState >= 2 && _glInit(_VCS._vid)) {
-        _glUploadVideoFrame(_VCS._vid);
+      const vid = _VCS._vid;
+      if (_active.length && vid.videoWidth && vid.videoHeight &&
+        vid.readyState >= 2 && _glInit(vid)) {
+        _glUploadVideoFrame(vid);
         _glRender(_active);
-        _glEnsureAttached(_VCS._vid);
+        _glEnsureAttached(vid);
         _glShowCanvas(true);
+      } else if (_active.length && _glReadyFrame && vid.seeking && vid.readyState < 2) {
+        /* seek 中（方向鍵連按／手機橫拖）readyState 會短暫降到 HAVE_METADATA：
+           這是暫態而非「無濾鏡」→ 保留上一幀 overlay，避免選色濾鏡閃爍消失（原畫面露出） */
       } else {
         _glShowCanvas(false);
       }
@@ -272,7 +288,10 @@ export function _glRender(selectiveList) {
   const pad = (arr, len) => arr.concat(new Array(len - arr.length).fill(0));
   const sl = (selectiveList || []).slice(0, n);
   gl.uniform1fv(locs.uTargetHue, new Float32Array(pad(sl.map(s => ((s.targetHue||0)/360)), 8)));
-  gl.uniform1fv(locs.uRange,     new Float32Array(pad(sl.map(s => ((s.range||30)/360)), 8)));
+  // 色相模式：range 為角度→/360；明度模式：range 5–60 映射為明度差 0.03–0.33（/180）
+  gl.uniform1fv(locs.uRange,     new Float32Array(pad(sl.map(s => s.mode === 'lum' ? (s.range||30)/180 : (s.range||30)/360), 8)));
+  gl.uniform1fv(locs.uMode,      new Float32Array(pad(sl.map(s => s.mode === 'lum' ? 1 : 0), 8)));
+  gl.uniform1fv(locs.uTargetLum, new Float32Array(pad(sl.map(s => s.targetLum ?? 0.5), 8)));
   gl.uniform1fv(locs.uDeltaH,    new Float32Array(pad(sl.map(s => (s.hueShift||0)/360), 8)));
   // slider 值域 [-1,1]，直接傳入；shader 以 hsl.y + uDeltaS / hsl.z + uDeltaL 做加法 delta
   gl.uniform1fv(locs.uDeltaS,    new Float32Array(pad(sl.map(s => (s.saturate||0)), 8)));
@@ -379,6 +398,7 @@ export function vcSyncGlCanvas(img) {
 /* ── 跨模組存取器（module-level let 無法跨模組 reassign，收攏於此）── */
 export function _glResetTexSrc()    { _glTexSrc = null; }
 export function _glSetReadyFrame(v) { _glReadyFrame = v; }
+export function _glHasReadyFrame()  { return _glReadyFrame; }
 /** 清除 GL 紋理舊幀（上傳 1×1 透明像素） */
 export function _glClearTexture() {
   if (_gl && _glTexture) {

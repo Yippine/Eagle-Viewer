@@ -72,6 +72,7 @@ export function libHash(libId, folderId = null) {
 /* ── 導覽 ──────────────────────────────────────────────────────────── */
 
 let _render = null;   // 唯一 render callback（app.js 註冊）
+let _curHref = location.href;   // 最新有效 URL（ephemeral guard 被 replace 取代時的補回基準）
 
 function _fire() { if (_render) _render(parseRoute()); }
 
@@ -80,6 +81,7 @@ export function navigate(hash, { replace = false } = {}) {
   if (!hash.startsWith('#')) hash = '#' + hash;
   if (replace) {
     history.replaceState(history.state, '', hash);
+    _curHref = location.href;
     _fire();                       // replaceState 不觸發 popstate → 手動 render
   } else if (location.hash === hash) {
     _fire();                       // 同 hash 重導：無事件 → 手動 render
@@ -96,7 +98,14 @@ const _ephemerals = [];   // stack of close callbacks
 export function pushEphemeral(onClose) {
   history.pushState({ ...(history.state || {}), ephemeral: true }, '', location.href);
   _ephemerals.push(typeof onClose === 'function' ? onClose : null);
+  _curHref = location.href;
 }
+
+/* 浮層開啟期間若發生 replace 導覽（例：手機抽屜內點濾鏡集 → ?presets= replaceState），
+   被取代的是 guard 那層 entry；之後 history.back() 關浮層會退回「舊 URL」但 UI 仍是新視圖
+   → 下次任何導覽（如點開 viewer）都以舊 URL 為基底 re-render，篩選鏈無聲消失
+   （實測：手機濾鏡集開影片後上下切換走資源庫順序）。
+   對策：追蹤最新 href（_curHref，宣告於 navigate 上方）；ephemeral pop 後若 URL 退位，以 replaceState 補回。 */
 
 /** UI 主動關閉 ephemeral 浮層（✕/背板）：吃掉自己那層 history */
 export function popEphemeral() {
@@ -105,7 +114,7 @@ export function popEphemeral() {
 
 /** 即將導覽他處時丟棄 guard（不 history.back()，避免與 hash 導覽競態；
  *  代價 = 殘留一層同 URL entry，back 多按一次無害） */
-export function discardEphemerals() { _ephemerals.length = 0; }
+export function discardEphemerals() { _ephemerals.length = 0; _curHref = location.href; }
 
 /* ── 啟動：唯一 popstate handler ───────────────────────────────────── */
 
@@ -115,8 +124,11 @@ export function startRouter(render) {
     if (_ephemerals.length) {
       const close = _ephemerals.pop();
       if (close) close();
-      return;                      // ephemeral pop：router 忽略此次 re-render
+      if (location.href !== _curHref)          // guard 層曾被 replace 導覽取代 → 補回最新 URL
+        history.replaceState(history.state, '', _curHref);
+      return;                      // ephemeral pop：router 忽略此次 re-render（UI 已是最新視圖）
     }
+    _curHref = location.href;
     _fire();
   });
   _fire();                         // 初始 render

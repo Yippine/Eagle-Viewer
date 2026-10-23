@@ -6,7 +6,7 @@
 
 import { _VCS } from './vc-state.js';
 import { _glInit, _glUploadTexture, _glUploadVideoFrame, _glRender,
-         _glEnsureAttached, _glShowCanvas,
+         _glEnsureAttached, _glShowCanvas, _glHasReadyFrame,
          _hasActiveSel, _getTimedSelective } from './vc-webgl.js';
 
 /* ══════════════════════════════════════════════════════════════════
@@ -162,7 +162,11 @@ async function _runCanvasPipeline() {
   if (_VCS._mediaType === 'video') {
     const vid = img;
     if (!vid.videoWidth || !vid.videoHeight) { _glShowCanvas(false); return; }
-    if (vid.readyState < 2) { _glShowCanvas(false); return; }  // 尚未解碼第一幀，避免顯示舊紋理
+    if (vid.readyState < 2) {                                   // 尚未解碼第一幀，避免顯示舊紋理
+      // 例外：seek 暫態（連續 seek 時 seeked 後又立即 seeking）→ 保留上一幀 overlay，不閃爍
+      if (!(vid.seeking && _glHasReadyFrame())) _glShowCanvas(false);
+      return;
+    }
     const _tActive = _getTimedSelective();
     if (!_tActive.length) { _glShowCanvas(false); return; }
     if (_glInit(vid)) {

@@ -264,10 +264,8 @@ try {
     <button class="uv-btn" id="uv-fs" title="全螢幕 (F)">
       <svg class="icon" aria-hidden="true"><use href="#i-fullscreen"/></svg>
     </button>
-    <button class="uv-btn uv-pill" id="uv-btn-info" title="資訊">
-      <svg class="icon icon-sm" aria-hidden="true"><use href="#i-info"/></svg><span>資訊</span>
-    </button>
-    <button class="uv-btn uv-pill" id="uv-btn-ctrl" title="控制 (C)">
+    <!-- 資訊／控制同一個 drawer（資訊為其中一個 tab）→ 單一入口，開啟至上次使用的 tab（手機頂列省空間） -->
+    <button class="uv-btn uv-pill" id="uv-btn-ctrl" title="控制中心：資訊／播放／濾鏡／幾何 (C)">
       <svg class="icon icon-sm" aria-hidden="true"><use href="#i-sliders"/></svg><span>控制</span>
     </button>
   </header>
@@ -279,7 +277,10 @@ try {
         <svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>
       </button>
       <span id="uv-time">0:00 / –:––</span>
-      <input type="range" id="uv-prog" min="0" max="100" step="0.1" value="0" aria-label="播放進度">
+      <div class="uv-prog-wrap">
+        <div id="uv-ranges" class="uv-ranges" aria-hidden="true"></div>
+        <input type="range" id="uv-prog" min="0" max="100" step="0.1" value="0" aria-label="播放進度">
+      </div>
       <button class="uv-btn" id="uv-mute" title="靜音 (M)">
         <svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>
       </button>
@@ -377,18 +378,45 @@ try {
           <button class="vc-icon-btn vc-sel-add-btn" onclick="vcAddSelectiveColor()" title="新增色彩範圍，點圖取色">＋</button>
         </div>
         <div id="vc-sel-chips" class="vc-sel-chips-row"></div>
+        <!-- 色塊工具列：顏色（圓盤）／取色／複製／移除（手機單列大目標；× 與 ▶ 不再放在色塊上） -->
         <div class="vc-sel-eyedropper-row" id="vc-sel-eyedropper-row" style="display:none">
           <span class="vc-sel-pick-hint" id="vc-sel-pick-hint" style="display:none">👆 點圖取色中…</span>
-          <span id="vc-sel-swatch" class="vc-sel-swatch"></span>
+          <button id="vc-sel-swatch" class="vc-sel-swatch" onclick="vcToggleColorPopover()" title="顏色：開啟顏色圓盤（HEX／RGB 輸入、清除取色）" aria-label="顏色"></button>
           <button id="vc-eyedropper-btn" class="vc-icon-btn vc-sel-repick-btn"
-                  onclick="vcStartEyedropper()" title="重新取色">💧</button>
-          <button class="vc-icon-btn vc-sel-clear-btn" onclick="vcClearSelectiveColor()"
-                  title="重設此色彩範圍">✕</button>
+                  onclick="vcStartEyedropper()" title="取色：點畫面取色（黑白灰自動切換明度選取）">💧</button>
+          <button class="vc-icon-btn vc-sel-dup-btn" onclick="vcDuplicateSelective()"
+                  title="複製此色塊到清單末端（Ctrl+D／手機長按色塊）；有時段者自動接在最後一個時段之後">⧉</button>
+          <button class="vc-icon-btn vc-sel-rm-btn" onclick="vcRemoveActiveSelective()"
+                  title="移除此色塊">🗑</button>
+        </div>
+        <div class="vc-sel-color-pop" id="vc-sel-color-pop" hidden>
+          <div class="vc-sel-color-top">
+            <span class="vc-sel-color-prev" id="vc-sel-color-prev"></span>
+            <span class="vc-sel-color-mode" id="vc-sel-color-mode">尚未取色</span>
+            <button class="vc-icon-btn" onclick="vcToggleColorPopover(false)" title="關閉">✕</button>
+          </div>
+          <div class="vc-sel-color-body">
+            <div class="vc-sel-wheel-wrap">
+              <canvas id="vc-sel-wheel" width="160" height="160" aria-label="色環：點或拖曳選色相"></canvas>
+              <span id="vc-sel-wheel-dot" class="vc-sel-wheel-dot"></span>
+            </div>
+            <div class="vc-sel-color-inputs">
+              <label>HEX <input id="vc-sel-hex" class="vc-input" inputmode="text" maxlength="7" placeholder="#RRGGBB"
+                     onchange="vcSetSelectiveHex(this.value)" onkeydown="if(event.key==='Enter'){this.blur()}"></label>
+              <div class="vc-sel-rgb-row">
+                <label>R <input id="vc-sel-r" class="vc-input" type="number" min="0" max="255" inputmode="numeric" onchange="_vcSelRgbInput()"></label>
+                <label>G <input id="vc-sel-g" class="vc-input" type="number" min="0" max="255" inputmode="numeric" onchange="_vcSelRgbInput()"></label>
+                <label>B <input id="vc-sel-b" class="vc-input" type="number" min="0" max="255" inputmode="numeric" onchange="_vcSelRgbInput()"></label>
+              </div>
+              <p class="vc-sel-color-note">灰階（飽和度 &lt;20%）自動改為「明度選取」；選色無透明度概念（遮罩強度由「選色寬度」控制）。</p>
+              <button class="vc-toggle-btn vc-sel-clear-btn" onclick="vcClearSelectiveColor();vcToggleColorPopover(false)">清除取色</button>
+            </div>
+          </div>
         </div>
         <div id="vc-sel-deltas" style="display:none">
           <div class="vc-sel-deltas-title">調整選取色彩</div>
-          <div class="vc-slider-row"><span class="vc-label">色調</span><input type="range" id="vc-sel-hueshift" min="-180" max="180" step="1" value="0"oninput="vcSetSelectiveHue('hueShift',+this.value)"><span class="vc-val" id="vc-sel-hueshift-v">0°</span></div>
-          <div class="vc-slider-row"><span class="vc-label">選色寬度</span><input type="range" id="vc-sel-range" min="5" max="60" step="5" value="30"oninput="vcSetSelectiveHue('range',+this.value)"><span class="vc-val" id="vc-sel-range-v">±30°</span></div>
+          <div class="vc-slider-row"><span class="vc-label" id="vc-sel-hueshift-l">色調</span><input type="range" id="vc-sel-hueshift" min="-180" max="180" step="1" value="0"oninput="vcSetSelectiveHue('hueShift',+this.value)"><span class="vc-val" id="vc-sel-hueshift-v">0°</span></div>
+          <div class="vc-slider-row"><span class="vc-label" id="vc-sel-range-l">選色寬度</span><input type="range" id="vc-sel-range" min="5" max="60" step="5" value="30"oninput="vcSetSelectiveHue('range',+this.value)"><span class="vc-val" id="vc-sel-range-v">±30°</span></div>
           <div class="vc-slider-row"><span class="vc-label">亮度</span><input type="range" id="vc-sel-brightness" min="-1" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('brightness',+this.value)"><span class="vc-val" id="vc-sel-brightness-v">0.00</span></div>
           <div class="vc-slider-row"><span class="vc-label">對比</span><input type="range" id="vc-sel-contrast" min="-1" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('contrast',+this.value)"><span class="vc-val" id="vc-sel-contrast-v">0.00</span></div>
           <div class="vc-slider-row"><span class="vc-label">飽和</span><input type="range" id="vc-sel-saturate" min="-1" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('saturate',+this.value)"><span class="vc-val" id="vc-sel-saturate-v">0.00</span></div>
@@ -410,6 +438,8 @@ try {
                   title="快捷：套用播放頁籤目前的 A/B 時段" style="display:none">⟲</button>
           <button class="vc-icon-btn" id="vc-sel-unbind-ab-btn" onclick="vcUnbindAbFromSelective()"
                   title="移除時段（全片套用）" style="display:none">✕</button>
+          <button class="vc-toggle-btn vc-sel-play-range-btn" id="vc-sel-play-range-btn" onclick="vcPlaySelectiveRange()"
+                  title="把此色塊時段設為播放 A/B 並循環播放；再按一次停止" style="display:none">▶ 只播此時段</button>
         </div>
       </div>
           <div class="vc-section">

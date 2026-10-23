@@ -35,6 +35,8 @@
   width: auto; height: auto; display: block;
   transform-origin: center center;
 }
+/* 書籤縮圖：放大填滿舞台（同影片 contain 行為） */
+.uv-zoom img.uv-fit { width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
 
 /* ── Topbar（毛玻璃漸層，3s 自動隱藏） ── */
 .uv-topbar {
@@ -72,6 +74,17 @@
 .uv-pill { border: 1px solid #46464c; border-radius: var(--r-full); }
 a.uv-btn { text-decoration: none; }
 
+/* ── 橫拖 seek 指示（手機；拖曳中顯示 ±秒數 · 目標/總長） ── */
+.uv-seek-hint {
+  position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
+  padding: 10px 18px; border-radius: var(--r-full);
+  background: rgba(10,10,12,.72); color: #fff; font-size: 18px; font-weight: 600;
+  font-variant-numeric: tabular-nums; letter-spacing: .02em;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  pointer-events: none; opacity: 0; transition: opacity .12s; z-index: 4; white-space: nowrap;
+}
+.uv-seek-hint.show { opacity: 1; }
+
 /* ── 上/下導覽鈕 ── */
 .uv-nav {
   position: absolute; top: 50%; transform: translateY(-50%);
@@ -103,6 +116,20 @@ a.uv-btn { text-decoration: none; }
   font-size: var(--fs-xs); color: #d5d5dc;
   font-variant-numeric: tabular-nums; flex-shrink: 0; min-width: 88px;
 }
+/* 進度條 + 色塊時段標記（YouTube chapters 語彙：分段著色；色＝色塊取色；循環中範圍加亮） */
+.uv-prog-wrap { flex: 1; position: relative; display: flex; align-items: center; min-width: 0; }
+.uv-prog-wrap #uv-prog { flex: 1; width: 100%; }
+.uv-ranges {
+  position: absolute; left: 0; right: 0; top: calc(50% - 7px); height: 3px;   /* 疊在進度條正上方，不遮 thumb */
+  pointer-events: none; z-index: 3; border-radius: 2px; overflow: hidden;
+}
+.uv-ranges:empty { display: none; }
+.uv-range {
+  position: absolute; top: 0; bottom: 0; border-radius: 2px; opacity: .55;
+  transition: opacity .15s;
+}
+.uv-range.looping { opacity: 1; box-shadow: 0 0 0 1px rgba(255,255,255,.85); }
+#uv-prog { position: relative; z-index: 2; }
 #uv-prog {
   flex: 1; height: 4px; cursor: pointer;
   -webkit-appearance: none; appearance: none;
@@ -175,8 +202,9 @@ a.uv-btn { text-decoration: none; }
 }
 #vc-panel .vc-tab-btn.active,
 #vc-panel .vc-seg-btn.active { background: var(--accent); }
-#vc-panel .vc-tabs { flex-wrap: wrap; }
-#vc-panel .vc-tab-btn { flex: 1 1 30%; }
+/* 桌面：四顆 tab（資訊/播放|檢視/濾鏡/幾何）固定同一列，等寬、不換行 */
+#vc-panel .vc-tabs { flex-wrap: nowrap; gap: 4px; padding-left: 10px; padding-right: 10px; }
+#vc-panel .vc-tab-btn { flex: 1 1 0; min-width: 0; padding: 0 6px; white-space: nowrap; }
 
 /* ── ⓘ 資訊 pane（新 UI 專屬） ── */
 .vc-info-name {
@@ -199,6 +227,15 @@ a.uv-btn { text-decoration: none; }
 }
 .vc-info-ro { margin-top: 10px; font-size: 12px; color: var(--warn); }
 
+/* 桌面控制中心字級放大一級（與 tokens 桌面字階一致；video-controls.css 為新舊 UI 共用，於此覆寫） */
+@media (min-width: 768px) {
+  #vc-panel { font-size: 16px; }
+  #vc-panel .vc-tab-btn, #vc-panel .vc-label, #vc-panel .vc-val, #vc-panel .vc-seg-btn,
+  #vc-panel .vc-preset-name, #vc-panel .vc-sel-section-label, #vc-panel .vc-section-title,
+  #vc-panel .vc-sel-pick-hint, #vc-panel .vc-sel-deltas-title, #vc-panel .vc-sel-clear-btn,
+  #vc-panel .vc-preset-empty { font-size: 14px; }
+}
+
 /* ═══ 響應式 ═══════════════════════════════════════════════════════ */
 
 @media (max-width: 767px) {
@@ -206,4 +243,37 @@ a.uv-btn { text-decoration: none; }
   #uv-title { font-size: var(--fs-sm); }
   .uv-topbar .uv-pill span { display: none; }  /* pill 收斂為 icon */
   #vc-panel { width: 100%; }
+  /* 控制中心 tabs：單列橫捲（覆寫上方桌面的 wrap/30% 規則；Material scrollable tabs） */
+  #vc-panel .vc-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
+  #vc-panel .vc-tabs::-webkit-scrollbar { display: none; }
+  #vc-panel .vc-tab-btn { flex: 0 0 auto; min-width: 72px; height: 44px; scroll-snap-align: start; }
+
+  /* Topbar 響應式：最多 9 顆按鈕在窄螢幕會溢出右邊界（資訊／控制點不到）。
+     1) 藏桌面專屬鈕（快捷鍵、Eagle 開啟）與次要資訊（網域、計數）
+     2) 縮 gap／按鈕寬，按鈕 flex-shrink:0，只讓標題收縮
+     3) 兜底：safe-area 內縮 + 允許橫向捲動，任何狀況下右端都可達 */
+  .uv-topbar {
+    gap: 4px;
+    padding: var(--sp-2) max(8px, env(safe-area-inset-right, 8px))
+             var(--sp-2) max(8px, env(safe-area-inset-left, 8px));
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .uv-topbar::-webkit-scrollbar { display: none; }
+  .uv-topbar .uv-btn { flex-shrink: 0; min-width: 32px; height: 32px; padding: 0 4px; }
+  .uv-topbar .uv-pill { padding: 0 6px; }
+  .uv-titlebox { flex: 1 1 0; min-width: 0; }
+  #uv-kbd-btn, #uv-eagle, #uv-domain { display: none !important; }
+  .uv-counter { font-size: var(--fs-xs); }
+
+  /* 底部控制列：觸控目標 44px、進度條命中區加高（拇指 20px）、caption 單行、safe-area */
+  .uv-bottom { padding-bottom: calc(var(--sp-3) + env(safe-area-inset-bottom, 0px)); }
+  .uv-bottom .uv-btn { min-width: 44px; height: 44px; }
+  .uv-caption { font-size: 13px; display: -webkit-box; -webkit-line-clamp: 1; line-clamp: 1;
+                -webkit-box-orient: vertical; overflow: hidden; }
+  #uv-prog { height: 28px; background: transparent; }
+  .uv-ranges { height: 4px; top: calc(50% - 9px); }
+  #uv-prog::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: rgba(255,255,255,.22); }
+  #uv-prog::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -8px; }
+  #uv-prog::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(255,255,255,.22); }
+  #uv-prog::-moz-range-thumb { width: 20px; height: 20px; }
 }

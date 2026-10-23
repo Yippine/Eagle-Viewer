@@ -10,7 +10,7 @@ import { navigate, parseRoute } from './router.js';
 import { store } from './store.js';
 import { api } from './api.js';
 import { h } from './items.js';
-import { togglePresetFilter } from './toolbar.js';
+import { togglePresetFilter, setPresetFilter } from './toolbar.js';
 import { toast } from './notifications.js';
 import { promptDialog } from './actions.js';
 
@@ -166,7 +166,10 @@ export async function renderCollections(route) {
     if (presets.length) {
       const counts = _presetCounts();
       const active = new Set(store.state.filters?.presets || []);
-      parts.push(`<div class="coll-sub">${icon('sliders')} 濾鏡集</div>` +
+      const allOn = presets.every(p => active.has(p.id));
+      parts.push(`<div class="coll-sub">${icon('sliders')} 濾鏡集
+          <button class="coll-sub-act" data-preset-all="${allOn ? '0' : '1'}"
+            title="${allOn ? '清除全部濾鏡集篩選' : '一鍵選取全部濾鏡集（OR）'}">${allOn ? '清除' : '全選'}</button></div>` +
         presets.map(p => `<button class="side-row coll-row${active.has(p.id) ? ' selected' : ''}"
             data-preset="${h(p.id)}" title="篩選套用此濾鏡的影片（可多選 OR）">
           ${icon('swatch')}<span class="row-label">${h(p.name)}</span>
@@ -205,4 +208,6 @@ export async function renderCollections(route) {
   }));
   body.querySelectorAll('[data-preset]').forEach(el => el.addEventListener('click', () =>
     togglePresetFilter(el.dataset.preset)));
+  body.querySelector('[data-preset-all]')?.addEventListener('click', e =>
+    setPresetFilter(e.currentTarget.dataset.presetAll === '1' ? _loadPresets().map(p => p.id) : []));
 }

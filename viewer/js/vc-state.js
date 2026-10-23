@@ -10,6 +10,7 @@ import { vcRenderFilterPresets } from './vc-presets.js';
 export const _selDefault = (id = null) =>
   ({ id: id ?? Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
      targetHue: null, pickedRgb: null, range: 30, hueShift: 0,
+     mode: 'hue', targetLum: null,          // mode: 'hue' | 'lum'（黑白灰系以明度選取）
      brightness: 0, contrast: 0, saturate: 0, sepia: 0,
      abStart: null, abEnd: null });
 
@@ -24,7 +25,7 @@ export const _VCS = {
   _activeSelectiveId: null,
   tx:        { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0,
                rotate: 0, flipH: false, flipV: false },
-  ab:        { a: null, b: null, active: false },
+  ab:        { a: null, b: null, active: false, srcSel: null },   // srcSel = 派生來源色塊 id（null = 手動）
   playback:  { loopMode: 'single', speed: 1.0 },
   _vid:                null,
   _itemId:             null,

@@ -25,6 +25,8 @@ Object.assign(window, {
   _vcAbSpanEdit:  (pt, el) => VC.vcAbSpanEdit(pt, el),
   vcSaveAbPreset:   () => VC.vcSaveAbPreset(),
   vcLoadAbPreset:   id => VC.vcLoadAbPreset(id),
+  vcLoadChipRange:       id => VC.vcLoadChipRange(id),
+  vcSaveChipRangeAsPreset: id => VC.vcSaveChipRangeAsPreset(id),
   vcRenameAbPreset: id => VC.vcRenameAbPreset(id),
   vcDeleteAbPreset: id => VC.vcDeleteAbPreset(id),
 
@@ -56,6 +58,14 @@ Object.assign(window, {
   _vcSelAbEdit:          (pt, el) => VC.vcSelAbEdit(pt, el),
   _vcSelAbNow:           pt => VC.vcSelAbNow(pt),
   vcUnbindAbFromSelective: VC.vcUnbindAbFromSelective,
+  vcPlaySelectiveRange:  id => VC.vcPlaySelectiveRange(id),
+  vcDuplicateSelective:  id => VC.vcDuplicateSelective(id),
+  vcToggleColorPopover:  f => VC.vcToggleColorPopover(f),
+  vcRemoveActiveSelective: () => VC.vcRemoveActiveSelective(),
+  vcSetSelectiveHex:     v => VC.vcSetSelectiveHex(v),
+  _vcSelRgbInput:        () => { const g = id => parseInt(document.getElementById(id).value, 10);
+                                 const r = g('vc-sel-r'), gg = g('vc-sel-g'), b = g('vc-sel-b');
+                                 if ([r, gg, b].every(v => !isNaN(v))) VC.vcSetSelectiveRgb(Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, gg)), Math.max(0, Math.min(255, b))); },
 
   /* 幾何 / 裁切 / 快照 */
   _vcTx:       (k, v) => VC.vcSetTx(k, v),

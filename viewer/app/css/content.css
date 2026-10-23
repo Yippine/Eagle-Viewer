@@ -139,6 +139,7 @@
 
 /* ── chips 列 ──────────────────────────────────────────────────────── */
 
+#filter-chips { display: flex; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; }
 #filter-chips .chip { border: 1px solid var(--border); background: var(--tag-bg); }
 #filter-chips .chip.active,
 #filter-chips .chip.chip-filter {
@@ -220,6 +221,13 @@
   overflow: hidden;
 }
 
+.palette-close {
+  display: none;            /* 手機顯示（content.css 767 斷點）；桌面以 Esc／點 backdrop 關閉 */
+  align-items: center; justify-content: center;
+  width: 44px; height: 44px; flex-shrink: 0;
+  border: 0; background: transparent; color: var(--text2); cursor: pointer; border-radius: var(--r-sm);
+}
+.palette-close:active { background: var(--bg3); }
 .palette-input-row {
   display: flex; align-items: center; flex-wrap: wrap;
   gap: var(--sp-2);
@@ -293,9 +301,22 @@
 .insp-note { color: var(--text3); font-size: var(--fs-xs); }
 .insp-tags { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin: var(--sp-2) 0; }
 
-/* 手機：chips 列橫向捲動（不換行） */
+/* 手機：chips 列橫向捲動（不換行；業界慣例 Google Photos／Pinterest 單列 chip rail） */
 @media (max-width: 767px) {
-  #filter-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .palette-modes { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; padding-bottom: 6px; overscroll-behavior-x: contain; }
+  .palette-modes::-webkit-scrollbar { display: none; }
+  .palette-modes .mode-chip { flex: 0 0 auto; min-height: 36px; }
+  .palette-foot { display: none; }
+  .palette-input-row { padding-left: max(8px, env(safe-area-inset-left)); }
+  .palette-sugs { overscroll-behavior: contain; }
+  .palette-close { display: inline-flex; }
+  #filter-chips {
+    flex: 1 1 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+    -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity; padding-bottom: 2px;
+  }
+  #filter-chips::-webkit-scrollbar { display: none; }
+  #filter-chips .chip { flex-shrink: 0; scroll-snap-align: start; white-space: nowrap; }
   .palette-backdrop { padding-top: 0; }
   .palette { width: 100vw; max-height: 100dvh; height: 100dvh; border-radius: 0; }
 }

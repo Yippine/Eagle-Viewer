@@ -7,6 +7,10 @@
 *, *::before, *::after { box-sizing: border-box; }
 
 html, body { height: 100%; }
+/* 手機觸控體驗：移除預設藍色點擊高亮；禁止下拉整頁橡皮筋／瀏覽器重新整理（各捲動容器自行 contain） */
+html, body { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+.ibar-short { display: none; }
+@media (max-width: 767px) { .ibar-short { display: inline; } }
 
 body {
   margin: 0;
@@ -279,12 +283,14 @@ body {
   .shell { grid-template-areas: "content . ."; }
   .content { grid-column: 1; }
 
-  /* 左抽屜：85vw overlay */
-  .sidebar {
+  /* 左抽屜：85vw overlay（.sidebar.open 一併指定，蓋過 1279 斷點的 rail 寬度規則） */
+  .sidebar, .sidebar.open {
     position: fixed;
     top: 52px; bottom: 0; left: 0;
-    width: 85vw;
+    width: min(85vw, 340px);
     max-width: 340px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    overscroll-behavior: contain;
     transform: translateX(-100%);
     transition: transform var(--dur) var(--ease-out);
     z-index: var(--z-drawer);
@@ -298,7 +304,7 @@ body {
     position: fixed;
     left: 0; right: 0; bottom: 0; top: auto;
     width: auto;
-    height: 55vh;
+    height: 55dvh;
     border-left: none;
     border-top: 1px solid var(--border);
     border-radius: var(--r-lg) var(--r-lg) 0 0;
@@ -307,12 +313,37 @@ body {
     z-index: var(--z-sheet);
   }
   .inspector.open { transform: translateY(0); }
-  .inspector.sheet-40 { height: 40vh; }
-  .inspector.sheet-55 { height: 55vh; }
-  .inspector.sheet-80 { height: 80vh; }
+  .inspector.sheet-40 { height: 40dvh; }
+  .inspector.sheet-55 { height: 55dvh; }
+  .inspector.sheet-80 { height: 80dvh; }
 
   .pgrid { grid-template-columns: repeat(2, 1fr); }
-  .toolbar-row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+
+  /* ── 手機工具列精簡：佔高從 ~4 列壓到 2 列（麵包屑 + chip rail）──
+     1) padding/gap 收斂、麵包屑單行捲動、ibar 壓扁
+     2) chip rail 單列橫捲（content.css），排序鈕只留 icon
+     3) 向下捲動自動收起（Material top app bar scroll 行為，.toolbar-collapsed 由 grid.js 切換） */
+  .toolbar { gap: var(--sp-1); padding: var(--sp-1) var(--sp-2); transition: max-height var(--dur) var(--ease), padding var(--dur) var(--ease), opacity var(--dur); max-height: 120px; overflow: hidden; }
+  .toolbar.toolbar-collapsed { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-bottom-width: 0; }
+  .toolbar-row { flex-wrap: nowrap; gap: var(--sp-1); min-width: 0; }
+  .toolbar-row .breadcrumb { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; white-space: nowrap; font-size: var(--fs-xs); min-width: 0; }
+  .toolbar-row .breadcrumb::-webkit-scrollbar { display: none; }
+  #toolbar-controls .btn { flex-shrink: 0; }
+  #toolbar-controls .spacer { display: none; }
+  #btn-sort span { display: none; }
+  .ibar { padding: 2px var(--sp-2); font-size: var(--fs-xs); gap: var(--sp-2);
+          flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+  .ibar::-webkit-scrollbar { display: none; }
+  .ibar > * { flex-shrink: 0; }
+  #btn-trash-empty span { display: none; }   /* 手機 icon-only */
+  .ibar .ibar-long { display: none; }         /* 手機精簡：「n / total」「‹ 2/5 ›」 */
+  .ibar .seed-btn { min-width: 32px; min-height: 32px; }
+
+  /* ── 觸控目標 ≥ 44px（iOS HIG / Material）──────────────────────── */
+  .topbar button, .tabbar button, .tabbar a { min-width: 44px; min-height: 44px; }
+  .sidebar .side-row, .sidebar .tree-item { min-height: 44px; }
+  #toolbar-controls .btn { min-width: 40px; height: 40px; }
+  #filter-chips .chip { min-height: 36px; }
   .topbar .searchbox .kbd-hint { display: none; }
 
   /* 手機頂列精簡（spec §6.3 ①：☰ 搜尋 🔔 + Inspector）；

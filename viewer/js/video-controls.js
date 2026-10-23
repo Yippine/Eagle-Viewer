@@ -18,6 +18,9 @@
 ══════════════════════════════════════════════════════════════════════*/
 
 export { vcGetVid } from './vc-state.js';
+import { _VCS as __VCS } from './vc-state.js';
+/** 唯讀狀態窺視（viewer 進度條時段標記用） */
+export function vcState() { return __VCS; }
 
 export { vcSyncGlCanvas } from './vc-webgl.js';
 
@@ -26,12 +29,14 @@ export { vcKeepTempFilter, vcLinkPresetToVideo, vcDiscardTempFilter,
          vcSetSelectiveHue, vcClearSelectiveColor, vcAddSelectiveColor,
          vcSetActiveSelective, vcRemoveSelective,
          vcBindAbToSelective, vcUnbindAbFromSelective, vcSelAbEdit, vcSelAbNow, vcRenderSelectiveChips,
+         vcPlaySelectiveRange, vcIsSelectiveLooping, vcDuplicateSelective,
+         vcRemoveActiveSelective, vcSetSelectiveRgb, vcSetSelectiveHex, vcSetSelectiveHueDeg, vcGetActiveSelectiveColor, vcToggleColorPopover, vcSyncColorPopover,
          vcApplyFilter, vcSetFilter, vcResetFilters } from './vc-filters.js';
 
 export { vcSaveFilterPreset, vcApplyFilterPreset, vcToggleVideoFilterPreset,
          vcDeleteFilterPreset, vcUndoDeletePreset, vcRenameFilterPreset,
          vcOverwriteFilterPreset, vcRenderFilterPresets,
-         vcSaveAbPreset, vcLoadAbPreset, vcDeleteAbPreset,
+         vcSaveAbPreset, vcLoadAbPreset, vcDeleteAbPreset, vcLoadChipRange, vcSaveChipRangeAsPreset,
          vcRenameAbPreset, vcRenderAbPresets } from './vc-presets.js';
 
 export { vcSetAutoRotate, vcHasSnapshot,

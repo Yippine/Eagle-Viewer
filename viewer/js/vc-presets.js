@@ -3,7 +3,7 @@
    （自 video-controls.js 拆分；行為不變）
 ══════════════════════════════════════════════════════════════════════*/
 
-import { fmtTime } from './utils.js';
+import { fmtTime, fmtTimeF } from './utils.js';
 import { _VCS, _selDefault, _uid,
          _loadFilterPresets, _saveFilterPresets,
          _loadVideoFilterData, _saveVideoFilterData,
@@ -278,7 +278,7 @@ export function vcSaveAbPreset() {
   if (!_VCS._itemId) { _showToast('無法辨識影片 ID，無法儲存。'); return; }
   const { a, b } = _VCS.ab;
   if (a === null || b === null) { _showToast('請先設定 A / B 點。'); return; }
-  const name = prompt('AB 設定名稱：', `${fmtTime(a)}–${fmtTime(b)}`);
+  const name = prompt('AB 設定名稱：', `${fmtTimeF(a)}–${fmtTimeF(b)}`);
   if (!name) return;
   const presets = _loadAbPresets(_VCS._itemId);
   presets.push({ id: `abp-${Date.now()}`, name: name.trim(), abStart: a, abEnd: b });
@@ -289,7 +289,7 @@ export function vcSaveAbPreset() {
 export function vcLoadAbPreset(id) {
   const p = _loadAbPresets(_VCS._itemId).find(x => x.id === id);
   if (!p) return;
-  _VCS.ab = { a: p.abStart, b: p.abEnd, active: false };
+  _VCS.ab = { a: p.abStart, b: p.abEnd, active: false, srcSel: null };
   vcSyncPanel();
 }
 
@@ -310,18 +310,62 @@ export function vcRenameAbPreset(id) {
   vcRenderAbPresets();
 }
 
+/* ── 色塊時段（live 派生清單，不落地）────────────────────────────
+   AB 設定庫 = 已儲存（手動、無條件可存）∪ 色塊時段（自選色色塊即時抓取，隨色塊增刪自動同步）。
+   去重律：色塊時段若與某已儲存設定完全相同（±0.05s）→ 只顯示已儲存那筆並加色點標示，不重複列。 */
+const _near = (x, y) => Math.abs(x - y) < 0.05;
+function _chipRanges() {
+  return (_VCS.selectiveList || []).filter(s => s.abStart !== null && s.abEnd !== null)
+    .map((s, i) => ({ id: s.id, a: s.abStart, b: s.abEnd, idx: _VCS.selectiveList.indexOf(s) + 1,
+      color: s.pickedRgb ? `rgb(${s.pickedRgb[0]},${s.pickedRgb[1]},${s.pickedRgb[2]})` : (s.targetHue !== null ? `hsl(${s.targetHue},70%,50%)` : '#888') }))
+    .sort((x, y) => x.a - y.a);
+}
+/** 載入色塊時段為 AB（派生：srcSel 綁定色塊，色塊時段改動會跟隨） */
+export function vcLoadChipRange(selId) {
+  const s = (_VCS.selectiveList || []).find(x => x.id === selId);
+  if (!s || s.abStart === null) return;
+  _VCS.ab = { a: s.abStart, b: s.abEnd, active: false, srcSel: s.id };
+  vcSyncPanel();
+}
+/** 把色塊時段落地成一筆已儲存設定（之後獨立於色塊） */
+export function vcSaveChipRangeAsPreset(selId) {
+  if (!_VCS._itemId) return;
+  const s = (_VCS.selectiveList || []).find(x => x.id === selId);
+  if (!s || s.abStart === null) return;
+  const presets = _loadAbPresets(_VCS._itemId);
+  presets.push({ id: `abp-${Date.now()}`, name: `色塊 ${_VCS.selectiveList.indexOf(s) + 1}・${fmtTimeF(s.abStart)}–${fmtTimeF(s.abEnd)}`, abStart: s.abStart, abEnd: s.abEnd });
+  _saveAbPresets(_VCS._itemId, presets);
+  vcRenderAbPresets();
+  _showToast('<span>已存入 AB 設定庫</span>');
+}
+
 export function vcRenderAbPresets() {
   const el = document.getElementById('vc-ab-presets');
   if (!el || !_VCS._itemId) return;
   const presets = _loadAbPresets(_VCS._itemId);
-  if (!presets.length) {
-    el.innerHTML = '<div class="vc-preset-empty">尚無 AB 設定</div>'; return;
+  const chips = _chipRanges();
+  const dupOf = p => chips.find(c => _near(c.a, p.abStart) && _near(c.b, p.abEnd));
+  const derived = chips.filter(c => !presets.some(p => _near(c.a, p.abStart) && _near(c.b, p.abEnd)));
+  if (!presets.length && !derived.length) {
+    el.innerHTML = '<div class="vc-preset-empty">尚無 AB 設定（手動 A/B 後按「儲存」，或為選色色塊設定時段）</div>'; return;
   }
-  el.innerHTML = presets.map(p =>
-    `<div class="vc-preset-row">` +
-    `<button class="vc-preset-name" onclick="vcLoadAbPreset('${p.id}')">${p.name}</button>` +
-    `<button class="vc-preset-edit" onclick="vcRenameAbPreset('${p.id}')" title="重新命名">✏️</button>` +
-    `<button class="vc-preset-del"  onclick="vcDeleteAbPreset('${p.id}')"  title="刪除">🗑</button>` +
-    `</div>`
-  ).join('');
+  const dot = (color, title) => `<span class="vc-ab-chip-dot" style="background:${color}" title="${title}"></span>`;
+  let html = '';
+  if (presets.length) {
+    html += presets.map(p => { const d = dupOf(p); return (
+      `<div class="vc-preset-row">` +
+      `<button class="vc-preset-name" onclick="vcLoadAbPreset('${p.id}')">${d ? dot(d.color, `與色塊 ${d.idx} 時段相同`) : ''}${p.name}</button>` +
+      `<button class="vc-preset-edit" onclick="vcRenameAbPreset('${p.id}')" title="重新命名">✏️</button>` +
+      `<button class="vc-preset-del"  onclick="vcDeleteAbPreset('${p.id}')"  title="刪除">🗑</button>` +
+      `</div>`); }).join('');
+  }
+  if (derived.length) {
+    html += `<div class="vc-preset-group-hd">色塊時段（自選色自動抓取，隨色塊同步）</div>` +
+      derived.map(c =>
+        `<div class="vc-preset-row vc-preset-row-derived">` +
+        `<button class="vc-preset-name" onclick="vcLoadChipRange('${c.id}')" title="載入為 A/B（跟隨色塊時段變動）">${dot(c.color, `色塊 ${c.idx}`)}色塊 ${c.idx}・${fmtTimeF(c.a)}–${fmtTimeF(c.b)}</button>` +
+        `<button class="vc-preset-edit" onclick="vcSaveChipRangeAsPreset('${c.id}')" title="存為獨立 AB 設定（之後不再跟隨色塊）">💾</button>` +
+        `</div>`).join('');
+  }
+  el.innerHTML = html;
 }

@@ -33,6 +33,9 @@ export function initGrid(opts = {}) {
   onNeedMore = opts.onNeedMore || null;
   gridEl.classList.add('vgrid');
   wrap.addEventListener('scroll', _schedule, { passive: true });
+  wrap.addEventListener('scroll', _toolbarAutoHide, { passive: true });
+  // 工具列收合後可視高度改變 → 重新計算虛擬視窗
+  document.getElementById('toolbar')?.addEventListener('transitionend', () => _schedule());
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => relayout(), 150);
@@ -40,6 +43,25 @@ export function initGrid(opts = {}) {
   store.on('selection', _syncSelection);
   store.on('view-changed', () => relayout());
 }
+
+/* 手機：向下捲動收起工具列、向上捲動或回頂時展開（Material top app bar scroll 行為）。
+   只在 ≤767px 生效；桌面永遠展開。門檻 24px 防抖動。 */
+const _MQ_MOBILE = window.matchMedia('(max-width: 767px)');
+let _lastScrollY = 0;
+function _toolbarAutoHide() {
+  const tb = document.getElementById('toolbar');
+  if (!tb) return;
+  if (!_MQ_MOBILE.matches) { tb.classList.remove('toolbar-collapsed'); return; }
+  const y = wrap.scrollTop;
+  const dy = y - _lastScrollY;
+  if (y <= 8) tb.classList.remove('toolbar-collapsed');
+  else if (dy > 24) { tb.classList.add('toolbar-collapsed'); _lastScrollY = y; }
+  else if (dy < -24) { tb.classList.remove('toolbar-collapsed'); _lastScrollY = y; }
+  if (Math.abs(dy) > 24 || y <= 8) _lastScrollY = y;
+}
+_MQ_MOBILE.addEventListener?.('change', () => {
+  if (!_MQ_MOBILE.matches) document.getElementById('toolbar')?.classList.remove('toolbar-collapsed');
+});
 
 /** 重設顯示清單（篩選/排序/換庫後） */
 export function setItems(list, opts = {}) {
@@ -248,8 +270,9 @@ function _updateIbar() {
   const el = document.getElementById('ibar-count');
   if (!el) return;
   const n = items.length;
-  el.textContent = total || n
-    ? `顯示 ${n.toLocaleString()} / ${Math.max(total, n).toLocaleString()} 筆${hasMore ? '（捲動載入更多）' : ''}`
+  // .ibar-long 於手機隱藏（layout.css 767 斷點）→ 手機只剩「n / total」
+  el.innerHTML = total || n
+    ? `<span class="ibar-long">顯示 </span>${n.toLocaleString()} / ${Math.max(total, n).toLocaleString()}<span class="ibar-long"> 筆${hasMore ? '（捲動載入更多）' : ''}</span>`
     : '';
 }
 
