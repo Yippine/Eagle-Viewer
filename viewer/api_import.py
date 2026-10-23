@@ -117,6 +117,18 @@ def _create_eagle_item_from_file(
         json.dumps(meta, ensure_ascii=False, indent=2), "utf-8"
     )
 
+    # Eagle App 以 library 根 mtime.json（{item_id: ms}）做增量掃描，需同步登錄新 item
+    with _lib_locks[lib_name]:
+        mtime_path = lib_path / "mtime.json"
+        try:
+            mt = json.loads(mtime_path.read_text("utf-8")) if mtime_path.exists() else {}
+        except Exception:
+            mt = {}
+        mt[item_id] = now_ms
+        tmp = mtime_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(mt, ensure_ascii=False), "utf-8")
+        tmp.replace(mtime_path)
+
     file_rel  = f"images/{lib_name}/{item_id}.info/{name_no_ext}.{ext}"
     thumb_rel = file_rel if media_type == "image" else ""
     cache_item = {

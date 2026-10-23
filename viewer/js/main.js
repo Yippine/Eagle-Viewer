@@ -65,7 +65,7 @@ import { vcSetFilter, vcSetTx, vcFlip, vcRotateBy, vcSetRotate,
          vcSaveTransformSnapshot, vcResetTransformSnapshot,
          vcSmartCrop, vcToggleCropMode, vcCancelCrop, vcApplyCrop, vcSetLoopMode, vcSetSpeed,
          vcRegisterAutoplayNext,
-         vcDismissToast,
+         vcDismissToast, vcKeepTempFilter, vcDiscardTempFilter, vcLinkPresetToVideo,
          vcImageZoom, vcImageZoomSet, vcImageFit, vcImageActualSize, vcSetModalBg, vcImageNav,
          vcRegisterImageNav,
          vcStartEyedropper, vcStopEyedropper, vcSetSelectiveHue, vcClearSelectiveColor,
@@ -1072,6 +1072,9 @@ window.vcSwitchTab    = vcSwitchTab;
 window.vcResetFilters   = vcResetFilters;
 window.vcResetTransform = vcResetTransform;
 window.vcDismissToast   = vcDismissToast;
+window.vcKeepTempFilter    = vcKeepTempFilter;
+window.vcDiscardTempFilter = vcDiscardTempFilter;
+window.vcLinkPresetToVideo = vcLinkPresetToVideo;
 
 // Type filter dropdown（P3 w018-dev）
 window.toggleTypeMenu   = toggleTypeMenu;

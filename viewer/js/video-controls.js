@@ -34,6 +34,8 @@ const _VCS = {
   _autoRotate:         0,
   _imgOriginalSrc:     null,   // 圖片原始 src（Canvas 處理前保存）
   _canvasObjectURL:    null,   // Canvas 輸出的 blob URL
+  _tempOriginItemId:   null,   // 產生臨時濾鏡狀態的來源 itemId
+  _tempDismissed:      false,  // 使用者已對此臨時濾鏡選擇「沿用不再問」
 };
 
 /* ── WebGL1 Selective Color Backend ──────────────────────────── */
@@ -45,6 +47,7 @@ let _glTexSrc   = null;
 let _glLocs     = null;
 let _glPosBuf   = null;
 let _videoRafId = null;
+let _glReadyFrame = false;   // 當前媒體已成功上傳一幀真實內容（首幀閘門）
 const _GL_QUAD  = new Float32Array([0,0, 0,1, 1,0, 1,1]);
 
 const _GL_VERT = `
@@ -136,7 +139,7 @@ const _GL_FRAG = `
         rgb = mix(rgb, newRgb, mask);
       }
     }
-    gl_FragColor = vec4(rgb, texel.a);
+    gl_FragColor = vec4(rgb, 1.0);
   }
 `;
 
@@ -155,8 +158,10 @@ function _glInit(img) {
   if (img && img.parentElement) {
     img.parentElement.appendChild(_glCanvas);
   }
+  // alpha:true：未繪製區域保持透明，露出底下的 video/img，避免不透明黑遮蔽
+  // （shader 輸出 alpha=1.0，premultipliedAlpha:false 下已繪製區域仍為不透明）
   _gl = _glCanvas.getContext('webgl', {
-    alpha: false, premultipliedAlpha: false,
+    alpha: true, premultipliedAlpha: false,
     depth: false, stencil: false, antialias: false
   });
   if (!_gl) return false;
@@ -199,7 +204,7 @@ function _glInit(img) {
 
 function _glUploadTexture(img) {
   const src = _VCS._imgOriginalSrc || img.src;
-  if (_glTexSrc === src) return;
+  if (_glTexSrc === src) { _glReadyFrame = true; return; }
   const gl = _gl;
   _glCanvas.width  = img.naturalWidth  || img.width;
   _glCanvas.height = img.naturalHeight || img.height;
@@ -207,6 +212,7 @@ function _glUploadTexture(img) {
   gl.bindTexture(gl.TEXTURE_2D, _glTexture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
   _glTexSrc = src;
+  _glReadyFrame = true;   // 圖片已完整載入，上傳即為真實內容
 }
 
 function _glUploadVideoFrame(vid) {
@@ -251,9 +257,10 @@ function _startVideoRafLoop() {
     if (!_abSeeking) {
       const _active = _getTimedSelective();
       if (_active.length && _VCS._vid.videoWidth && _VCS._vid.videoHeight &&
-        _VCS._vid.readyState >= 2) {
+        _VCS._vid.readyState >= 2 && _glInit(_VCS._vid)) {
         _glUploadVideoFrame(_VCS._vid);
         _glRender(_active);
+        _glEnsureAttached(_VCS._vid);
         _glShowCanvas(true);
       } else {
         _glShowCanvas(false);
@@ -271,6 +278,9 @@ function _stopVideoRafLoop() {
 function _glRender(selectiveList) {
   const gl = _gl, locs = _glLocs;
   const n = Math.min((selectiveList || []).length, 8);
+  // 每次繪製前清為透明：resize 或上傳失敗時不殘留不透明黑
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
   gl.useProgram(_glProgram);
   gl.bindBuffer(gl.ARRAY_BUFFER, _glPosBuf);
   const aPos = gl.getAttribLocation(_glProgram, 'aPosition');
@@ -301,10 +311,43 @@ function _glDestroy() {
   _gl.deleteBuffer(_glPosBuf);
   if (_glCanvas && _glCanvas.parentElement) _glCanvas.parentElement.removeChild(_glCanvas);
   _gl = _glCanvas = _glProgram = _glTexture = _glPosBuf = _glLocs = _glTexSrc = null;
+  _glReadyFrame = false;
 }
 
 function _glShowCanvas(show) {
+  // 首幀閘門：當前媒體的真實一幀尚未上傳前，overlay 一律不可見
+  if (show && !_glReadyFrame) show = false;
   if (_glCanvas) _glCanvas.style.display = show ? '' : 'none';
+}
+
+/* 確保單例 GL canvas 掛在當前媒體的 zoomWrapper 下並同步尺寸位置
+   （zoomWrapper 每次切換媒體會被 innerHTML='' 銷毀，canvas 需重掛） */
+function _glEnsureAttached(mediaEl) {
+  if (!_glCanvas || !mediaEl || !mediaEl.parentElement) return;
+  if (_glCanvas.parentElement !== mediaEl.parentElement) {
+    mediaEl.parentElement.appendChild(_glCanvas);
+  }
+  vcSyncGlCanvas(mediaEl);
+}
+
+/* 首幀確認：rVFC 優先；無 rVFC 時以 canplay / 首個 timeupdate 近似 */
+function _glAwaitFirstFrame(vid) {
+  const mark = () => {
+    if (vid !== _VCS._vid) return;   // 已切換至其他媒體，忽略過期回呼
+    _glReadyFrame = true;
+    if (_hasActiveSel()) _scheduleCanvasUpdate();
+  };
+  if (typeof vid.requestVideoFrameCallback === 'function') {
+    vid.requestVideoFrameCallback(() => mark());
+  } else {
+    const onReady = () => {
+      vid.removeEventListener('canplay',    onReady);
+      vid.removeEventListener('timeupdate', onReady);
+      mark();
+    };
+    vid.addEventListener('canplay',    onReady);
+    vid.addEventListener('timeupdate', onReady);
+  }
 }
 
 /**
@@ -733,10 +776,11 @@ async function _runCanvasPipeline() {
     const _tActive = _getTimedSelective();
     if (!_tActive.length) { _glShowCanvas(false); return; }
     if (_glInit(vid)) {
+      // resize 上傳 → render → show 必須在同一同步流程完成，避免顯示清黑瞬態
       _glUploadVideoFrame(vid);
       _glRender(_tActive);
+      _glEnsureAttached(vid);
       _glShowCanvas(true);
-      vcSyncGlCanvas(vid);
     }
     return;
   }
@@ -755,8 +799,8 @@ async function _runCanvasPipeline() {
     if (_glInit(img)) {
       _glUploadTexture(srcImg);
       _glRender(_VCS.selectiveList);
+      _glEnsureAttached(img);   // 對齊 img 的 layout 尺寸、位置、transform
       _glShowCanvas(true);
-      vcSyncGlCanvas(img);   // 對齊 img 的 layout 尺寸、位置、transform
       return;
     }
   }
@@ -797,6 +841,62 @@ function _restoreOriginalSrc() {
   img.src = _VCS._imgOriginalSrc;
 }
 
+
+/* ── 臨時濾鏡狀態機 ───────────────────────────────────────────── */
+/* 使用者互動產生新臨時濾鏡狀態：記錄來源並重置「沿用不再問」旗標 */
+function _markTempFilterDirty() {
+  _VCS._tempOriginItemId = _VCS._itemId;
+  _VCS._tempDismissed    = false;
+}
+
+/** 沿用臨時濾鏡到後續影片且不再詢問 */
+export function vcKeepTempFilter() {
+  _VCS._tempDismissed = true;
+  vcDismissToast();
+}
+
+/** 將漫遊中的已儲存 preset 連結到當前影片（寫入 presetIds + lastUsed，不另存新 preset） */
+export function vcLinkPresetToVideo(presetId) {
+  const preset = _loadFilterPresets().find(p => p.id === presetId && !p.deleted);
+  if (!preset || !_VCS._itemId) { vcDismissToast(); return; }
+  const vfl = _loadVideoFilterData(_VCS._itemId);
+  if (!vfl.presetIds) vfl.presetIds = [];
+  if (!vfl.presetIds.includes(presetId)) vfl.presetIds.push(presetId);
+  vfl.lastUsed = presetId;
+  _saveVideoFilterData(_VCS._itemId, vfl);
+  _VCS._activeFilterPresetId = presetId;
+  _VCS._tempOriginItemId = null;
+  _VCS._tempDismissed    = false;
+  vcRenderFilterPresets();
+  vcDismissToast();
+  _showToast(`<span>已將「${preset.name}」連結到這部影片。</span>`);
+}
+
+/** 丟棄臨時濾鏡：還原中性值、隱藏並清 GL overlay */
+export function vcDiscardTempFilter() {
+  _VCS.filter = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
+  _VCS.selectiveList = []; _VCS._activeSelectiveId = null;
+  _VCS._activeFilterPresetId = null;
+  _VCS._tempOriginItemId = null;
+  _VCS._tempDismissed    = false;
+  _stopVideoRafLoop();
+  _glShowCanvas(false);
+  _glTexSrc = null;
+  if (_gl && _glTexture) {
+    _gl.bindTexture(_gl.TEXTURE_2D, _glTexture);
+    _gl.texImage2D(_gl.TEXTURE_2D, 0, _gl.RGBA, 1, 1, 0, _gl.RGBA, _gl.UNSIGNED_BYTE,
+      new Uint8Array([0, 0, 0, 0]));
+  }
+  // 還原 src 僅適用圖片（canvas objectURL 替換過）；影片重設 src 會整部重載跳回 0 秒
+  if (_VCS._mediaType !== 'video') {
+    _restoreOriginalSrc();
+    _VCS._imgOriginalSrc = null;
+  }
+  vcApplyFilter(_VCS._vid);
+  vcSyncPanel();
+  vcRenderFilterPresets();
+  vcDismissToast();
+}
 
 /* ── Eyedropper ───────────────────────────────────────────────── */
 let _eyedropperActive = false;
@@ -905,7 +1005,7 @@ export function vcStartEyedropper() {
         vcStopEyedropper();
         return;
       }
-      if (_a) { _a.targetHue = Math.round(h); _a.pickedRgb = [d[0], d[1], d[2]]; }
+      if (_a) { _a.targetHue = Math.round(h); _a.pickedRgb = [d[0], d[1], d[2]]; _markTempFilterDirty(); }
       if (_VCS._mediaType === 'image' && !_VCS._imgOriginalSrc) _VCS._imgOriginalSrc = vid.src;
       vcStopEyedropper();
       vcSyncPanel();
@@ -955,6 +1055,7 @@ export function vcSetSelectiveHue(key, val) {
   const a = _getActive();
   if (!a) return;
   a[key] = +val;
+  _markTempFilterDirty();
   if (a.targetHue !== null) _scheduleCanvasUpdate();
   vcSyncPanel();
 }
@@ -969,6 +1070,7 @@ export function vcClearSelectiveColor() {
   a.contrast   = 0;
   a.saturate   = 0;
   a.sepia      = 0;
+  _markTempFilterDirty();
   vcStopEyedropper();
   _scheduleCanvasUpdate();
   vcSyncPanel();
@@ -978,6 +1080,7 @@ export function vcAddSelectiveColor() {
   const item = _newSelItem();
   _VCS.selectiveList.push(item);
   _VCS._activeSelectiveId = item.id;
+  _markTempFilterDirty();
   vcSyncPanel();
   vcStartEyedropper();
 }
@@ -992,6 +1095,7 @@ export function vcRemoveSelective(id) {
   if (_VCS._activeSelectiveId === id) {
     _VCS._activeSelectiveId = _VCS.selectiveList.at(-1)?.id ?? null;
   }
+  _markTempFilterDirty();
   _scheduleCanvasUpdate();
   vcSyncPanel();
 }
@@ -1130,6 +1234,9 @@ export function vcSaveFilterPreset(force = false) {
   });
   _saveFilterPresets(presets);
   _VCS._activeFilterPresetId = id;
+  // 臨時狀態已固化為 preset：清除臨時濾鏡旗標
+  _VCS._tempOriginItemId = null;
+  _VCS._tempDismissed    = false;
   // 自動連結到當前影片
   if (_VCS._itemId) {
     const vfl = _loadVideoFilterData(_VCS._itemId);
@@ -1256,6 +1363,9 @@ export function vcOverwriteFilterPreset(id) {
   preset.selective  = _VCS.selectiveList.map(s => ({ ...s }));
   preset.modifiedAt = Date.now();
   _saveFilterPresets(presets);
+  // 臨時狀態已固化為 preset：清除臨時濾鏡旗標（與 vcSaveFilterPreset 一致）
+  _VCS._tempOriginItemId = null;
+  _VCS._tempDismissed    = false;
   vcRenderFilterPresets();
   document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
   _showToast(`<span>「${preset.name}」已更新。</span>`);
@@ -1879,6 +1989,7 @@ export function vcInitVid(vid, itemId) {
   _glShowCanvas(false);
   _releaseCanvas();
   _glTexSrc = null;
+  _glReadyFrame = false;   // 新影片首幀上傳前 overlay 不可見
   // 清除 GL 紋理舊幀，防止切換影片時短暫顯示上一部影片的定格畫面
   if (_gl && _glTexture) {
     _gl.bindTexture(_gl.TEXTURE_2D, _glTexture);
@@ -1905,22 +2016,18 @@ export function vcInitVid(vid, itemId) {
   _VCS.ab          = { a: null, b: null, active: false };
   _abSeeking       = false;
 
+  // 首幀確認：真實一幀上傳成功前 overlay 保持隱藏
+  _glAwaitFirstFrame(vid);
+
   // filter + selectiveList 保留為臨時狀態延續到新影片（只清除上部影片專屬的時間戳）
   for (const s of _VCS.selectiveList) { s.abStart = null; s.abEnd = null; }
   const _isSameItem = !!itemId && itemId === _prevItemId;
   const _hasTempFilter = !_isFilterDefault(_VCS.filter) || !_isSelectiveDefault(_VCS.selectiveList);
+  // 目前狀態仍等同某 preset 的值（使用者未手動調整過）：漫遊到新影片時提示「連結」而非「另存」
+  const _roamPresetId = (_VCS._tempOriginItemId == null) ? _VCS._activeFilterPresetId : null;
   _VCS._activeFilterPresetId = null;
 
-  // 離開有未儲存臨時濾鏡的影片時，提示是否儲存
-  if (_hasTempFilter && !_isSameItem && _prevItemId) {
-    _showToast(
-      `<span>有未儲存的濾鏡設定，是否儲存？</span>` +
-      `<button onclick="vcSaveFilterPreset()">儲存</button>` +
-      `<button onclick="vcDismissToast()">略過</button>`,
-      8000
-    );
-  }
-
+  let _appliedOwnPreset = false;   // 目標影片是否套用了自己已儲存的濾鏡
   if (_isSameItem && _hasTempFilter) {
     // 重開同一部影片：保留現有臨時濾鏡狀態，不套用已儲存濾鏡
   } else if (itemId) {
@@ -1936,29 +2043,49 @@ export function vcInitVid(vid, itemId) {
     if (targetId) {
       const preset = presets.find(p => p.id === targetId && !p.deleted);
       if (preset) {
-        if (_hasTempFilter) {
-          // 有臨時濾鏡狀態：提示使用者選擇套用此影片的已儲存濾鏡或保留臨時狀態
-          _showToast(
-            `<span>此影片有已儲存的濾鏡「${preset.name}」</span>` +
-            `<button onclick="vcApplyFilterPreset('${preset.id}')">套用</button>` +
-            `<button onclick="vcDismissToast()">略過</button>`,
-            8000
-          );
-          // 繼續套用臨時狀態（不覆蓋），讓使用者自行決定
+        // 目標影片有自己已儲存的濾鏡：直接套用（覆蓋臨時狀態），不提示
+        _VCS.filter               = { sepia: 0, sharpness: 0, ...preset.filter };
+        _VCS._activeFilterPresetId = preset.id;
+        if (Array.isArray(preset.selective)) {
+          _VCS.selectiveList = preset.selective.map(s => ({ ..._selDefault(s.id), ...s }));
+        } else if (preset.selective && preset.selective.targetHue != null) {
+          _VCS.selectiveList = [{ ..._selDefault(), ...preset.selective }];
         } else {
-          // 無臨時狀態（預設值）：靜默套用此影片已儲存的濾鏡
-          _VCS.filter               = { sepia: 0, sharpness: 0, ...preset.filter };
-          _VCS._activeFilterPresetId = preset.id;
-          if (Array.isArray(preset.selective)) {
-            _VCS.selectiveList = preset.selective.map(s => ({ ..._selDefault(s.id), ...s }));
-          } else if (preset.selective && preset.selective.targetHue != null) {
-            _VCS.selectiveList = [{ ..._selDefault(), ...preset.selective }];
-          } else {
-            _VCS.selectiveList = [];
-          }
-          _VCS._activeSelectiveId = _VCS.selectiveList[0]?.id ?? null;
+          _VCS.selectiveList = [];
         }
+        _VCS._activeSelectiveId = _VCS.selectiveList[0]?.id ?? null;
+        _VCS._tempOriginItemId  = null;
+        _VCS._tempDismissed     = false;
+        _appliedOwnPreset       = true;
       }
+    }
+  }
+
+  // 漫遊中的已儲存 preset：保留 active 標記（狀態值仍等同該 preset）
+  if (!_appliedOwnPreset && _hasTempFilter && _roamPresetId) {
+    _VCS._activeFilterPresetId = _roamPresetId;
+  }
+
+  // 沿用臨時濾鏡且目標影片無自有濾鏡：提示一次
+  if (_hasTempFilter && !_isSameItem && _prevItemId &&
+      !_appliedOwnPreset && !_VCS._tempDismissed) {
+    if (_roamPresetId) {
+      // 狀態來自已儲存的濾鏡：提供「連結到這部影片」而非另存新 preset（避免重複）
+      _showToast(
+        `<span>是否將此濾鏡連結到這部影片？</span>` +
+        `<button onclick="vcLinkPresetToVideo('${_roamPresetId}')">連結</button>` +
+        `<button onclick="vcKeepTempFilter()">沿用</button>` +
+        `<button onclick="vcDiscardTempFilter()">還原</button>`,
+        8000
+      );
+    } else {
+      _showToast(
+        `<span>有未儲存的濾鏡設定，是否儲存？</span>` +
+        `<button onclick="vcSaveFilterPreset()">儲存</button>` +
+        `<button onclick="vcKeepTempFilter()">沿用</button>` +
+        `<button onclick="vcDiscardTempFilter()">還原</button>`,
+        8000
+      );
     }
   }
 
@@ -2023,6 +2150,7 @@ export function vcInitMedia(el, itemId, mediaType) {
   _releaseCanvas();
   _glShowCanvas(false);       // 圖片切換時隱藏舊的 GL canvas，重新掛載前保持隱藏
   _glTexSrc = null;           // 強制下次 _glUploadTexture 重傳新圖片紋理
+  _glReadyFrame = false;      // 新媒體真實內容上傳前 overlay 不可見
   _VCS._imgOriginalSrc = null;
   if (mediaType === 'image') {
     _migrateOnce();
@@ -2197,6 +2325,7 @@ export function vcApplyTransform(vid) {
 ══════════════════════════════════════════════════════════════════ */
 export function vcSetFilter(key, val) {
   _VCS.filter[key] = +val;
+  _markTempFilterDirty();
   vcApplyFilter(_VCS._vid);
   vcSyncPanel();
 }
@@ -2351,6 +2480,8 @@ export function vcResetFilters() {
   _VCS.filter               = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
   _VCS.selectiveList = []; _VCS._activeSelectiveId = null;
   _VCS._activeFilterPresetId = null;
+  _VCS._tempOriginItemId = null;
+  _VCS._tempDismissed    = false;
   vcStopEyedropper();
   _stopVideoRafLoop();
   _glShowCanvas(false);
@@ -2382,6 +2513,8 @@ export function vcResetAll() {
   _VCS.ab          = { a: null, b: null, active: false };
   _VCS._autoRotate = 0;
   _VCS._activeFilterPresetId = null;
+  _VCS._tempOriginItemId = null;
+  _VCS._tempDismissed    = false;
   vcStopEyedropper();
   _restoreOriginalSrc();
   _VCS._imgOriginalSrc = null;
