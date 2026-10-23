@@ -7,10 +7,15 @@
     GET  /api/ai/faces/persons       ?lib=... 人物聚類清單（person_id/name/性別/年齡/代表臉）
     GET  /api/ai/faces/search        ?lib=...&item=...[&face=N][&topk=40][&all=1] 以臉找臉
     GET  /api/ai/tags                ?lib=... 人數/場景/運動標籤（B5；scene_tags.json）
+    GET  /api/ai/expressions         ?lib=... 表情標籤（B6；item_expressions.json）
+    GET  /api/ai/clothing            ?lib=... 服裝標籤（粗類；clothing_tags.json）
     POST /api/ai/faces/persons/name  {lib, person_id, name|null} 人物命名/清除（B1）
     POST /api/ai/index               {lib: 庫名|"all", kind: clip|faces|both|
-                                      video-faces|tags[, limit]} 背景索引
-                                     video-faces = 影片多幀人臉（B3）；tags = B5 標籤
+                                      video-faces|tags|expressions|clothing|advanced[, limit]}
+                                     背景索引；video-faces = 影片多幀人臉（B3）；
+                                     tags = B5 標籤；expressions = B6 臉部表情；
+                                     clothing = 服裝粗類；advanced = tags+expressions+clothing
+                                     （limit = 最多新處理 N item/臉）
     GET  /api/ai/index/progress      索引進度輪詢（SSE 備援）
 
 設計：
@@ -228,6 +233,52 @@ def _clip_text_readiness():
 # GET /api/ai/status
 # ---------------------------------------------------------------------------
 
+_state_cache: dict = {}        # (kind, lib) → (mtime_ns, dict)　輪詢每 3 秒但檔案不常變
+_state_cache_lock = threading.Lock()
+
+
+def _cached_json_state(path, cache_key: tuple, fields: tuple):
+    """mtime 不變回快取；避免 tags/clothing 狀態被每 3 秒輪詢重複整檔 json.load。"""
+    try:
+        if not path.exists():
+            return None
+        mt = path.stat().st_mtime_ns
+        with _state_cache_lock:
+            cached = _state_cache.get(cache_key)
+            if cached and cached[0] == mt:
+                return cached[1]
+        data = json.loads(path.read_text(encoding="utf-8"))
+        result = {k: data.get(k) for k in fields}
+        with _state_cache_lock:
+            _state_cache[cache_key] = (mt, result)
+        return result
+    except Exception:
+        return None
+
+
+def _clothing_ai_status(lib: str) -> dict:
+    f = DATA_DIR / lib / "ai_index" / "clothing_state.json"
+    s = _cached_json_state(f, ("clothing", lib),
+                           ("status", "todo_done", "todo_total", "algo_version", "updated_at"))
+    if s is None:
+        return {"built": False, "todo_done": 0, "todo_total": 0}
+    return {"built": s.get("status") == "done", **s}
+
+
+def _tags_ai_status(lib: str) -> dict:
+    """B5 標籤（scene_tags.json）：無累進 sidecar，僅終態；scene_tags.json 可能較大，
+    只用 os.path.exists + mtime 判斷有無/建立時間，禁止整檔 json.load（見 spec S3）。"""
+    f = DATA_DIR / lib / "ai_index" / "scene_tags.json"
+    try:
+        if not f.exists():
+            return {"built": False}
+        mt = f.stat().st_mtime
+        built_at = datetime.fromtimestamp(mt, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return {"built": True, "built_at": built_at}
+    except Exception:
+        return {"built": False}
+
+
 def _lib_ai_status(lib: str) -> dict:
     d = DATA_DIR / lib / "ai_index"
     clip = {"indexed": 0}
@@ -267,7 +318,18 @@ def _lib_ai_status(lib: str) -> dict:
                        "clustered_at": pd.get("clustered_at")}
     except Exception:
         pass
-    return {"clip": clip, "faces": faces, "persons": persons}
+    expr = None
+    try:
+        ef = d / "face_expr_state.json"       # B6 輕量 sidecar（勿 parse 臉層級大檔）
+        if ef.exists():
+            s = json.loads(ef.read_text(encoding="utf-8"))
+            expr = {"faces_done": s.get("faces_done"),
+                    "faces_total": s.get("faces_total"),
+                    "updated_at": s.get("updated_at")}
+    except Exception:
+        pass
+    return {"clip": clip, "faces": faces, "persons": persons, "expr": expr,
+            "clothing": _clothing_ai_status(lib), "tags": _tags_ai_status(lib)}
 
 
 def _excire_total(lib: str):
@@ -292,7 +354,7 @@ def _handle_status(h):
         entry.update(_lib_ai_status(lib))
         libs[lib] = entry
 
-    clip_files = face_files = None
+    clip_files = face_files = fer_files = None
     try:
         from ai.model_setup import MODEL_DIR, MODEL_FILES, _verify
         clip_files = all(_verify(MODEL_DIR / f, s, check_hash=False)
@@ -300,6 +362,9 @@ def _handle_status(h):
         from ai.face_setup import FACE_MODEL_DIR, FACE_MODEL_FILES
         face_files = all(_verify(FACE_MODEL_DIR / f, s, check_hash=False)
                          for f, s in FACE_MODEL_FILES.items())
+        from ai.fer_setup import FER_MODEL_DIR, FER_MODEL_FILES
+        fer_files = all(_verify(FER_MODEL_DIR / f, s, check_hash=False)
+                        for f, s in FER_MODEL_FILES.items())
     except Exception:
         pass
     with _load_lock:
@@ -309,6 +374,7 @@ def _handle_status(h):
         "onnxruntime": _ort_available(),
         "clip_model_ready": clip_files,
         "face_model_ready": face_files,
+        "fer_model_ready": fer_files,
         "clip_engine": engine_state,
         "index_job": _job_snapshot(),
         "libs": libs,
@@ -471,6 +537,58 @@ def _handle_tags(h):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/ai/expressions（B6：臉部表情；讀項目層聚合 item_expressions.json）
+# ---------------------------------------------------------------------------
+
+def _handle_expressions(h):
+    p = _params(h)
+    lib = p.get("lib", "")
+    if not lib:
+        h._err(400, "缺少 ?lib= 參數"); return
+    if lib not in LIBRARY_PATHS and lib not in EXCIRE_PATHS:
+        h._err(404, f"未知的庫：{lib}（可用：{_known_libs()}）"); return
+    try:
+        from ai.face_expr import load_item_expressions
+    except Exception as e:
+        h._json(503, {"ok": False, "error": f"AI 模組載入失敗（numpy？）：{e}"}); return
+    data = load_item_expressions(lib)
+    if not data:
+        h._json(200, {"ok": True, "lib": lib, "built": False, "items": {},
+                      "message": "尚未建立表情索引；請 POST /api/ai/index "
+                                 "{kind: expressions} 或執行 face-expr CLI"}); return
+    h._json(200, {"ok": True, "lib": lib, "built": True,
+                  "built_at": data.get("built_at"), "model": data.get("model"),
+                  "labels": data.get("labels", []),
+                  "items": data.get("items", {})})
+
+
+# ---------------------------------------------------------------------------
+# GET /api/ai/clothing（服裝粗類；讀 clothing_tags.json）
+# ---------------------------------------------------------------------------
+
+def _handle_clothing(h):
+    p = _params(h)
+    lib = p.get("lib", "")
+    if not lib:
+        h._err(400, "缺少 ?lib= 參數"); return
+    if lib not in LIBRARY_PATHS and lib not in EXCIRE_PATHS:
+        h._err(404, f"未知的庫：{lib}（可用：{_known_libs()}）"); return
+    try:
+        from ai.clothing_tags import load_clothing_tags
+    except Exception as e:
+        h._json(503, {"ok": False, "error": f"AI 模組載入失敗（numpy？）：{e}"}); return
+    data = load_clothing_tags(lib)
+    if not data:
+        h._json(200, {"ok": True, "lib": lib, "built": False, "items": {},
+                      "message": "尚未建立服裝標籤索引；請 POST /api/ai/index "
+                                 "{kind: clothing} 或執行 clothing-tags CLI"}); return
+    h._json(200, {"ok": True, "lib": lib, "built": True,
+                  "built_at": data.get("built_at"), "model": data.get("model"),
+                  "labels": data.get("labels", {}),
+                  "items": data.get("items", {})})
+
+
+# ---------------------------------------------------------------------------
 # GET /api/ai/faces/search
 # ---------------------------------------------------------------------------
 
@@ -542,6 +660,12 @@ def _index_worker(libs: list, kinds: list, limit: int = None):
                         from ai.clip_engine import get_engine
                         _ = get_engine().visual
                     res = build_index(lib, limit=limit, progress_cb=cb)
+                elif kind == "expressions":      # B6：臉部表情（FER+）
+                    with _engine_init_lock:      # session 建立集中上鎖
+                        from ai.face_expr import get_fer_engine
+                        _ = get_fer_engine().sess
+                    from ai.face_expr import build_face_expressions
+                    res = build_face_expressions(lib, limit=limit, progress_cb=cb)
                 elif kind == "tags":             # B5：人數/場景/運動標籤
                     from ai.scene_tags import build_scene_tags
                     with _engine_init_lock:      # CLIP text 塔（zero-shot 用）
@@ -551,6 +675,15 @@ def _index_worker(libs: list, kinds: list, limit: int = None):
                         except Exception:
                             pass                 # 無 CLIP → 模組內優雅降級
                     res = build_scene_tags(lib, progress_cb=cb)
+                elif kind == "clothing":         # 服裝粗類（YOLOX person + CLIP zero-shot）
+                    with _engine_init_lock:      # YOLOX + CLIP visual/text 塔皆需就緒
+                        from ai.person_detect import get_person_detector
+                        _ = get_person_detector().sess
+                        from ai.clip_engine import get_engine
+                        _ = get_engine().visual
+                        _ = get_engine().text
+                    from ai.clothing_tags import build_clothing_tags
+                    res = build_clothing_tags(lib, limit=limit, progress_cb=cb)
                 else:                            # faces / video-faces
                     with _engine_init_lock:
                         from ai.face_engine import get_face_engine
@@ -592,8 +725,10 @@ def _handle_post_index(h):
     lib = b.get("lib") if isinstance(b.get("lib"), str) else ""
     lib = (lib or "all").strip()
     kind = (b.get("kind") or "both").strip().lower() if isinstance(b.get("kind"), (str, type(None))) else ""
-    if kind not in ("clip", "faces", "both", "video-faces", "tags"):
-        h._err(400, "kind 需為 clip | faces | both | video-faces | tags"); return
+    if kind not in ("clip", "faces", "both", "video-faces", "tags", "expressions",
+                    "clothing", "advanced"):
+        h._err(400, "kind 需為 clip | faces | both | video-faces | tags | "
+                    "expressions | clothing | advanced"); return
     limit = b.get("limit")
     if limit is not None and (not isinstance(limit, int) or limit < 1):
         h._err(400, "limit 需為正整數"); return
@@ -608,7 +743,8 @@ def _handle_post_index(h):
     if not _ort_available():
         h._json(503, {"ok": False, "error": "onnxruntime 未安裝，無法建立索引。"
                                             "安裝：pip install --user onnxruntime"}); return
-    kinds = ["clip", "faces"] if kind == "both" else [kind]
+    kinds = (["clip", "faces"] if kind == "both" else
+             ["tags", "expressions", "clothing"] if kind == "advanced" else [kind])
 
     with _index_lock:
         if _index_job.get("status") == "running":
@@ -648,6 +784,10 @@ def handle_ai_get(h, up: str):
         _handle_faces_search(h); return
     if up == "/api/ai/tags":
         _handle_tags(h); return
+    if up == "/api/ai/expressions":
+        _handle_expressions(h); return
+    if up == "/api/ai/clothing":
+        _handle_clothing(h); return
     if up == "/api/ai/index/progress":
         _handle_index_progress(h); return
     h._err(404, "Not found: " + up)

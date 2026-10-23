@@ -71,6 +71,8 @@ export function defaultFilters() {
     people: '',       // '' | '1' | '2' | '3-5' | '6+'（B5 入鏡人數）
     scene: '',        // '' | 場景中文標籤（B5）
     sport: '',        // '' | 運動中文標籤（B5）
+    expr: '',         // '' | 表情中文標籤（B6 臉部表情）
+    clothing: '',     // '' | 服裝中文標籤（粗類）
   };
 }
 

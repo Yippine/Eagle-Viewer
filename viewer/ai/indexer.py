@@ -183,6 +183,8 @@ def build_index(lib: str, limit: int = None, batch_size: int = 16,
     todo = [(iid, p) for iid, p in all_items if iid not in done_set]
     if limit is not None:
         todo = todo[:limit]
+    if progress_cb:                          # 重活前先回報 total，UI 及早脫離「計算工作量…」
+        progress_cb(0, len(todo))
 
     t0 = time.time()
     n_new, n_failed = 0, 0

@@ -266,6 +266,23 @@
 }
 
 .pp-actions { display: flex; gap: var(--sp-1); padding: var(--sp-1) 0 var(--sp-2); }
+
+/* sparkle 狀態 badge（S1：index_job running → 動畫點）*/
+.pp-status-btn { position: relative; }
+.pp-status-dot {
+  position: absolute;
+  top: 2px; right: 2px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg1);
+  animation: pp-status-pulse 1.2s ease-in-out infinite;
+}
+.pp-status-dot[hidden] { display: none; }
+@keyframes pp-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .5; transform: scale(1.35); }
+}
 .pp-progress {
   display: flex;
   align-items: center;
@@ -428,11 +445,34 @@ dialog.ai-dlg { width: min(560px, calc(100vw - 32px)); }
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  margin-bottom: var(--sp-3);
+  margin-bottom: var(--sp-1);
   font-size: var(--fs-xs);
   color: var(--text2);
 }
+.ai-job-hint { margin: 0 0 var(--sp-3); font-size: var(--fs-xs); color: var(--text3); }
 .ai-dlg .dlg-actions { align-items: center; }
+
+/* S4：基礎/進階分層入口 + 全部庫×單維度 chip */
+.ai-actions-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+.ai-hint { font-size: var(--fs-xs); color: var(--text3); }
+.ai-dim-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-3);
+}
+.cov-row .btn-xs, .ai-lib-head .btn-xs {
+  height: 22px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-xs);
+}
 
 /* ⌘K 範圍切換 chip */
 .mode-chip.scope-chip { margin-left: auto; }

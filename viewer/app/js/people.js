@@ -22,12 +22,14 @@ import { bustAiTags } from './ai-tags.js';
 
 const $ = id => document.getElementById(id);
 const _cache = new Map();   // slug → persons payload（body）
+let _jobRunning = false;    // sparkle badge：index_job.status==='running'（S1）
 
 /* ── 初始化 ─────────────────────────────────────────────────────────── */
 
 export function initPeople() {
   store.on('lib-context', () => renderPeopleSidebar());
   store.on('ai-progress', _onProgress);
+  store.on('ai-progress', _onProgressBadge);
 }
 
 function _slug() { return parseLibId(store.state.libId || '')?.slug || null; }
@@ -110,14 +112,18 @@ export async function renderPeopleSidebar() {
       ${store.state.libType === 'eagle'
         ? `<button class="btn btn-ghost btn-sm" data-pp-act="video"
              title="影片以 ffmpeg 均勻抽幀補人臉索引（增量，B3）並重新聚類">影片抽幀</button>` : ''}
-      <button class="btn btn-ghost btn-sm btn-icon" data-pp-act="status" title="AI 索引狀態" aria-label="AI 索引狀態">
+      <button class="btn btn-ghost btn-sm btn-icon pp-status-btn" data-pp-act="status" title="AI 索引狀態" aria-label="AI 索引狀態">
         <svg class="icon icon-sm" aria-hidden="true"><use href="#i-sparkle"/></svg>
+        <span class="pp-status-dot" id="pp-status-dot" ${_jobRunning ? '' : 'hidden'}></span>
       </button>
     </div>`;
 
   box.querySelectorAll('[data-person]').forEach(el =>
     el.addEventListener('click', () => navigate(`#/people/${encodeURIComponent(el.dataset.person)}`)));
   box.querySelector('[data-people-all]')?.addEventListener('click', () => navigate('#/people'));
+  // S1：sparkle badge — 初載時查一次目前 index_job 狀態（監聽 ai-progress 後續維持）
+  api.aiStatus().then(st => _setStatusDot(st.index_job?.status === 'running')).catch(() => {});
+
   box.querySelectorAll('[data-pp-act]').forEach(el => el.addEventListener('click', () => {
     const act = el.dataset.ppAct;
     if (act === 'status') openAiStatusPanel();
@@ -125,6 +131,23 @@ export async function renderPeopleSidebar() {
     else if (act === 'index') startAiIndex(slug, 'both');
     else if (act === 'video') startAiIndex(slug, 'video-faces');
   }));
+}
+
+/* ── sparkle 狀態 badge（S1；index_job running → 動畫點）─────────────── */
+
+function _setStatusDot(running) {
+  _jobRunning = running;
+  const dot = $('pp-status-dot');
+  if (dot) dot.hidden = !running;
+}
+
+async function _onProgressBadge(evt) {
+  if (evt.phase === 'start' || evt.phase === 'running') { _setStatusDot(true); return; }
+  // done/error：該維度結束，但整體 job 可能接續下一維度 → 查真實 job 狀態再決定是否熄燈
+  try {
+    const d = await api.aiIndexProgress();
+    _setStatusDot(d.job?.status === 'running');
+  } catch (_) { /* 靜默 */ }
 }
 
 /* ── 索引進度（SSE 轉發；當前庫）────────────────────────────────────── */
@@ -138,12 +161,14 @@ function _onProgress(evt) {
       const slug = _slug();
       if (slug) { _cache.delete(slug); renderPeopleSidebar(); }
     }
-    if (evt.kind === 'tags' && evt.phase === 'done' && _slug()) bustAiTags(_slug());
+    if ((evt.kind === 'tags' || evt.kind === 'expressions' || evt.kind === 'clothing')
+        && evt.phase === 'done' && _slug()) bustAiTags(_slug());  // B5/B6/服裝 快取失效
     return;
   }
   bar.hidden = false;
   const p = evt.total ? Math.round((evt.done || 0) / evt.total * 100) : 100;
-  const KIND_TXT = { clip: '語意', faces: '人臉', 'video-faces': '影片抽幀', tags: '標籤' };
+  const KIND_TXT = { clip: '語意', faces: '人臉', 'video-faces': '影片抽幀', tags: '標籤',
+                     expressions: '表情', clothing: '服裝' };
   $('pp-progress-fill').style.width = p + '%';
   $('pp-progress-txt').textContent =
     `${KIND_TXT[evt.kind] || evt.kind}索引 ${evt.total ? `${evt.done} / ${evt.total}` : '…'}`;

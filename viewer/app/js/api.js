@@ -132,11 +132,18 @@ export const api = {
     `${face != null ? `&face=${face}` : ''}${topk ? `&topk=${topk}` : ''}${all ? '&all=1' : ''}`),
 
   /** POST /api/ai/index {lib, kind} → { status, body }（409 = already_running）
-   *  kind: clip|faces|both|video-faces|tags（B3 影片多幀 / B5 標籤索引） */
+   *  kind: clip|faces|both|video-faces|tags|expressions|clothing
+   *  （B3 影片多幀 / B5 標籤 / B6 表情 / 服裝粗類） */
   aiIndex: (lib, kind) => _jsonStatus('/api/ai/index', _POST_JSON({ lib, kind })),
 
   /** GET /api/ai/tags?lib=… → { ok, built, labels, items }（B5 人數/場景/運動） */
   aiTags: lib => _json(`/api/ai/tags?lib=${enc(lib)}`),
+
+  /** GET /api/ai/expressions?lib=… → { ok, built, labels, items }（B6 臉部表情） */
+  aiExpressions: lib => _json(`/api/ai/expressions?lib=${enc(lib)}`),
+
+  /** GET /api/ai/clothing?lib=… → { ok, built, labels, items }（服裝粗類） */
+  aiClothing: lib => _json(`/api/ai/clothing?lib=${enc(lib)}`),
 
   /** GET /api/ai/index/progress → { ok, job }（SSE 備援輪詢） */
   aiIndexProgress: () => _json('/api/ai/index/progress'),

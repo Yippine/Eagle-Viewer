@@ -36,13 +36,18 @@ def _l2_normalize(v: np.ndarray) -> np.ndarray:
     return v / np.maximum(norm, 1e-12)
 
 
-def _preprocess_image(path) -> np.ndarray:
-    """單張影像 → float32 (3, 224, 224)。開檔/解碼失敗會拋例外（由呼叫端接）。"""
-    with Image.open(path) as im:
-        im = im.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE), Image.BICUBIC)
-        arr = np.asarray(im, dtype=np.float32) / 255.0          # (H, W, 3)
-    arr = arr.transpose(2, 0, 1)                                 # (3, H, W)
+def _preprocess_pil(im: Image.Image) -> np.ndarray:
+    """已載入的 PIL.Image → float32 (3, 224, 224)（服裝辨識 person crop 記憶體內編碼用）。"""
+    im = im.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE), Image.BICUBIC)
+    arr = np.asarray(im, dtype=np.float32) / 255.0               # (H, W, 3)
+    arr = arr.transpose(2, 0, 1)                                  # (3, H, W)
     return (arr - _CLIP_MEAN) / _CLIP_STD
+
+
+def _preprocess_image(path) -> np.ndarray:
+    """單張影像路徑 → float32 (3, 224, 224)。開檔/解碼失敗會拋例外（由呼叫端接）。"""
+    with Image.open(path) as im:
+        return _preprocess_pil(im)
 
 
 class ClipEngine:
@@ -115,6 +120,42 @@ class ClipEngine:
             try:
                 batch_arr.append(_preprocess_image(p))
                 batch_idx.append(i)
+            except Exception:
+                failed.append(i)
+                continue
+            if len(batch_arr) >= batch_size:
+                _flush()
+        _flush()
+
+        if chunks:
+            vecs = np.concatenate(chunks, axis=0)
+        else:
+            vecs = np.zeros((0, self.embed_dim), dtype=np.float32)
+        return vecs, failed
+
+    def encode_pil_images(self, images: list, batch_size: int = 16):
+        """批次編碼記憶體內 PIL.Image list（服裝辨識 person crop 用，禁止落地暫存檔）。
+
+        Returns:
+            (vecs, failed): vecs 為 float32 (N_ok, 512) L2-normalized；
+            failed 為 images 中失敗項的 index list（轉換錯誤，已跳過）。
+        """
+        sess = self.visual
+        input_name = sess.get_inputs()[0].name
+        chunks, failed = [], []
+        batch_arr = []
+
+        def _flush():
+            if not batch_arr:
+                return
+            x = np.stack(batch_arr)
+            out = sess.run(None, {input_name: x})[0].astype(np.float32)
+            chunks.append(_l2_normalize(out))
+            batch_arr.clear()
+
+        for i, im in enumerate(images):
+            try:
+                batch_arr.append(_preprocess_pil(im))
             except Exception:
                 failed.append(i)
                 continue

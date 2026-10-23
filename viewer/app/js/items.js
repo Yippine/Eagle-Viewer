@@ -154,8 +154,8 @@ export function sizeBucket(w, hgt) {
  * @param {object} f defaultFilters() 形
  * @param {object} opts { folderSets?: Set<string>[]（每選中資料夾一個含後代集合，AND）,
  *                        trash?: boolean, now?: number,
- *                        aiTags?: {id: {people, scene, sport}}|null（B5；
- *                        null/未給 = 尚未載入 → 人數/場景/運動維度不過濾） }
+ *                        aiTags?: {id: {people, scene, sport, expr}}|null（B5/B6；
+ *                        null/未給 = 尚未載入 → 人數/場景/運動/表情維度不過濾） }
  */
 export function filterItems(items, f, opts = {}) {
   const terms = parseQuery(f.q || '');
@@ -176,11 +176,13 @@ export function filterItems(items, f, opts = {}) {
     if (f.size && sizeBucket(i.width, i.height) !== f.size) return false;
     if (domains && !domains.has(i.domain)) return false;
 
-    if (aiTags && (f.people || f.scene || f.sport)) {      // B5 人數/場景/運動
+    if (aiTags && (f.people || f.scene || f.sport || f.expr || f.clothing)) { // B5/B6 + 服裝
       const t = aiTags[i.id] || {};
       if (f.people && !peopleMatch(f.people, t.people || 0)) return false;
       if (f.scene && t.scene !== f.scene) return false;
       if (f.sport && t.sport !== f.sport) return false;
+      if (f.expr && !(t.expr || []).includes(f.expr)) return false; // 任一臉命中即符合
+      if (f.clothing && !(t.clothing || []).includes(f.clothing)) return false; // 一圖多件服裝
     }
 
     if (folderSets.length) {

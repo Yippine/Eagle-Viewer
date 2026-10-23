@@ -7,14 +7,16 @@
 import { store, defaultFilters } from './store.js';
 import { navigate, parseRoute } from './router.js';
 import { SORT_KEYS, h } from './items.js';
-import { PEOPLE_OPTS, SCENE_OPTS, SPORT_OPTS } from './ai-tags.js';
+import { PEOPLE_OPTS, SCENE_OPTS, SPORT_OPTS, EXPR_OPTS, CLOTHING_OPTS,
+        clothingLabelsSync } from './ai-tags.js';
 
 const TYPE_OPTS = [['all', '全部'], ['image', '圖片'], ['video', '影片'], ['gif', '動圖'], ['bookmark', '書籤']];
 const DATE_OPTS = [['', '任意時間'], ['today', '今天'], ['7d', '7 天內'], ['30d', '30 天內'], ['365d', '一年內']];
 const SIZE_OPTS = [['', '任意尺寸'], ['s', '小（<1MP）'], ['m', '中（1–4MP）'], ['l', '大（4–12MP）'], ['xl', '特大（>12MP）']];
 const DIM_LABEL = { type: '型別', star: '星等', tags: '標籤', date: '日期', size: '尺寸' };
 const ESC_ORDER = ['q', 'presets', 'folders', 'tags', 'domains',
-                   'sport', 'scene', 'people', 'size', 'date', 'star', 'type'];   // Escape 逐層
+                   'clothing', 'expr', 'sport', 'scene', 'people',
+                   'size', 'date', 'star', 'type'];   // Escape 逐層
 const MAX_SEEDS_KEY = 'eagle-pref-max-seeds';
 
 let _folderName = id => id;      // app.js 注入（chips 顯示資料夾名）
@@ -64,6 +66,8 @@ export function syncFromRoute(route) {
   f.people  = q.get('people') || '';
   f.scene   = q.get('scene') || '';
   f.sport   = q.get('sport') || '';
+  f.expr    = q.get('expr') || '';
+  f.clothing = q.get('clothing') || '';
   const key = q.get('sort') || 'shuffle';
   const dir = q.get('dir') === 'asc' ? 'asc' : 'desc';
   const seed = q.get('seed') ? (parseInt(q.get('seed'), 10) >>> 0) : null;
@@ -89,6 +93,8 @@ function _serialize() {
   if (f.people)         p.set('people', f.people);
   if (f.scene)          p.set('scene', f.scene);
   if (f.sport)          p.set('sport', f.sport);
+  if (f.expr)           p.set('expr', f.expr);
+  if (f.clothing)       p.set('clothing', f.clothing);
   if (f.q)              p.set('q', f.q);
   if (s.key !== 'shuffle' || s.dir !== 'desc') { p.set('sort', s.key); p.set('dir', s.dir); }
   if (s.key === 'shuffle' && store.state.seed != null) p.set('seed', String(store.state.seed));
@@ -166,6 +172,8 @@ export function renderChips() {
     f.people ? (PEOPLE_OPTS.find(o => o[0] === f.people)?.[1] || f.people) : '人數'));
   chips.push(dim('scene', !!f.scene, f.scene || '場景'));
   chips.push(dim('sport', !!f.sport, f.sport || '運動'));
+  chips.push(dim('expr', !!f.expr, f.expr || '表情'));
+  chips.push(dim('clothing', !!f.clothing, f.clothing || '服裝'));
 
   for (const t of f.tags)     chips.push(val('tags', t, t, '🏷 '));
   for (const d of f.domains)  chips.push(val('domains', d, d, '🌐 '));
@@ -175,7 +183,7 @@ export function renderChips() {
 
   const any = f.type !== 'all' || f.star > 0 || f.tags.length || f.date || f.size
     || f.domains.length || f.folders.length || f.presets.length || f.q
-    || f.people || f.scene || f.sport;
+    || f.people || f.scene || f.sport || f.expr || f.clothing;
   if (any) chips.push(`<button class="chip" data-clear-all title="清除全部篩選">✕ 全清</button>`);
 
   box.innerHTML = chips.join('');
@@ -201,7 +209,7 @@ function _escapePop() {
     if (k === 'q' && f.q) return _patch(x => { x.q = ''; });
     if (['presets', 'folders', 'tags', 'domains'].includes(k) && f[k].length)
       return _patch(x => { x[k] = x[k].slice(0, -1); });
-    if (['sport', 'scene', 'people'].includes(k) && f[k])
+    if (['clothing', 'expr', 'sport', 'scene', 'people'].includes(k) && f[k])
       return _patch(x => { x[k] = ''; });
     if (k === 'size' && f.size) return _patch(x => { x.size = ''; });
     if (k === 'date' && f.date) return _patch(x => { x.date = ''; });
@@ -248,10 +256,17 @@ function _dimMenu(anchor, dim) {
     html = SIZE_OPTS.map(([v, l]) => _mi(v, l, f.size === v)).join('');
   } else if (dim === 'people') {
     html = PEOPLE_OPTS.map(([v, l]) => _mi(v, l, f.people === v)).join('');
-  } else if (dim === 'scene' || dim === 'sport') {
-    const opts = dim === 'scene' ? SCENE_OPTS : SPORT_OPTS;
-    html = _mi('', dim === 'scene' ? '任意場景' : '任意運動', f[dim] === '') +
+  } else if (dim === 'scene' || dim === 'sport' || dim === 'expr') {
+    const opts = { scene: SCENE_OPTS, sport: SPORT_OPTS, expr: EXPR_OPTS }[dim];
+    const anyLabel = { scene: '任意場景', sport: '任意運動', expr: '任意表情' }[dim];
+    html = _mi('', anyLabel, f[dim] === '') +
       opts.map(v => _mi(v, v, f[dim] === v)).join('');
+  } else if (dim === 'clothing') {
+    /* 開放詞彙（規格裁決五）：優先用 loadAiTags 已載入回應的後端 labels 動態產生選單，
+       尚未載入 / 載入失敗時 fallback 到前端硬編碼 CLOTHING_OPTS（後端詞表為唯一 SSOT） */
+    const opts = clothingLabelsSync() || CLOTHING_OPTS;
+    html = _mi('', '任意服裝', f.clothing === '') +
+      opts.map(v => _mi(v, v, f.clothing === v)).join('');
   } else if (dim === 'tags' || dim === 'domains') {
     /* 多選清單（標籤 AND / 網域 OR，C09）：搜尋 + 計數 + toggle 不關選單 */
     const field = dim, isTags = dim === 'tags';
@@ -297,7 +312,7 @@ function _dimMenu(anchor, dim) {
       else if (dim === 'star') x.star = parseInt(it.dataset.v, 10) || 0;
       else if (dim === 'date') x.date = it.dataset.v;
       else if (dim === 'size') x.size = it.dataset.v;
-      else if (['people', 'scene', 'sport'].includes(dim)) x[dim] = it.dataset.v;
+      else if (['people', 'scene', 'sport', 'expr', 'clothing'].includes(dim)) x[dim] = it.dataset.v;
     });
   });
 }

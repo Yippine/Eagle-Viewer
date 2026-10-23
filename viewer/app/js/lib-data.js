@@ -10,9 +10,9 @@ import { adaptItem, filterItems, sortItems, seededShuffle } from './items.js';
 import { setItems, appendItems, setLoading, showMessage } from './grid.js';
 import { aiTagsSync, loadAiTags } from './ai-tags.js';
 
-/** B5 人數/場景/運動篩選啟用時取 aiTags map；未載入 → 觸發載入 + 完成回呼 */
+/** B5 人數/場景/運動 + B6 表情篩選啟用時取 aiTags map；未載入 → 觸發載入 + 完成回呼 */
 function _aiTagsFor(f, onLoaded) {
-  if (!(f.people || f.scene || f.sport)) return null;
+  if (!(f.people || f.scene || f.sport || f.expr || f.clothing)) return null;
   const slug = parseLibId(store.state.libId || '')?.slug;
   if (!slug) return null;
   const m = aiTagsSync(slug);
@@ -180,10 +180,10 @@ export async function loadExcirePage() {
     _pg.total = d.total ?? 0;
     if (!raw.length || _pg.offset >= _pg.total) _pg.done = true;
     let vms = raw.map(r => adaptItem(r, 'excire'));
-    // API 未支援的維度（型別/星等/日期/尺寸/q/第 2+ 標籤/人數/場景/運動）
-    // → 已載入頁 client-side 過濾（B5 aiTags 未載入時先 await，避免漏濾）
+    // API 未支援的維度（型別/星等/日期/尺寸/q/第 2+ 標籤/人數/場景/運動/表情）
+    // → 已載入頁 client-side 過濾（B5/B6 aiTags 未載入時先 await，避免漏濾）
     let aiTags = null;
-    if (f.people || f.scene || f.sport)
+    if (f.people || f.scene || f.sport || f.expr || f.clothing)
       aiTags = aiTagsSync(_pg.lib.slug) || await loadAiTags(_pg.lib.slug);
     vms = filterItems(vms, { ...f, tags: (f.tags || []).slice(1), domains: [], folders: [] },
                       { aiTags });

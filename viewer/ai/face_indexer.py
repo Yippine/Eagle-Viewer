@@ -205,6 +205,8 @@ def build_face_index(lib: str, limit: int = None, flush_every: int = 64,
     todo = [(iid, p) for iid, p in all_items if iid not in done_set]
     if limit is not None:
         todo = todo[:limit]
+    if progress_cb:                          # 重活前先回報 total，UI 及早脫離「計算工作量…」
+        progress_cb(0, len(todo))
 
     t0 = time.time()
     n_done, n_failed, n_faces_new = 0, 0, 0
@@ -323,6 +325,8 @@ def build_video_face_index(lib: str, limit: int = None, flush_every: int = 8,
             old_vecs = np.asarray(old_vecs)[keep] if old_vecs is not None else None
 
     vec_list = [np.asarray(old_vecs)] if old_vecs is not None and len(meta) else []
+    if progress_cb:                          # 重活前先回報 total，UI 及早脫離「計算工作量…」
+        progress_cb(0, len(todo))
     t0 = time.time()
     n_done, n_failed, n_faces_new = 0, 0, 0
     pending_vecs, pending_meta = [], []

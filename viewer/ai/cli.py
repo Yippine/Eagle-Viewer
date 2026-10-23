@@ -131,6 +131,21 @@ def _cmd_video_face_index(args) -> int:
     return 0
 
 
+def _cmd_face_expr(args) -> int:
+    from .face_expr import build_face_expressions
+
+    def _progress(done, total):
+        pct = done * 100 // max(total, 1)
+        print(f"  進度 {done}/{total}（{pct}%）", flush=True)
+
+    print(f"開始臉部表情索引：{args.lib}（limit={args.limit or '全量'} 臉）")
+    result = build_face_expressions(args.lib, limit=args.limit,
+                                    flush_every=args.flush_every,
+                                    progress_cb=_progress)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def _cmd_scene_tags(args) -> int:
     from .scene_tags import build_scene_tags
 
@@ -171,6 +186,22 @@ def _cmd_face_search(args) -> int:
         print(f"  {rank}. [{h['score']:.4f}] [{same}] {meta.get('name', '?')}"
               f"  (庫={h['lib']}, 資料夾={folders}, id={h['id']},"
               f" det={h['det_score']:.3f}, face_idx={h['face_idx']})")
+    return 0
+
+
+def _cmd_clothing_tags(args) -> int:
+    from .clothing_tags import build_clothing_tags
+
+    def _progress(done, total):
+        pct = done * 100 // max(total, 1)
+        print(f"  進度 {done}/{total}（{pct}%）", flush=True)
+
+    print(f"開始服裝標籤索引：{args.lib}（limit={args.limit or '全量'}）")
+    result = build_clothing_tags(args.lib, limit=args.limit,
+                                 flush_every=args.flush_every,
+                                 progress_cb=_progress,
+                                 debug_scores=args.debug_scores)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -223,6 +254,20 @@ def main(argv=None) -> int:
     p_st = sub.add_parser("scene-tags", help="人數/場景/運動標籤索引（B5）")
     p_st.add_argument("--lib", required=True)
 
+    p_fe = sub.add_parser("face-expr", help="臉部表情索引（B6；FER+，吃既有臉框）")
+    p_fe.add_argument("--lib", required=True)
+    p_fe.add_argument("--limit", type=int, default=None, help="本次最多新處理 N 張臉")
+    p_fe.add_argument("--flush-every", type=int, default=200,
+                      help="每 N 個影像單元落盤（預設 200）")
+
+    p_ct = sub.add_parser("clothing-tags", help="服裝標籤索引（粗類；YOLOX person + CLIP zero-shot）")
+    p_ct.add_argument("--lib", required=True)
+    p_ct.add_argument("--limit", type=int, default=None, help="本次最多新處理 N 個 item")
+    p_ct.add_argument("--flush-every", type=int, default=100,
+                      help="每 N 個 item 落盤（預設 100）")
+    p_ct.add_argument("--debug-scores", action="store_true",
+                      help="印出逐 person 逐槽位全候選分數 + distractor 分數（校準用）")
+
     p_fs = sub.add_parser("face-search", help="以臉找臉（item 的臉 → top-k 相似臉）")
     p_fs.add_argument("--lib", required=True, help="查詢 item 所在庫")
     p_fs.add_argument("--item", required=True, help="查詢 item id")
@@ -237,7 +282,9 @@ def main(argv=None) -> int:
                 "face-index": _cmd_face_index, "face-cluster": _cmd_face_cluster,
                 "face-search": _cmd_face_search,
                 "video-face-index": _cmd_video_face_index,
-                "scene-tags": _cmd_scene_tags}[args.cmd](args)
+                "scene-tags": _cmd_scene_tags,
+                "face-expr": _cmd_face_expr,
+                "clothing-tags": _cmd_clothing_tags}[args.cmd](args)
     except RuntimeError as e:
         print(f"[錯誤] {e}", file=sys.stderr)
         return 1
