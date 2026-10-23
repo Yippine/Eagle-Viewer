@@ -133,7 +133,7 @@ export function resetSearchView() { _sig = null; _lastVms = null; clearTimeout(_
 function _applyChain(vms, route) {
   const f = { ...store.state.filters, q: '' };
   let aiTags = null;
-  if (f.people || f.scene || f.sport || f.expr || f.clothing) {
+  if (f.people || f.scene || f.sport || f.action || f.expr || f.clothing) {
     const scope = route.query.get('scope') || 'all';
     const slug = scope !== 'all' ? parseLibId(scope)?.slug : null;
     if (slug) {

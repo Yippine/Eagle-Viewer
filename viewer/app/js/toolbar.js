@@ -7,7 +7,7 @@
 import { store, defaultFilters } from './store.js';
 import { navigate, parseRoute } from './router.js';
 import { SORT_KEYS, h } from './items.js';
-import { PEOPLE_OPTS, SCENE_OPTS, SPORT_OPTS, EXPR_OPTS, CLOTHING_OPTS,
+import { PEOPLE_OPTS, SCENE_OPTS, SPORT_OPTS, ACTION_OPTS, EXPR_OPTS, CLOTHING_OPTS,
         clothingLabelsSync } from './ai-tags.js';
 
 const TYPE_OPTS = [['all', '全部'], ['image', '圖片'], ['video', '影片'], ['gif', '動圖'], ['bookmark', '書籤']];
@@ -15,7 +15,7 @@ const DATE_OPTS = [['', '任意時間'], ['today', '今天'], ['7d', '7 天內']
 const SIZE_OPTS = [['', '任意尺寸'], ['s', '小（<1MP）'], ['m', '中（1–4MP）'], ['l', '大（4–12MP）'], ['xl', '特大（>12MP）']];
 const DIM_LABEL = { type: '型別', star: '星等', tags: '標籤', date: '日期', size: '尺寸' };
 const ESC_ORDER = ['q', 'presets', 'folders', 'tags', 'domains',
-                   'clothing', 'expr', 'sport', 'scene', 'people',
+                   'clothing', 'expr', 'sport', 'action', 'scene', 'people',
                    'size', 'date', 'star', 'type'];   // Escape 逐層
 const MAX_SEEDS_KEY = 'eagle-pref-max-seeds';
 
@@ -66,6 +66,7 @@ export function syncFromRoute(route) {
   f.people  = q.get('people') || '';
   f.scene   = q.get('scene') || '';
   f.sport   = q.get('sport') || '';
+  f.action  = q.get('action') || '';
   f.expr    = q.get('expr') || '';
   f.clothing = q.get('clothing') || '';
   const key = q.get('sort') || 'shuffle';
@@ -93,6 +94,7 @@ function _serialize() {
   if (f.people)         p.set('people', f.people);
   if (f.scene)          p.set('scene', f.scene);
   if (f.sport)          p.set('sport', f.sport);
+  if (f.action)         p.set('action', f.action);
   if (f.expr)           p.set('expr', f.expr);
   if (f.clothing)       p.set('clothing', f.clothing);
   if (f.q)              p.set('q', f.q);
@@ -197,6 +199,7 @@ export function renderChips() {
     f.people ? (PEOPLE_OPTS.find(o => o[0] === f.people)?.[1] || f.people) : '人數'));
   chips.push(dim('scene', !!f.scene, f.scene || '場景'));
   chips.push(dim('sport', !!f.sport, f.sport || '運動'));
+  chips.push(dim('action', !!f.action, f.action || '動作'));
   chips.push(dim('expr', !!f.expr, f.expr || '表情'));
   chips.push(dim('clothing', !!f.clothing, f.clothing || '服裝'));
 
@@ -208,7 +211,7 @@ export function renderChips() {
 
   const any = f.type !== 'all' || f.star > 0 || f.tags.length || f.date || f.size
     || f.domains.length || f.folders.length || f.presets.length || f.q
-    || f.people || f.scene || f.sport || f.expr || f.clothing;
+    || f.people || f.scene || f.sport || f.action || f.expr || f.clothing;
   if (any) chips.push(`<button class="chip" data-clear-all title="清除全部篩選">✕ 全清</button>`);
 
   box.innerHTML = chips.join('');
@@ -234,7 +237,7 @@ function _escapePop() {
     if (k === 'q' && f.q) return _patch(x => { x.q = ''; });
     if (['presets', 'folders', 'tags', 'domains'].includes(k) && f[k].length)
       return _patch(x => { x[k] = x[k].slice(0, -1); });
-    if (['clothing', 'expr', 'sport', 'scene', 'people'].includes(k) && f[k])
+    if (['clothing', 'expr', 'sport', 'action', 'scene', 'people'].includes(k) && f[k])
       return _patch(x => { x[k] = ''; });
     if (k === 'size' && f.size) return _patch(x => { x.size = ''; });
     if (k === 'date' && f.date) return _patch(x => { x.date = ''; });
@@ -281,9 +284,9 @@ function _dimMenu(anchor, dim) {
     html = SIZE_OPTS.map(([v, l]) => _mi(v, l, f.size === v)).join('');
   } else if (dim === 'people') {
     html = PEOPLE_OPTS.map(([v, l]) => _mi(v, l, f.people === v)).join('');
-  } else if (dim === 'scene' || dim === 'sport' || dim === 'expr') {
-    const opts = { scene: SCENE_OPTS, sport: SPORT_OPTS, expr: EXPR_OPTS }[dim];
-    const anyLabel = { scene: '任意場景', sport: '任意運動', expr: '任意表情' }[dim];
+  } else if (dim === 'scene' || dim === 'sport' || dim === 'action' || dim === 'expr') {
+    const opts = { scene: SCENE_OPTS, sport: SPORT_OPTS, action: ACTION_OPTS, expr: EXPR_OPTS }[dim];
+    const anyLabel = { scene: '任意場景', sport: '任意運動', action: '任意動作', expr: '任意表情' }[dim];
     html = _mi('', anyLabel, f[dim] === '') +
       opts.map(v => _mi(v, v, f[dim] === v)).join('');
   } else if (dim === 'clothing') {
@@ -337,7 +340,7 @@ function _dimMenu(anchor, dim) {
       else if (dim === 'star') x.star = parseInt(it.dataset.v, 10) || 0;
       else if (dim === 'date') x.date = it.dataset.v;
       else if (dim === 'size') x.size = it.dataset.v;
-      else if (['people', 'scene', 'sport', 'expr', 'clothing'].includes(dim)) x[dim] = it.dataset.v;
+      else if (['people', 'scene', 'sport', 'action', 'expr', 'clothing'].includes(dim)) x[dim] = it.dataset.v;
     });
   });
 }

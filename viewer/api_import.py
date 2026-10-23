@@ -282,7 +282,7 @@ _import_lock = threading.Lock()
 # Engine base URLs – override via env vars
 _COBALT_API      = os.environ.get("COBALT_API",      "http://localhost:9001")
 _EVIL_OCTAL_API  = os.environ.get("EVIL_OCTAL_API",  "http://localhost:9003")
-_XHS_API         = os.environ.get("XHS_DOWNLOADER_API", "http://localhost:5555")
+_XHS_API         = os.environ.get("XHS_DOWNLOADER_API", "http://localhost:5755")
 
 # ── Cookie 機制（C1）：config/cookies/{platform}.txt（Netscape 格式）────────
 # 取得方式見 config/cookies/README.md（瀏覽器擴充「Get cookies.txt LOCALLY」匯出）

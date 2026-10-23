@@ -56,6 +56,13 @@ SCENE_LABELS = [
     ("戶外", {"excire": [],
               "prompts": ["在戶外空地拍攝的照片", "室外的自然風景"]}),
 ]
+
+# 高鐵：與「捷運」「火車」視覺相近，CLIP zero-shot 若與其他場景類別放進同一次
+# argmax 判定，會搶走既有「捷運」命中（實測 Handsome 庫 608→457，回歸 151 筆）。
+# 故採保守做法：高鐵獨立一輪判定，且只在該張圖「未被既有 SCENE_LABELS 命中」
+# 時才嘗試打標（見 build_scene_tags），確保既有場景標籤零回歸。
+HSR_LABEL = ("高鐵", {"excire": [],
+                      "prompts": ["高鐵車廂內部", "高鐵月台候車", "高速鐵路列車車廂"]})
 SPORT_LABELS = [
     ("籃球", {"excire": ["basketball"],
               "prompts": ["打籃球的人", "籃球場上的比賽"]}),
@@ -77,6 +84,21 @@ SPORT_LABELS = [
 CLIP_THRESH_SCENE = 0.46
 CLIP_THRESH_SPORT = 0.42
 CLIP_MARGIN       = 0.02     # 與同維度第二名的最小差距（argmax 保守化）
+
+# ── 動作辨識（粗動作，item 4 全新維度）────────────────────────────────────
+# 站/坐/跑/跳/游泳/攀爬/親吻，皆為開放詞彙種子範例、非封閉集合。
+# 沿用同一套 _clip_zero_shot 管線；門檻以 Handsome/TSJH 庫抽驗校準（見
+# tmp/recog-r25/verify.py 結果）。細動作（投籃/揮拍等）需姿態模型，暫不做。
+ACTION_LABELS = [
+    ("站立", {"excire": [], "prompts": ["站立的人", "站著的人物"]}),
+    ("坐著", {"excire": [], "prompts": ["坐著的人", "坐在椅子或地上的人物"]}),
+    ("跑步", {"excire": [], "prompts": ["奔跑中的人", "在跑步機或路上跑步的人"]}),
+    ("跳躍", {"excire": [], "prompts": ["跳躍中的人", "騰空跳起的人物"]}),
+    ("游泳", {"excire": [], "prompts": ["在水裡游泳的人", "泳池中游泳的人物"]}),
+    ("攀爬", {"excire": [], "prompts": ["攀爬中的人", "爬山或攀岩的人物"]}),
+    ("親吻", {"excire": [], "prompts": ["親吻中的情侶", "兩人接吻的畫面"]}),
+]
+CLIP_THRESH_ACTION = 0.40
 
 
 def scene_tags_file(lib: str):
@@ -194,23 +216,40 @@ def build_scene_tags(lib: str, progress_cb=None) -> dict:
 
     people = _people_counts(lib)
     if progress_cb:
-        progress_cb(1, 4)
+        progress_cb(1, 5)
     ex_scene = _excire_label_items(lib, SCENE_LABELS)
     ex_sport = _excire_label_items(lib, SPORT_LABELS)
     if progress_cb:
-        progress_cb(2, 4)
+        progress_cb(2, 5)
 
     clip_ok = False
     clip_scene: dict = {}
     clip_sport: dict = {}
+    clip_hsr: dict = {}
+    clip_action: dict = {}
     vecs, ids = load_index(lib)
     if vecs is not None and len(ids):
         clip_scene = _clip_zero_shot(vecs, ids, SCENE_LABELS,
                                      CLIP_THRESH_SCENE, set(ex_scene))
         if progress_cb:
-            progress_cb(3, 4)
+            progress_cb(3, 5)
         clip_sport = _clip_zero_shot(vecs, ids, SPORT_LABELS,
                                      CLIP_THRESH_SPORT, set(ex_sport))
+
+        # 高鐵：保守做法，只在「未被既有 SCENE_LABELS/Excire 命中」的圖上獨立
+        # 判定，避免與捷運/火車搶票造成既有標籤回歸（見 HSR_LABEL 註解）。
+        already_scene = set(ex_scene) | set(clip_scene)
+        idx_map = {iid: i for i, iid in enumerate(ids)}
+        remain_ids = [iid for iid in ids if iid not in already_scene]
+        if remain_ids:
+            remain_vecs = vecs[[idx_map[i] for i in remain_ids]]
+            clip_hsr = _clip_zero_shot(remain_vecs, remain_ids, [HSR_LABEL],
+                                       CLIP_THRESH_SCENE, set())
+        if progress_cb:
+            progress_cb(4, 5)
+
+        clip_action = _clip_zero_shot(vecs, ids, ACTION_LABELS,
+                                      CLIP_THRESH_ACTION, set())
         clip_ok = True
 
     items: dict = {}
@@ -227,21 +266,28 @@ def build_scene_tags(lib: str, progress_cb=None) -> dict:
     for iid, (zh, s) in clip_scene.items():
         e = _entry(iid)
         e["scene"], e["scene_src"], e["scene_score"] = zh, "clip", s
+    for iid, (zh, s) in clip_hsr.items():
+        e = _entry(iid)
+        e["scene"], e["scene_src"], e["scene_score"] = zh, "clip", s
     for iid, zh in ex_sport.items():
         e = _entry(iid)
         e["sport"], e["sport_src"] = zh, "excire"
     for iid, (zh, s) in clip_sport.items():
         e = _entry(iid)
         e["sport"], e["sport_src"], e["sport_score"] = zh, "clip", s
+    for iid, (zh, s) in clip_action.items():
+        e = _entry(iid)
+        e["action"], e["action_src"], e["action_score"] = zh, "clip", s
 
     out = {
         "lib": lib,
         "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "clip": clip_ok,
         "thresholds": {"scene": CLIP_THRESH_SCENE, "sport": CLIP_THRESH_SPORT,
-                       "margin": CLIP_MARGIN},
-        "labels": {"scene": [zh for zh, _ in SCENE_LABELS],
-                   "sport": [zh for zh, _ in SPORT_LABELS]},
+                       "action": CLIP_THRESH_ACTION, "margin": CLIP_MARGIN},
+        "labels": {"scene": [zh for zh, _ in SCENE_LABELS] + [HSR_LABEL[0]],
+                   "sport": [zh for zh, _ in SPORT_LABELS],
+                   "action": [zh for zh, _ in ACTION_LABELS]},
         "items": items,
     }
     d.mkdir(parents=True, exist_ok=True)
@@ -249,10 +295,12 @@ def build_scene_tags(lib: str, progress_cb=None) -> dict:
     tmp.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, scene_tags_file(lib))
     if progress_cb:
-        progress_cb(4, 4)
+        progress_cb(5, 5)
 
     return {"lib": lib, "items_tagged": len(items),
             "people_items": len(people),
-            "scene_excire": len(ex_scene), "scene_clip": len(clip_scene),
+            "scene_excire": len(ex_scene),
+            "scene_clip": len(clip_scene) + len(clip_hsr),
             "sport_excire": len(ex_sport), "sport_clip": len(clip_sport),
+            "action_clip": len(clip_action),
             "clip": clip_ok}

@@ -15,9 +15,11 @@ export { peopleMatch };
 export const PEOPLE_OPTS = [
   ['', '任意人數'], ['1', '1 人'], ['2', '2 人'], ['3-5', '3–5 人'], ['6+', '6 人以上'],
 ];
-export const SCENE_OPTS = ['捷運', '火車', '公車', '教室', '場館', '廁所',
+export const SCENE_OPTS = ['捷運', '火車', '高鐵', '公車', '教室', '場館', '廁所',
                            '客廳', '浴室', '走廊', '宿舍', '戶外'];
 export const SPORT_OPTS = ['籃球', '足球', '羽毛球', '棒球', '賽車', '拳擊'];
+/* 動作粗類（item 4；與後端 scene_tags.ACTION_LABELS 同步） */
+export const ACTION_OPTS = ['站立', '坐著', '跑步', '跳躍', '游泳', '攀爬', '親吻'];
 /* B6 表情八類（與後端 fer_setup.EXPR_LABELS_ZH 同步；順序依常用度） */
 export const EXPR_OPTS = ['開心', '難過', '生氣', '驚訝', '害怕', '厭惡', '中性', '輕蔑'];
 /* 服裝粗類 fallback（與後端 clothing_tags.CLOTHING_SLOTS 同步；載入前 / 失敗時使用，

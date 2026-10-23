@@ -176,11 +176,12 @@ export function filterItems(items, f, opts = {}) {
     if (f.size && sizeBucket(i.width, i.height) !== f.size) return false;
     if (domains && !domains.has(i.domain)) return false;
 
-    if (aiTags && (f.people || f.scene || f.sport || f.expr || f.clothing)) { // B5/B6 + 服裝
+    if (aiTags && (f.people || f.scene || f.sport || f.action || f.expr || f.clothing)) { // B5/B6 + 服裝
       const t = aiTags[i.id] || {};
       if (f.people && !peopleMatch(f.people, t.people || 0)) return false;
       if (f.scene && t.scene !== f.scene) return false;
       if (f.sport && t.sport !== f.sport) return false;
+      if (f.action && t.action !== f.action) return false;
       if (f.expr && !(t.expr || []).includes(f.expr)) return false; // 任一臉命中即符合
       if (f.clothing && !(t.clothing || []).includes(f.clothing)) return false; // 一圖多件服裝
     }

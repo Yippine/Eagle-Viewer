@@ -5,7 +5,7 @@
 # 端口對應：
 #   9001  → cobalt API        （X.com / YouTube / Facebook / TikTok 全球版…）
 #   9003  → Evil0ctal API     （抖音 / Douyin）
-#   5555  → XHS-Downloader    （小紅書 / XiaoHongShu）
+#   5755  → XHS-Downloader    （小紅書 / XiaoHongShu；原 5555 落入 Windows Hyper-V 動態保留埠 5458-5557 無法 bind）
 
 services:
 
@@ -37,7 +37,7 @@ services:
     restart: unless-stopped
     container_name: eagle-xhs
     ports:
-      - "127.0.0.1:5555:5556"         # 容器內部 port 為 5556（A3）
+      - "127.0.0.1:5755:5556"         # 容器內部 port 為 5556（A3）
     dns:                              # C2：台灣 ISP DNS 將 xiaohongshu.com/xhslink.com 汙染至
       - 8.8.8.8                       #     140.111.x.x 政府 sinkhole，改走公共 DNS 取回真實 IP
       - 1.1.1.1

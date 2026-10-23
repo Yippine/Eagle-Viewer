@@ -271,7 +271,7 @@ export function initShell(ctx = {}) {
   $('sidebar').addEventListener('click', e => {
     if (e.target.closest('[data-lib], [data-folder], [data-coll], [data-smart]') && !e.ctrlKey && !e.metaKey)
       closeSideDrawer({ navigating: true });
-  });
+  }, true);   // capture：須早於子鈕的 navigate（location.hash 賦值可能同步觸發 popstate，guard 未丟會吞掉 render）
 
   /* 斷點切換清理：桌面化時移除 sheet/overlay 殘態 */
   window.addEventListener('resize', () => {
