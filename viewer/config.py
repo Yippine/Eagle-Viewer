@@ -24,6 +24,7 @@ SCHEMA_VERSION = 4  # v4: +ext field migration（補齊舊 library 缺失的 ext
 # ---------------------------------------------------------------------------
 LIBRARY_PATHS: dict = {}                         # lib folder name → full Path
 FOLDER_PATHS: dict  = {}                         # folder source name → full Path (Excire-style)
+EXCIRE_PATHS: dict  = {}                         # Excire library display name → full Path (read-only)
 _lib_locks: dict    = defaultdict(threading.Lock)
 _extract_lock       = threading.Lock()
 
@@ -43,9 +44,10 @@ def _win_to_posix(raw: str) -> str:
 
 
 def _load_config() -> None:
-    """Read data/config.json and populate LIBRARY_PATHS / FOLDER_PATHS in-place."""
+    """Read data/config.json and populate LIBRARY_PATHS / FOLDER_PATHS / EXCIRE_PATHS in-place."""
     LIBRARY_PATHS.clear()
     FOLDER_PATHS.clear()
+    EXCIRE_PATHS.clear()
     if CONFIG_FILE.exists():
         try:
             cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -63,6 +65,19 @@ def _load_config() -> None:
                         # Use "ParentName_folderName" to avoid collisions (e.g. multiple "resource" dirs)
                         key = f"{p.parent.name}_{p.name}" if p.parent.name else p.name
                         FOLDER_PATHS[key] = p
+            # Excire libraries: dict {顯示名: 路徑} 或 list [路徑,...]（顯示名取目錄名）。
+            # 不檢查 exists()：路徑/DB 缺失時由 excire.py 標示 unavailable（優雅降級）。
+            excire_cfg = cfg.get("excire_libraries", {})
+            if isinstance(excire_cfg, dict):
+                excire_pairs = list(excire_cfg.items())
+            elif isinstance(excire_cfg, list):
+                excire_pairs = [(Path(_win_to_posix(str(x).strip())).name, x) for x in excire_cfg]
+            else:
+                excire_pairs = []
+            for name, raw in excire_pairs:
+                ep = _win_to_posix(str(raw).strip())
+                if name and ep:
+                    EXCIRE_PATHS[str(name)] = Path(ep)
         except Exception:
             pass
 

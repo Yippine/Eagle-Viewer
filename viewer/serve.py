@@ -19,9 +19,10 @@ from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, unquote
 
 from config import (
-    DATA_DIR, LIBRARY_PATHS, FOLDER_PATHS, MAX_HISTORY, SCHEMA_VERSION,
+    DATA_DIR, LIBRARY_PATHS, FOLDER_PATHS, EXCIRE_PATHS, MAX_HISTORY, SCHEMA_VERSION,
     VIEWER_DIR, _lib_locks, _load_config, _add_library_path, _add_folder_path,
 )
+from excire import get_excire_library, list_excire_libraries
 from extract import (
     _find_local_files, _index_library, _list_libraries,
     _run_incremental, _run_one,
@@ -552,6 +553,12 @@ class _Handler(BaseHTTPRequestHandler):
         if up == "/api/folder-sources":
             self._json(200, _list_folder_sources()); return
 
+        if up == "/api/excire/libraries" or up.startswith("/api/excire/"):
+            self._handle_excire_api(up); return
+
+        if up.startswith(("/excire-thumb/", "/excire-preview/", "/excire-file/")):
+            self._handle_excire_media(up); return
+
         if up == "/api/views":
             lib = self._query_lib()
             if not lib: self._err(400, "Missing ?lib= parameter"); return
@@ -685,7 +692,88 @@ class _Handler(BaseHTTPRequestHandler):
                 results[svc] = {"ok": False, "error": str(e)[:120]}
         self._json(200, {"ok": True, "services": results})
 
-    def _serve_file(self, fs: Path, mime: str):
+    # ── Excire read-only integration ─────────────────────────────────────────
+
+    def _handle_excire_api(self, up: str):
+        """GET /api/excire/... — Excire 唯讀 API（庫清單/照片/資料夾/相簿/標籤/人臉）"""
+        if up == "/api/excire/libraries":
+            self._json(200, list_excire_libraries()); return
+
+        m = re.match(r"^/api/excire/([^/]+)/(photos|folders|collections|keywords)$", up)
+        if m:
+            lib_name, action = m.group(1), m.group(2)
+            lib = get_excire_library(lib_name)
+            if lib is None:
+                self._err(404, f"Excire 資源庫未設定：{lib_name}"); return
+            if action != "photos" and not lib.available:
+                self._err(503, f"Excire 資源庫無法使用（DB 不存在）：{lib_name}"); return
+            if action == "photos":
+                qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+                p = parse_qs(qs)
+                _get = lambda k, d=None: unquote(p[k][0]).strip() if p.get(k) else d
+                try:
+                    result = lib.list_photos(
+                        offset=int(_get("offset", "0") or 0),
+                        limit=int(_get("limit", "100") or 100),
+                        folder=int(_get("folder")) if _get("folder") else None,
+                        keyword=_get("keyword") or None,
+                        collection=int(_get("collection")) if _get("collection") else None,
+                        sort=_get("sort", "date") or "date",
+                        order=_get("order", _get("dir", "desc")) or "desc",
+                    )
+                except ValueError:
+                    self._err(400, "Invalid query parameter"); return
+                self._json(200, {"ok": True, "library": lib_name, **result}); return
+            if action == "folders":
+                self._json(200, {"ok": True, "folders": lib.folder_tree()}); return
+            if action == "collections":
+                self._json(200, {"ok": True, "collections": lib.collections()}); return
+            if action == "keywords":
+                self._json(200, {"ok": True, "keywords": lib.keywords(),
+                                  "ai_available": lib.ai_available}); return
+
+        m = re.match(r"^/api/excire/([^/]+)/faces/(\d+)$", up)
+        if m:
+            lib = get_excire_library(m.group(1))
+            if lib is None:
+                self._err(404, f"Excire 資源庫未設定：{m.group(1)}"); return
+            photo_id = int(m.group(2))
+            self._json(200, {"ok": True, "photo_id": photo_id,
+                              "faces": lib.faces(photo_id),
+                              "ai_available": lib.ai_available}); return
+
+        self._err(404, "Not found: " + up)
+
+    def _handle_excire_media(self, up: str):
+        """GET /excire-thumb|/excire-preview|/excire-file/{lib}/{photo_id}
+        縮圖 → 預覽 → 原圖逐層 fallback；原圖/影片走 _serve_file（支援 Range）。"""
+        m = re.match(r"^/excire-(thumb|preview|file)/([^/]+)/(\d+)$", up)
+        if not m:
+            self._err(404, "Not found: " + up); return
+        kind, lib_name, photo_id = m.group(1), m.group(2), int(m.group(3))
+        lib = get_excire_library(lib_name)
+        if lib is None:
+            self._err(404, f"Excire 資源庫未設定：{lib_name}"); return
+        if not lib.available:
+            self._err(503, f"Excire 資源庫無法使用：{lib_name}"); return
+
+        if kind == "thumb":
+            chain = [lib.thumb_path(photo_id), lib.preview_path(photo_id),
+                     lib.original_path(photo_id)]
+        elif kind == "preview":
+            chain = [lib.preview_path(photo_id), lib.thumb_path(photo_id),
+                     lib.original_path(photo_id)]
+        else:
+            chain = [lib.original_path(photo_id)]
+
+        fs = next((p for p in chain if p is not None and p.exists()), None)
+        if fs is None:
+            self._err(404, f"找不到照片檔案：{lib_name}/{photo_id}"); return
+        # 縮圖/預覽為內容穩定的 JPG → 長效快取；原圖不快取
+        cache = 86400 if kind in ("thumb", "preview") else 0
+        self._serve_file(fs, _guess_mime(fs), cache=cache)
+
+    def _serve_file(self, fs: Path, mime: str, cache: int = 0):
         try:
             size = fs.stat().st_size
         except OSError:
@@ -697,6 +785,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(size))
         self.send_header("Accept-Ranges", "bytes")
+        if cache > 0:
+            self.send_header("Cache-Control", f"public, max-age={cache}")
         self.end_headers()
         self._send_file_body(fs, 0, size)
 
@@ -1223,6 +1313,8 @@ def main():
     print(f"  Viewer dir:  {VIEWER_DIR}")
     lib_info = f"{len(LIBRARY_PATHS)} 個資源庫" if LIBRARY_PATHS else "(尚未設定 — 開啟瀏覽器新增)"
     print(f"  Libraries :  {lib_info}")
+    if EXCIRE_PATHS:
+        print(f"  Excire    :  {len(EXCIRE_PATHS)} 個資源庫（唯讀）: {', '.join(sorted(EXCIRE_PATHS))}")
     print(f"  Data dir  :  {DATA_DIR}")
     print("  Press Ctrl-C to stop.")
     print(bar)
