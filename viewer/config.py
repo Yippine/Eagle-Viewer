@@ -11,8 +11,32 @@ from pathlib import Path
 SCRIPT_DIR  = Path(__file__).resolve().parent   # → viewer/
 VIEWER_DIR  = SCRIPT_DIR
 PROJECT_DIR = VIEWER_DIR.parent                  # → Eagle-Viewer/
+
+
+def _load_env_file() -> None:
+    """單一設定來源：.ai-core/config/.env（KEY=VALUE，# 開頭為註解，永不進版控）。
+    stdlib-only 手動解析（不引入 python-dotenv 依賴），僅在 os.environ 尚未有該 key 時寫入，
+    真正的 shell/系統環境變數（若存在）優先權不變。模組匯入時最早執行，須早於任何
+    os.environ.get(...) 讀取（本檔案下方 DATA_DIR 起、api_import.py 等皆依賴此順序）。
+    """
+    env_path = PROJECT_DIR / ".ai-core" / "config" / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_env_file()
+
 # EAGLE_VIEWER_DATA_DIR：隔離測試用資料目錄覆寫（config.json / 快取 / journal 全數改落此處），
-# 未設定時維持既有 data/ 佈局。
+# 未設定時維持既有 data/ 佈局；來源見 .ai-core/config/.env。
 DATA_DIR    = Path(os.environ.get("EAGLE_VIEWER_DATA_DIR") or (PROJECT_DIR / "data"))
 CONFIG_FILE = DATA_DIR / "config.json"
 

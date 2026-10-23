@@ -5,12 +5,14 @@
 ══════════════════════════════════════════════════════════════════════*/
 
 import { fmtTime, fmtTimeF } from './utils.js';
-import { _VCS, _getActive } from './vc-state.js';
+import { _VCS, _getActive, _loadFilterPresets, vcBackupNow, vcListBackups, vcRestoreBackup } from './vc-state.js';
 import { _restoreOriginalSrc } from './vc-canvas.js';
 import { vcRenderSelectiveChips, vcStopEyedropper, vcApplyFilter, vcIsSelectiveLooping, vcSyncColorPopover } from './vc-filters.js';
-import { vcRenderFilterPresets } from './vc-presets.js';
+import { vcRenderFilterPresets, vcRenderAbPresets } from './vc-presets.js';
+import { vcCompareOff, vcInitCompareButtons } from './vc-compare.js';
 import { vcApplyTransform, vcRenderTransformActions } from './vc-transform.js';
 import { vcSyncPlayback } from './vc-playback.js';
+import { E2_FILTER_DEFAULT, ensureE2 } from './vc-engine2.js';
 
 /* ══════════════════════════════════════════════════════════════════
    圖片專有控制（Image Tab：Zoom / Fit / BgColor / Navigation）
@@ -51,7 +53,9 @@ export function vcSetModalBg(color) {
 
 /* ── Reset（全部重置）─────────────────────────────────────────── */
 export function vcResetAll() {
+  vcCompareOff();
   _VCS.filter      = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
+  _VCS.filter2      = { ...E2_FILTER_DEFAULT };
   _VCS.selectiveList = []; _VCS._activeSelectiveId = null;
   _VCS.tx          = { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0,
                         rotate: 0, flipH: false, flipV: false };
@@ -68,6 +72,46 @@ export function vcResetAll() {
   vcSyncPanel();
   vcRenderFilterPresets();
   vcRenderTransformActions();
+}
+
+/* ── 備份與還原 UI ────────────────────────────────────────────── */
+export async function vcBackupNowUI() {
+  try { await vcBackupNow(); _showToast('<span>已建立備份</span>'); vcRenderBackupList(); }
+  catch { _showToast('<span>備份失敗</span>'); }
+}
+
+export async function vcRenderBackupList() {
+  const el = document.getElementById('vc-backup-list');
+  if (!el) return;
+  el.textContent = '載入中…';
+  try {
+    const list = await vcListBackups();
+    if (!Array.isArray(list) || !list.length) { el.textContent = '尚無備份'; return; }
+    el.innerHTML = '';
+    list.forEach(b => {
+      const row = document.createElement('div');
+      row.className = 'vc-backup-item';
+      const ts = b.ts ? new Date(b.ts * 1000).toLocaleString() : '';
+      const nameEl = document.createElement('span');
+      nameEl.textContent = b.name;
+      const tsEl = document.createElement('span');
+      tsEl.textContent = ts;
+      const btn = document.createElement('button');
+      btn.className = 'vc-text-btn';
+      btn.textContent = '還原';
+      btn.onclick = async () => {
+        if (!confirm(`確定要還原「${b.name}」嗎？目前資料將先自動備份。`)) return;
+        try {
+          await vcRestoreBackup(b.name);
+          _showToast('<span>已還原備份</span>');
+          vcRenderFilterPresets();
+          vcRenderBackupList();
+        } catch { _showToast('<span>還原失敗</span>'); }
+      };
+      row.append(nameEl, tsEl, btn);
+      el.appendChild(row);
+    });
+  } catch { el.textContent = '載入失敗'; }
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -268,8 +312,50 @@ export function vcInitValueEdit() {
   });
 }
 
+/* ── 全面板通用滑桿細調：Shift 拖曳/方向鍵 = ×0.1 step；雙擊 = 還原預設 ── */
+let _sliderFineInited = false;
+export function vcInitSliderFine() {
+  if (_sliderFineInited) return;
+  const panel = document.getElementById('vc-panel');
+  if (!panel) return;
+  _sliderFineInited = true;
+  const isRange = el => el && el.tagName === 'INPUT' && el.type === 'range';
+  const fineOn = el => {
+    if (el.dataset.origStep != null) return;
+    el.dataset.origStep = el.step || '1';
+    const fine = parseFloat(el.dataset.origStep) * 0.1;
+    el.step = fine > 0 ? String(fine) : el.step;
+  };
+  const fineOff = el => {
+    if (el.dataset.origStep == null) return;
+    el.step = el.dataset.origStep;
+    delete el.dataset.origStep;
+  };
+  panel.addEventListener('pointerdown', e => {
+    const el = e.target;
+    if (isRange(el) && e.shiftKey) fineOn(el);
+  }, true);
+  panel.addEventListener('pointerup', e => { if (isRange(e.target)) fineOff(e.target); }, true);
+  panel.addEventListener('keydown', e => {
+    const el = e.target;
+    if (!isRange(el)) return;
+    if (e.shiftKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) fineOn(el);
+  });
+  panel.addEventListener('keyup', e => { if (isRange(e.target)) fineOff(e.target); });
+  panel.addEventListener('dblclick', e => {
+    const el = e.target;
+    if (!isRange(el)) return;
+    const def = el.dataset.default != null ? el.dataset.default : el.defaultValue;
+    if (def == null) return;
+    el.value = def;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
 export function vcInitDragHandle() {
   vcInitValueEdit();
+  vcInitSliderFine();
+  vcInitCompareButtons();
   if (_vcDragInited) return;
   _vcDragInited = true;
   const panel   = document.getElementById('vc-panel');
@@ -322,6 +408,26 @@ export function vcSyncPanel() {
   _setSlider('vc-sepia',     f.sepia     ?? 0, (f.sepia ?? 0) + '%');
   _setSlider('vc-sharpness', f.sharpness ?? 0, (f.sharpness > 0 ? '+' : '') + (f.sharpness ?? 0));
 
+  /* ── Engine 切換 + v1/v2 區塊顯示 ─────────────────────────────── */
+  const engine = _VCS.engine === 2 ? 2 : 1;
+  document.querySelectorAll('#vc-engine-seg [data-engine]').forEach(btn =>
+    btn.classList.toggle('active', +btn.dataset.engine === engine));
+  const v1El = document.getElementById('vc-filters-v1');
+  const v2El = document.getElementById('vc-filters-v2');
+  if (v1El) v1El.style.display = engine === 1 ? '' : 'none';
+  if (v2El) v2El.style.display = engine === 2 ? '' : 'none';
+
+  if (engine === 2) {
+    const f2 = { ...E2_FILTER_DEFAULT, ..._VCS.filter2 };
+    _setSlider('vc-f2-exposure',   f2.exposure,   (f2.exposure / 50 >= 0 ? '+' : '') + (f2.exposure / 50).toFixed(2));
+    _setSlider('vc-f2-contrast',   f2.contrast,   (f2.contrast > 0 ? '+' : '') + Math.round(f2.contrast));
+    _setSlider('vc-f2-saturation', f2.saturation, (f2.saturation > 0 ? '+' : '') + Math.round(f2.saturation));
+    _setSlider('vc-f2-vibrance',   f2.vibrance,   Math.round(f2.vibrance));
+    _setSlider('vc-f2-hueRotate',  f2.hueRotate,  Math.round(f2.hueRotate) + '°');
+    _setSlider('vc-f2-sepia',      f2.sepia,      Math.round(f2.sepia) + '%');
+    _setSlider('vc-f2-sharpness',  f2.sharpness,  (f2.sharpness > 0 ? '+' : '') + Math.round(f2.sharpness));
+  }
+
   // 多色塊 UI 同步
   vcRenderSelectiveChips();
   const sel      = _getActive();
@@ -338,7 +444,7 @@ export function vcSyncPanel() {
     swatchEl.title = (hasPick ? (sel.mode === 'lum' ? `中性色（明度 ${Math.round((sel.targetLum ?? 0) * 100)}%）` : `色相 ${sel.targetHue}°`) : '未取色') + '——點開顏色圓盤';
     swatchEl.classList.toggle('vc-sel-swatch-empty', !hasPick);
   }
-  if (deltasEl) deltasEl.style.display = hasPick ? '' : 'none';
+  if (deltasEl) deltasEl.style.display = (hasPick && engine === 1) ? '' : 'none';
   const isLum = hasPick && sel.mode === 'lum';
   const hl = document.getElementById('vc-sel-hueshift-l'), rl = document.getElementById('vc-sel-range-l');
   if (hl) hl.textContent = isLum ? '上色色調' : '色調';
@@ -376,8 +482,8 @@ export function vcSyncPanel() {
       btn.title = v !== null ? `套用播放頁籤 ${i === 0 ? 'A' : 'B'}（${fmtTimeF(v)}）為${lbl}` : `以目前播放位置設為${lbl}（播放頁籤未設 ${i === 0 ? 'A' : 'B'}）`;
       btn.classList.toggle('vc-sel-ab-linked', v !== null);
     });
-    if (sEl && document.activeElement !== sEl) sEl.textContent = sel && sel.abStart !== null ? fmtTimeF(sel.abStart) : '–';
-    if (eEl && document.activeElement !== eEl) eEl.textContent = sel && sel.abEnd   !== null ? fmtTimeF(sel.abEnd)   : '–';
+    if (sEl && document.activeElement !== sEl) sEl.value = sel && sel.abStart !== null ? fmtTimeF(sel.abStart) : '';
+    if (eEl && document.activeElement !== eEl) eEl.value = sel && sel.abEnd   !== null ? fmtTimeF(sel.abEnd)   : '';
   }
   const _fmtDelta = v => (v > 0 ? '+' : '') + v.toFixed(2);
   const _s = sel ?? { hueShift: 0, range: 30, brightness: 0, contrast: 0, saturate: 0, sepia: 0 };
@@ -387,6 +493,40 @@ export function vcSyncPanel() {
   _setSlider('vc-sel-contrast',   _s.contrast,   _fmtDelta(_s.contrast));
   _setSlider('vc-sel-saturate',   _s.saturate,   _fmtDelta(_s.saturate));
   _setSlider('vc-sel-sepia',      _s.sepia,      _s.sepia.toFixed(2));
+
+  /* ── v2 選色（e2）UI 同步 ─────────────────────────────────────── */
+  const deltasV2El = document.getElementById('vc-sel-deltas-v2');
+  if (deltasV2El) deltasV2El.style.display = (hasPick && engine === 2) ? '' : 'none';
+  if (hasPick && engine === 2) {
+    ensureE2(sel);
+    const e2 = sel.e2;
+    document.querySelectorAll('#vc-sel2-mode-seg [data-mode]').forEach(btn =>
+      btn.classList.toggle('active', btn.dataset.mode === e2.mode));
+    const tgtRow = document.getElementById('vc-sel2-target-row');
+    const offRow = document.getElementById('vc-sel2-offset-row');
+    if (tgtRow) tgtRow.style.display = e2.mode === 'set' ? '' : 'none';
+    if (offRow) offRow.style.display = e2.mode === 'offset' ? '' : 'none';
+    const tgtSwatch = document.getElementById('vc-sel2-tgt-swatch');
+    if (tgtSwatch) tgtSwatch.style.background = e2.target?.hex || '#000';
+    const tgtHex = document.getElementById('vc-sel2-tgt-hex');
+    if (tgtHex && document.activeElement !== tgtHex) tgtHex.value = (e2.target?.hex || '').toUpperCase();
+    _setSlider('vc-sel2-strength', e2.target?.strength ?? 100, Math.round(e2.target?.strength ?? 100));
+    _setSlider('vc-sel2-keepl',    e2.target?.keepL    ?? 100, Math.round(e2.target?.keepL    ?? 100));
+    _setSlider('vc-sel2-dh', e2.dH, (e2.dH > 0 ? '+' : '') + Math.round(e2.dH) + '°');
+    _setSlider('vc-sel2-dc', e2.dC, (e2.dC > 0 ? '+' : '') + Math.round(e2.dC));
+    _setSlider('vc-sel2-dl', e2.dL, (e2.dL > 0 ? '+' : '') + Math.round(e2.dL));
+    _setSlider('vc-sel2-contrast', e2.contrast, (e2.contrast > 0 ? '+' : '') + Math.round(e2.contrast));
+    _setSlider('vc-sel2-vibrance', e2.vibrance, Math.round(e2.vibrance));
+    _setSlider('vc-sel2-sepia',    e2.sepia,    Math.round(e2.sepia));
+    _setSlider('vc-sel2-hw', e2.qual.hW, '±' + Math.round(e2.qual.hW) + '°');
+    _setSlider('vc-sel2-hsoft', e2.qual.hSoft, Math.round(e2.qual.hSoft) + '°');
+    _setSlider('vc-sel2-sc',    e2.qual.sC,    Math.round(e2.qual.sC));
+    _setSlider('vc-sel2-sw',    e2.qual.sW,    Math.round(e2.qual.sW));
+    _setSlider('vc-sel2-ssoft', e2.qual.sSoft, Math.round(e2.qual.sSoft));
+    _setSlider('vc-sel2-lc',    e2.qual.lC,    Math.round(e2.qual.lC));
+    _setSlider('vc-sel2-lw',    e2.qual.lW,    Math.round(e2.qual.lW));
+    _setSlider('vc-sel2-lsoft', e2.qual.lSoft, Math.round(e2.qual.lSoft));
+  }
 
   _setSlider('vc-scalex', t.scaleX,     t.scaleX.toFixed(2) + '×');
   _setSlider('vc-scaley', t.scaleY,     t.scaleY.toFixed(2) + '×');
@@ -404,9 +544,10 @@ export function vcSyncPanel() {
   const tog  = document.getElementById('vc-ab-toggle');
   const btnA = document.getElementById('vc-btn-a');
   const btnB = document.getElementById('vc-btn-b');
-  if (aEl)  aEl.textContent = ab.a !== null ? fmtTimeF(ab.a) : '–';
-  if (bEl)  bEl.textContent = ab.b !== null ? fmtTimeF(ab.b) : '–';
+  if (aEl && document.activeElement !== aEl) aEl.value = ab.a !== null ? fmtTimeF(ab.a) : '';
+  if (bEl && document.activeElement !== bEl) bEl.value = ab.b !== null ? fmtTimeF(ab.b) : '';
   if (tog)  { tog.textContent = ab.active ? 'AB 開啟' : 'AB 關閉'; tog.classList.toggle('vc-on', ab.active); }
+  vcRenderAbPresets();   // 設定庫列的 🔁 高亮跟隨 AB 狀態（手動關閉/清除時同步）
   if (btnA) btnA.classList.toggle('vc-on', ab.a !== null);
   if (btnB) btnB.classList.toggle('vc-on', ab.b !== null);
 

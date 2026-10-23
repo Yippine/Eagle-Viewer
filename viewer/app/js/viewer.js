@@ -15,7 +15,7 @@ import { navigate, parseRoute, parseLibId } from './router.js';
 import { h, serializeTerms } from './items.js';
 import { vcState, vcInitVid, vcInitMedia, vcSetMediaType, vcAbTimeUpdate,
          vcRegisterAutoplayNext, vcRegisterImageZoom, vcRegisterImageNav,
-         vcApplyTransform, vcSyncGlCanvas, vcSyncPanel, vcCancelCrop }
+         vcApplyTransform, vcSyncGlCanvas, vcSyncPanel, vcCancelCrop, vcIsInteractionLocked, vcCompareHold, vcCompareOff }
   from '../../viewer/js/video-controls.js';
 import { openDrawer, closeDrawer, toggleDrawer, isDrawerOpen,
          syncDrawerFromQuery, setDrawerInfo } from './vc-drawer.js';
@@ -121,6 +121,7 @@ function _requestClose() {
 function _teardown() {
   _commitTrack();
   vcCancelCrop();
+  vcCompareOff();                                  // 分割／按住比對：解除 document 層攔截監聽，否則關閉後整頁卡死
   _closeTagsPop();
   if (V.media?.tagName === 'VIDEO') { V.media.pause(); V.media.src = ''; }
   $('uv-zoom').innerHTML = '';
@@ -466,7 +467,8 @@ function _onKey(e) {
     return;
   }
   const map = {
-    ' ':          () => V.kind === 'video' && _togglePlay(),
+    ' ':          () => V.kind === 'video' && !vcIsInteractionLocked() && _togglePlay(),
+    '\\':         () => {},                                   // 按住 \ = 看原圖（keydown 開、keyup 關，見下方）
     'ArrowLeft':  () => V.kind === 'video' ? _seekBy(-5) : _nav(-1),
     'ArrowRight': () => V.kind === 'video' ? _seekBy(5) : _nav(1),
     'ArrowUp':    () => _nav(-1),
@@ -558,6 +560,7 @@ export function initViewer(resolvers = {}) {
     if (e.target.closest('.uv-nav, #uv-controls')) return;
     if (V.iz.dragging) return;
     const cur = V.items[V.idx];
+    if (vcIsInteractionLocked()) return;                 // 取色筆／比對模式：點畫面不播放、不關閉
     if (V.kind === 'video' && e.target === V.media) {
       clearTimeout(V.dblTimer);
       V.dblTimer = setTimeout(() => _togglePlay(), 260);
@@ -569,6 +572,7 @@ export function initViewer(resolvers = {}) {
     }
   });
   stage.addEventListener('dblclick', e => {
+    if (vcIsInteractionLocked()) return;
     if (V.kind === 'video' && e.target === V.media) { clearTimeout(V.dblTimer); _toggleFs(); }
   });
 
@@ -586,7 +590,7 @@ export function initViewer(resolvers = {}) {
       el.textContent = text || ''; el.classList.toggle('show', !!text);
     },
     requestClose: _requestClose,
-    togglePlay: _togglePlay,
+    togglePlay: () => { if (!vcIsInteractionLocked()) _togglePlay(); },
     toggleUi: () => { $('uviewer').classList.toggle('ui-hidden'); clearTimeout(V.uiTimer); },
     getZoom: () => (V.kind === 'video' ? V.vz.s : V.iz.s),
     zoomTo: (s, ax, ay) => { V.kind === 'video' ? _vzSet(s, ax, ay) : _izZoom(0, s, ax, ay); },
@@ -598,6 +602,10 @@ export function initViewer(resolvers = {}) {
   });
   document.addEventListener('mouseup', _izUp);
   document.addEventListener('keydown', _onKey, true);
+  // Lightroom 語彙：按住 \ 顯示原圖（before），放開還原；不在輸入框時才生效
+  document.addEventListener('keydown', e => { if (e.key === '\\' && V.open && !e.repeat && !/^(input|textarea|select)$/i.test(e.target.tagName) && !e.target.isContentEditable) { e.preventDefault(); vcCompareHold(true); } }, true);
+  document.addEventListener('keyup',   e => { if (e.key === '\\') vcCompareHold(false); }, true);
+  window.addEventListener('blur', () => vcCompareHold(false));
   window.addEventListener('resize', () => {
     if (V.open && V.media) { vcSyncGlCanvas(V.media); if (V.kind === 'image') _izApply(); }
   });

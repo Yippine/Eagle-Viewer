@@ -341,9 +341,9 @@ try {
       <div class="vc-section">
         <div class="vc-section-label">⟲ AB 循環</div>
         <div class="vc-ab-points">
-          <div class="vc-ab-point"><button class="vc-point-btn" id="vc-btn-a" onclick="_vcSetA()">A</button><span class="vc-a-time vc-ab-editable" id="vc-a-time"contenteditable="true" inputmode="decimal" spellcheck="false"onfocus="_vcAbSpanFocus(this)"onblur="_vcAbSpanEdit('a',this)"onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">–</span></div>
+          <div class="vc-ab-point"><button class="vc-point-btn" id="vc-btn-a" onclick="_vcSetA()">A</button><input class="vc-a-time vc-ab-editable" id="vc-a-time" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="–" title="點擊輸入 A 點（m:ss 或秒）" onfocus="_vcAbSpanFocus(this)" onchange="_vcAbSpanEdit('a',this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"></div>
           <span class="vc-ab-sep">→</span>
-          <div class="vc-ab-point"><button class="vc-point-btn" id="vc-btn-b" onclick="_vcSetB()">B</button><span class="vc-b-time vc-ab-editable" id="vc-b-time"contenteditable="true" inputmode="decimal" spellcheck="false"onfocus="_vcAbSpanFocus(this)"onblur="_vcAbSpanEdit('b',this)"onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">–</span></div>
+          <div class="vc-ab-point"><button class="vc-point-btn" id="vc-btn-b" onclick="_vcSetB()">B</button><input class="vc-b-time vc-ab-editable" id="vc-b-time" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="–" title="點擊輸入 B 點（m:ss 或秒）" onfocus="_vcAbSpanFocus(this)" onchange="_vcAbSpanEdit('b',this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"></div>
         </div>
         <div class="vc-ab-row">
           <button class="vc-toggle-btn" id="vc-ab-toggle" onclick="_vcToggleAb()">AB 關閉</button>
@@ -359,18 +359,44 @@ try {
 
     <!-- TAB：濾鏡 -->
     <div class="vc-tab-pane" id="vc-pane-filters">
+      <div class="vc-engine-seg" id="vc-engine-seg">
+        <button data-engine="1" onclick="vcSetEngine(1)"><b>v1</b> 舊版</button>
+        <button data-engine="2" onclick="vcSetEngine(2)"><b>v2</b> 新版</button>
+      </div>
+      <!-- 比對原圖：按住＝原圖（Lightroom Mobile／Snapseed 語彙，桌機 \ 鍵）；分割＝左套用右原圖拖曳（Lightroom Y／Resolve wipe）；比對中鎖播放 -->
+      <div class="vc-cmp-row">
+        <button id="vc-cmp-hold-btn" class="vc-toggle-btn" title="按住不放：顯示原圖；放開還原（桌機也可按住 \ 鍵）">👁 按住看原圖</button>
+        <button id="vc-cmp-wipe-btn" class="vc-toggle-btn" onclick="vcCompareWipeToggle()" title="分割比對：左＝套用、右＝原圖，左右拖曳分割線；再按一次結束">⇆ 分割比對</button>
+      </div>
+      <div id="vc-filters-v1">
       <div class="vc-section">
         <div class="vc-section-header">
           <span class="vc-section-label">◐ 色彩調整</span>
           <button class="vc-icon-btn" onclick="vcResetFilters()" title="重置色彩">↺</button>
         </div>
-        <div class="vc-slider-row"><span class="vc-label">亮度</span><input type="range" id="vc-brightness" min="0" max="3" step="0.05" value="1"oninput="_vcFilter('brightness',+this.value)"><span class="vc-val" id="vc-brightness-v">1.00</span></div>
-        <div class="vc-slider-row"><span class="vc-label">對比</span><input type="range" id="vc-contrast" min="0" max="3" step="0.05" value="1"oninput="_vcFilter('contrast',+this.value)"><span class="vc-val" id="vc-contrast-v">1.00</span></div>
-        <div class="vc-slider-row"><span class="vc-label">飽和</span><input type="range" id="vc-saturate" min="0" max="3" step="0.05" value="1"oninput="_vcFilter('saturate',+this.value)"><span class="vc-val" id="vc-saturate-v">1.00</span></div>
+        <div class="vc-slider-row"><span class="vc-label">亮度</span><input type="range" id="vc-brightness" min="0" max="3" step="0.01" value="1" data-default="1" oninput="_vcFilter('brightness',+this.value)"><span class="vc-val" id="vc-brightness-v">1.00</span></div>
+        <div class="vc-slider-row"><span class="vc-label">對比</span><input type="range" id="vc-contrast" min="0" max="3" step="0.01" value="1" data-default="1" oninput="_vcFilter('contrast',+this.value)"><span class="vc-val" id="vc-contrast-v">1.00</span></div>
+        <div class="vc-slider-row"><span class="vc-label">飽和</span><input type="range" id="vc-saturate" min="0" max="3" step="0.01" value="1" data-default="1" oninput="_vcFilter('saturate',+this.value)"><span class="vc-val" id="vc-saturate-v">1.00</span></div>
         <div class="vc-slider-row"><span class="vc-label">色調</span><input type="range" id="vc-hue" min="0" max="360" step="1" value="0"oninput="_vcFilter('hueRotate',+this.value)"><span class="vc-val" id="vc-hue-v">0°</span></div>
         <div class="vc-slider-row"><span class="vc-label">復古</span><input type="range" id="vc-sepia" min="0" max="100" step="1" value="0"oninput="_vcFilter('sepia',+this.value)"><span class="vc-val" id="vc-sepia-v">0%</span></div>
         <div class="vc-slider-row"><span class="vc-label">銳化</span><input type="range" id="vc-sharpness" min="-10" max="10" step="1" value="0"oninput="_vcFilter('sharpness',+this.value)"><span class="vc-val" id="vc-sharpness-v">0</span></div>
       </div>
+      </div><!-- /vc-filters-v1 -->
+      <div id="vc-filters-v2" style="display:none">
+      <div class="vc-section">
+        <div class="vc-section-header">
+          <span class="vc-section-label">◐ 色彩調整（v2）</span>
+          <button class="vc-icon-btn" onclick="vcResetFilters()" title="重置色彩">↺</button>
+        </div>
+        <div class="vc-slider-row"><span class="vc-label">曝光</span><input type="range" id="vc-f2-exposure" min="-100" max="100" step="1" value="0" data-default="0" oninput="vcSetFilter2('exposure',+this.value)"><span class="vc-val" id="vc-f2-exposure-v">+0.00 EV</span></div>
+        <div class="vc-slider-row"><span class="vc-label">對比</span><input type="range" id="vc-f2-contrast" min="-100" max="100" step="1" value="0" data-default="0" oninput="vcSetFilter2('contrast',+this.value)"><span class="vc-val" id="vc-f2-contrast-v">0</span></div>
+        <div class="vc-slider-row"><span class="vc-label">飽和</span><input type="range" id="vc-f2-saturation" min="-100" max="200" step="1" value="0" data-default="0" oninput="vcSetFilter2('saturation',+this.value)"><span class="vc-val" id="vc-f2-saturation-v">0</span></div>
+        <div class="vc-slider-row"><span class="vc-label">活力</span><input type="range" id="vc-f2-vibrance" min="0" max="100" step="1" value="0" data-default="0" disabled title="Phase 3" oninput="vcSetFilter2('vibrance',+this.value)"><span class="vc-val" id="vc-f2-vibrance-v">0</span></div>
+        <div class="vc-slider-row"><span class="vc-label">色相</span><input type="range" id="vc-f2-hueRotate" min="0" max="360" step="1" value="0" data-default="0" oninput="vcSetFilter2('hueRotate',+this.value)"><span class="vc-val" id="vc-f2-hueRotate-v">0°</span></div>
+        <div class="vc-slider-row"><span class="vc-label">復古</span><input type="range" id="vc-f2-sepia" min="0" max="100" step="1" value="0" data-default="0" oninput="vcSetFilter2('sepia',+this.value)"><span class="vc-val" id="vc-f2-sepia-v">0%</span></div>
+        <div class="vc-slider-row"><span class="vc-label">銳化</span><input type="range" id="vc-f2-sharpness" min="-10" max="10" step="1" value="0" data-default="0" oninput="vcSetFilter2('sharpness',+this.value)"><span class="vc-val" id="vc-f2-sharpness-v">0</span></div>
+      </div>
+      </div><!-- /vc-filters-v2 -->
       <!-- 選色（260823 自獨立 tab 併回濾鏡：濾鏡庫同時保存色彩調整＋選色，避免跨頁籤往返） -->
 <div class="vc-section">
         <div class="vc-sel-header-row">
@@ -397,16 +423,17 @@ try {
           </div>
           <div class="vc-sel-color-body">
             <div class="vc-sel-wheel-wrap">
-              <canvas id="vc-sel-wheel" width="160" height="160" aria-label="色環：點或拖曳選色相"></canvas>
+              <canvas id="vc-sel-wheel" width="440" height="440" aria-label="色環：點或拖曳選色相"></canvas>
               <span id="vc-sel-wheel-dot" class="vc-sel-wheel-dot"></span>
             </div>
             <div class="vc-sel-color-inputs">
-              <label>HEX <input id="vc-sel-hex" class="vc-input" inputmode="text" maxlength="7" placeholder="#RRGGBB"
-                     onchange="vcSetSelectiveHex(this.value)" onkeydown="if(event.key==='Enter'){this.blur()}"></label>
-              <div class="vc-sel-rgb-row">
-                <label>R <input id="vc-sel-r" class="vc-input" type="number" min="0" max="255" inputmode="numeric" onchange="_vcSelRgbInput()"></label>
-                <label>G <input id="vc-sel-g" class="vc-input" type="number" min="0" max="255" inputmode="numeric" onchange="_vcSelRgbInput()"></label>
-                <label>B <input id="vc-sel-b" class="vc-input" type="number" min="0" max="255" inputmode="numeric" onchange="_vcSelRgbInput()"></label>
+              <!-- 色環在上、輸入列在下（Figma／iOS 色彩選擇器窄版面慣例）：HEX 寬欄 + R/G/B 短欄同列，標籤浮於欄位上方 -->
+              <div class="vc-sel-color-fields">
+                <label class="vc-sel-field vc-sel-field-hex"><span>HEX</span><input id="vc-sel-hex" class="vc-input" inputmode="text" maxlength="7" placeholder="#RRGGBB"
+                       onchange="vcSetSelectiveHex(this.value)" onkeydown="if(event.key==='Enter'){this.blur()}"></label>
+                <label class="vc-sel-field"><span>R</span><input id="vc-sel-r" class="vc-input" type="number" min="0" max="255" inputmode="numeric" onchange="_vcSelRgbInput()"></label>
+                <label class="vc-sel-field"><span>G</span><input id="vc-sel-g" class="vc-input" type="number" min="0" max="255" inputmode="numeric" onchange="_vcSelRgbInput()"></label>
+                <label class="vc-sel-field"><span>B</span><input id="vc-sel-b" class="vc-input" type="number" min="0" max="255" inputmode="numeric" onchange="_vcSelRgbInput()"></label>
               </div>
               <p class="vc-sel-color-note">灰階（飽和度 &lt;20%）自動改為「明度選取」；選色無透明度概念（遮罩強度由「選色寬度」控制）。</p>
               <button class="vc-toggle-btn vc-sel-clear-btn" onclick="vcClearSelectiveColor();vcToggleColorPopover(false)">清除取色</button>
@@ -422,17 +449,48 @@ try {
           <div class="vc-slider-row"><span class="vc-label">飽和</span><input type="range" id="vc-sel-saturate" min="-1" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('saturate',+this.value)"><span class="vc-val" id="vc-sel-saturate-v">0.00</span></div>
           <div class="vc-slider-row"><span class="vc-label">復古</span><input type="range" id="vc-sel-sepia" min="0" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('sepia',+this.value)"><span class="vc-val" id="vc-sel-sepia-v">0.00</span></div>
         </div>
+        <div id="vc-sel-deltas-v2" style="display:none">
+          <div class="vc-sel-deltas-title">調整選取色彩（v2）</div>
+          <div class="vc-engine-seg" id="vc-sel2-mode-seg">
+            <button data-mode="offset" onclick="vcSetSel2('mode','offset')">位移</button>
+            <button data-mode="set" onclick="vcSetSel2('mode','set')">目標色</button>
+          </div>
+            <div class="vc-slider-row"><span class="vc-label">選色寬度</span><input type="range" id="vc-sel2-hw" min="0" max="180" step="1" value="30" data-default="30" title="以選取色為中心的色相容差（±度）" oninput="vcSetSel2('qual.hW',+this.value)"><span class="vc-val" id="vc-sel2-hw-v">30</span></div>
+            <div class="vc-slider-row"><span class="vc-label">邊緣羽化</span><input type="range" id="vc-sel2-hsoft" min="0" max="60" step="1" value="6" data-default="6" oninput="vcSetSel2('qual.hSoft',+this.value)"><span class="vc-val" id="vc-sel2-hsoft-v">6</span></div>
+          <div id="vc-sel2-target-row" style="display:none">
+            <div class="vc-sel-eyedropper-row">
+              <button id="vc-sel2-tgt-swatch" class="vc-sel-swatch" title="目標色"></button>
+              <input id="vc-sel2-tgt-hex" class="vc-input vc-sel2-tgt-hex" inputmode="text" maxlength="7" placeholder="#RRGGBB" onchange="vcSetSel2('target.hex',this.value)">
+            </div>
+            <button class="vc-toggle-btn vc-sel2-tgt-pick-btn" onclick="vcStartEyedropper('target')">🎯 取色筆從畫面選目標色</button>
+            <div class="vc-slider-row"><span class="vc-label">強度</span><input type="range" id="vc-sel2-strength" min="0" max="100" step="1" value="100" data-default="100" oninput="vcSetSel2('target.strength',+this.value)"><span class="vc-val" id="vc-sel2-strength-v">100</span></div>
+            <div class="vc-slider-row"><span class="vc-label">明度保留</span><input type="range" id="vc-sel2-keepl" min="0" max="100" step="1" value="100" data-default="100" oninput="vcSetSel2('target.keepL',+this.value)"><span class="vc-val" id="vc-sel2-keepl-v">100</span></div>
+          </div>
+          <div id="vc-sel2-offset-row" style="display:none">
+            <div class="vc-slider-row"><span class="vc-label">色調</span><input type="range" id="vc-sel2-dh" min="-180" max="180" step="1" value="0" data-default="0" oninput="vcSetSel2('dH',+this.value)"><span class="vc-val" id="vc-sel2-dh-v">0°</span></div>
+            <div class="vc-slider-row"><span class="vc-label">彩度</span><input type="range" id="vc-sel2-dc" min="-100" max="100" step="1" value="0" data-default="0" oninput="vcSetSel2('dC',+this.value)"><span class="vc-val" id="vc-sel2-dc-v">0</span></div>
+            <div class="vc-slider-row"><span class="vc-label">亮度</span><input type="range" id="vc-sel2-dl" min="-100" max="100" step="1" value="0" data-default="0" oninput="vcSetSel2('dL',+this.value)"><span class="vc-val" id="vc-sel2-dl-v">0</span></div>
+          </div>
+          <div class="vc-slider-row"><span class="vc-label">對比</span><input type="range" id="vc-sel2-contrast" min="-100" max="100" step="1" value="0" data-default="0" oninput="vcSetSel2('contrast',+this.value)"><span class="vc-val" id="vc-sel2-contrast-v">0</span></div>
+          <div class="vc-slider-row"><span class="vc-label">活力</span><input type="range" id="vc-sel2-vibrance" min="0" max="100" step="1" value="0" data-default="0" oninput="vcSetSel2('vibrance',+this.value)"><span class="vc-val" id="vc-sel2-vibrance-v">0</span></div>
+          <div class="vc-slider-row"><span class="vc-label">復古</span><input type="range" id="vc-sel2-sepia" min="0" max="100" step="1" value="0" data-default="0" oninput="vcSetSel2('sepia',+this.value)"><span class="vc-val" id="vc-sel2-sepia-v">0</span></div>
+          <details class="vc-section">
+            <summary>進階選取範圍（飽和／明度）</summary>
+            <div class="vc-slider-row"><span class="vc-label">飽和中心</span><input type="range" id="vc-sel2-sc" min="0" max="100" step="1" value="50" data-default="50" oninput="vcSetSel2('qual.sC',+this.value)"><span class="vc-val" id="vc-sel2-sc-v">50</span></div>
+            <div class="vc-slider-row"><span class="vc-label">飽和半寬</span><input type="range" id="vc-sel2-sw" min="0" max="100" step="1" value="50" data-default="50" oninput="vcSetSel2('qual.sW',+this.value)"><span class="vc-val" id="vc-sel2-sw-v">50</span></div>
+            <div class="vc-slider-row"><span class="vc-label">飽和羽化</span><input type="range" id="vc-sel2-ssoft" min="0" max="100" step="1" value="10" data-default="10" oninput="vcSetSel2('qual.sSoft',+this.value)"><span class="vc-val" id="vc-sel2-ssoft-v">10</span></div>
+            <div class="vc-slider-row"><span class="vc-label">明度中心</span><input type="range" id="vc-sel2-lc" min="0" max="100" step="1" value="50" data-default="50" oninput="vcSetSel2('qual.lC',+this.value)"><span class="vc-val" id="vc-sel2-lc-v">50</span></div>
+            <div class="vc-slider-row"><span class="vc-label">明度半寬</span><input type="range" id="vc-sel2-lw" min="0" max="100" step="1" value="50" data-default="50" oninput="vcSetSel2('qual.lW',+this.value)"><span class="vc-val" id="vc-sel2-lw-v">50</span></div>
+            <div class="vc-slider-row"><span class="vc-label">明度羽化</span><input type="range" id="vc-sel2-lsoft" min="0" max="100" step="1" value="10" data-default="10" oninput="vcSetSel2('qual.lSoft',+this.value)"><span class="vc-val" id="vc-sel2-lsoft-v">10</span></div>
+          </details>
+        </div>
         <!-- 選色時段（直接在此輸入／以目前位置設定；「套用目前 AB」只是快捷） -->
         <div class="vc-sel-ab-row" id="vc-sel-ab-row" style="display:none">
           <span class="vc-label">⏱ 時段</span>
           <button class="vc-point-btn vc-sel-ab-now" title="以目前播放位置設為起點" onclick="_vcSelAbNow('start')">A</button>
-          <span class="vc-ab-editable vc-sel-ab-time" id="vc-sel-ab-start" contenteditable="true" inputmode="decimal" spellcheck="false"
-                title="點擊輸入起點（m:ss 或秒）" onfocus="_vcAbSpanFocus(this)" onblur="_vcSelAbEdit('start',this)"
-                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">–</span>
+          <input class="vc-ab-editable vc-sel-ab-time" id="vc-sel-ab-start" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="–" title="點擊輸入起點（m:ss 或秒）" onfocus="_vcAbSpanFocus(this)" onchange="_vcSelAbEdit('start',this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">
           <span class="vc-ab-sep">→</span>
-          <span class="vc-ab-editable vc-sel-ab-time" id="vc-sel-ab-end" contenteditable="true" inputmode="decimal" spellcheck="false"
-                title="點擊輸入終點（m:ss 或秒）" onfocus="_vcAbSpanFocus(this)" onblur="_vcSelAbEdit('end',this)"
-                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">–</span>
+          <input class="vc-ab-editable vc-sel-ab-time" id="vc-sel-ab-end" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="–" title="點擊輸入終點（m:ss 或秒）" onfocus="_vcAbSpanFocus(this)" onchange="_vcSelAbEdit('end',this)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">
           <button class="vc-point-btn vc-sel-ab-now" title="以目前播放位置設為終點" onclick="_vcSelAbNow('end')">B</button>
           <button class="vc-icon-btn" id="vc-sel-bind-ab-btn" onclick="vcBindAbToSelective()"
                   title="快捷：套用播放頁籤目前的 A/B 時段" style="display:none">⟲</button>
@@ -449,6 +507,11 @@ try {
         <div class="vc-section-label">🔖 濾鏡庫</div>
         <div id="vc-filter-presets"></div>
       </div>
+      <details class="vc-section" ontoggle="if(this.open) vcRenderBackupList()">
+        <summary>🗄 備份與還原</summary>
+        <button class="vc-text-btn" onclick="vcBackupNowUI()">立即備份</button>
+        <div id="vc-backup-list"></div>
+      </details>
     </div><!-- /vc-pane-filters -->
 
     

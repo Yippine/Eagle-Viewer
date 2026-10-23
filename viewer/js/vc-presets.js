@@ -7,8 +7,10 @@ import { fmtTime, fmtTimeF } from './utils.js';
 import { _VCS, _selDefault, _uid,
          _loadFilterPresets, _saveFilterPresets,
          _loadVideoFilterData, _saveVideoFilterData,
-         _isFilterDefault, _isSelectiveDefault } from './vc-state.js';
-import { vcApplyFilter } from './vc-filters.js';
+         _isFilterDefault, _isSelectiveDefault,
+         vcSetEngineState, _isCurrentDefault } from './vc-state.js';
+import { ensureE2, ensureFilter2 } from './vc-engine2.js';
+import { vcApplyFilter, vcResetFilters } from './vc-filters.js';
 import { _showToast, vcDismissToast, vcSyncPanel } from './vc-panel.js';
 
 function _filterAutoName(f) {
@@ -27,9 +29,25 @@ function _filterAutoName(f) {
   return parts.length ? parts.join('・') : '原色';
 }
 
+function _filterAutoNameE2(f2) {
+  const parts = [];
+  if      (f2.exposure > 20)          parts.push('偏亮');
+  else if (f2.exposure < -20)         parts.push('偏暗');
+  if      (f2.contrast > 30)          parts.push('高對比');
+  if      (f2.saturation > 40)        parts.push('高飽和');
+  else if (f2.saturation < -30)       parts.push('褪色');
+  const h = f2.hueRotate;
+  if      (h >= 20  && h <= 80)       parts.push('暖色調');
+  else if (h >= 160 && h <= 260)      parts.push('冷色調');
+  if (f2.sepia > 30)                  parts.push('復古');
+  if (f2.sharpness > 3)               parts.push('銳化');
+  else if (f2.sharpness < -3)         parts.push('柔焦');
+  return parts.length ? parts.join('・') : '原色';
+}
+
 export function vcSaveFilterPreset(force = false) {
   vcDismissToast();
-  if (_isFilterDefault(_VCS.filter) && _isSelectiveDefault(_VCS.selectiveList)) {
+  if (_isCurrentDefault()) {
     _showToast('<span>目前為預設色調，無需儲存。</span>');
     return;
   }
@@ -40,6 +58,14 @@ export function vcSaveFilterPreset(force = false) {
     const curSelStr = JSON.stringify(normList(_VCS.selectiveList));
     const dup = _loadFilterPresets().find(p => {
       if (p.deleted) return false;
+      if (_VCS.engine === 2) {
+        ensureFilter2(p);
+        const fMatch = JSON.stringify(p.filter2) === JSON.stringify(_VCS.filter2);
+        if (!fMatch) return false;
+        const pSelE2 = normList(p.selective).map(s => (ensureE2(s), s.e2));
+        const curSelE2 = normList(_VCS.selectiveList).map(s => s.e2);
+        return JSON.stringify(pSelE2) === JSON.stringify(curSelE2);
+      }
       const fMatch =
         p.filter?.brightness === _VCS.filter.brightness &&
         p.filter?.contrast   === _VCS.filter.contrast   &&
@@ -58,14 +84,17 @@ export function vcSaveFilterPreset(force = false) {
       return;
     }
   }
-  const suggested = _filterAutoName(_VCS.filter);
+  const suggested = _VCS.engine === 2 ? _filterAutoNameE2(_VCS.filter2) : _filterAutoName(_VCS.filter);
   const name = prompt('濾鏡名稱：', suggested);
   if (name === null) return;
   const presets = _loadFilterPresets();
   const id = _uid();
   presets.push({
     id, name: name.trim() || suggested,
-    filter: { ..._VCS.filter },
+    filter:  { ..._VCS.filter },
+    filter2: { ..._VCS.filter2 },
+    engine:  _VCS.engine,
+    e2Auto:  false,
     selective: _VCS.selectiveList.map(s => ({ ...s })),
     createdAt:  new Date().toISOString(),
     modifiedAt: Date.now(),
@@ -87,19 +116,36 @@ export function vcSaveFilterPreset(force = false) {
   document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
 }
 
+/** 濾鏡庫清單專用 toggle：點未套用的 → 套用；點目前套用中的 → 取消套用回到原圖（再點即重新套用）。
+    只在清單提供此語意；其他程式化套用路徑仍用 vcApplyFilterPreset。 */
+export function vcToggleApplyFilterPreset(id) {
+  if (_VCS._activeFilterPresetId === id) {
+    _unapplyFilterPreset();
+    _showToast('<span>已取消套用（原圖）。再點同一濾鏡即重新套用</span>', 2500);
+    return;
+  }
+  vcApplyFilterPreset(id);
+}
+function _unapplyFilterPreset() {
+  vcResetFilters();                                    // 與「重設」同一條路（含 GL canvas 隱藏、lastUsed=null、面板同步）
+  document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
+}
 export function vcApplyFilterPreset(id) {
   const preset = _loadFilterPresets().find(p => p.id === id);
   if (!preset) return;
+  ensureFilter2(preset);
   _VCS.filter               = { sepia: 0, sharpness: 0, ...preset.filter };
+  _VCS.filter2              = { ...preset.filter2 };
   if (Array.isArray(preset.selective)) {
-    _VCS.selectiveList = preset.selective.map(s => ({ ..._selDefault(s.id), ...s }));
+    _VCS.selectiveList = preset.selective.map(s => ensureE2({ ..._selDefault(s.id), ...s }));
   } else if (preset.selective && preset.selective.targetHue != null) {
-    _VCS.selectiveList = [{ ..._selDefault(), ...preset.selective }];
+    _VCS.selectiveList = [ensureE2({ ..._selDefault(), ...preset.selective })];
   } else {
     _VCS.selectiveList = [];
   }
   _VCS._activeSelectiveId = _VCS.selectiveList[0]?.id ?? null;
   _VCS._activeFilterPresetId = id;
+  vcSetEngineState(preset.engine ?? 1);
   // 僅記錄 lastUsed（下次開啟自動恢復），不寫入 presetIds
   // presetIds 只由 🔖（vcToggleVideoFilterPreset）管理
   if (_VCS._itemId) {
@@ -190,8 +236,37 @@ export function vcRenameFilterPreset(id) {
   document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
 }
 
+/** 複製濾鏡：深拷貝一份（含 v1/v2 全欄位與選色），命名「原名 2」（已存在則 3、4…），
+    自動套用並連結到本影片 → 之後的調整只動複製品，原濾鏡不受影響。 */
+export function vcDuplicateFilterPreset(id) {
+  const presets = _loadFilterPresets();
+  const src = presets.find(p => p.id === id);
+  if (!src) return;
+  const base = src.name.replace(/\s\d+$/, '');
+  const names = new Set(presets.filter(p => !p.deleted).map(p => p.name));
+  let n = 2, name = `${base} ${n}`;
+  while (names.has(name)) { n++; name = `${base} ${n}`; }
+  const dup = JSON.parse(JSON.stringify(src));
+  dup.id = _uid(); dup.name = name; dup.deleted = false;
+  dup.createdAt = new Date().toISOString(); dup.modifiedAt = Date.now();
+  const idx = presets.indexOf(src);
+  presets.splice(idx + 1, 0, dup);            // 緊接在原濾鏡之後
+  _saveFilterPresets(presets);
+  vcApplyFilterPreset(dup.id);               // 套用複製品（成為目前濾鏡、記 lastUsed）
+  if (_VCS._itemId) {                        // 連結到本影片（🔖），與儲存新濾鏡行為一致
+    const vfl = _loadVideoFilterData(_VCS._itemId);
+    if (!vfl.presetIds) vfl.presetIds = [];
+    if (!vfl.presetIds.includes(dup.id)) vfl.presetIds.push(dup.id);
+    vfl.lastUsed = dup.id;
+    _saveVideoFilterData(_VCS._itemId, vfl);
+  }
+  vcRenderFilterPresets();
+  document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
+  _showToast(`<span>已複製為「${name}」並套用；現在的調整只會存到複製品</span>`);
+}
+
 export function vcOverwriteFilterPreset(id) {
-  if (_isFilterDefault(_VCS.filter) && _isSelectiveDefault(_VCS.selectiveList)) {
+  if (_isCurrentDefault()) {
     _showToast('<span>目前為預設色調，無法覆蓋。</span>');
     return;
   }
@@ -199,6 +274,9 @@ export function vcOverwriteFilterPreset(id) {
   const preset  = presets.find(p => p.id === id);
   if (!preset) return;
   preset.filter     = { ..._VCS.filter };
+  preset.filter2    = { ..._VCS.filter2 };
+  preset.engine     = _VCS.engine;
+  preset.e2Auto     = false;
   preset.selective  = _VCS.selectiveList.map(s => ({ ...s }));
   preset.modifiedAt = Date.now();
   _saveFilterPresets(presets);
@@ -234,8 +312,9 @@ export function vcRenderFilterPresets() {
       (hasItem
         ? `<button class="${bmCls}" onclick="vcToggleVideoFilterPreset('${p.id}')" title="${bmTip}">🔖</button>`
         : '') +
-      `<button class="vc-preset-name" onclick="vcApplyFilterPreset('${p.id}')">${p.name}</button>` +
+      `<button class="vc-preset-name" onclick="vcToggleApplyFilterPreset('${p.id}')" title="${isActive ? '再點一次：取消套用（回到原圖）' : '套用此濾鏡'}">${p.name}</button>` +
       (isActive ? `<button class="vc-preset-overwrite" onclick="vcOverwriteFilterPreset('${p.id}')" title="以當前色調覆蓋此預設">↺</button>` : '') +
+      `<button class="vc-preset-edit" onclick="vcDuplicateFilterPreset('${p.id}')" title="複製此濾鏡（命名「${p.name} 2」並套用；之後調整只動複製品）">⧉</button>` +
       `<button class="vc-preset-edit" onclick="vcRenameFilterPreset('${p.id}')" title="重新命名">✏️</button>` +
       `<button class="vc-preset-del"  onclick="vcDeleteFilterPreset('${p.id}')"  title="刪除">🗑</button>` +
     `</div>`;
@@ -286,11 +365,52 @@ export function vcSaveAbPreset() {
   vcRenderAbPresets();
 }
 
+/* 點選設定庫列 = 一鍵套用（與色塊「一鍵播放」同語彙：寫入 AB + 開啟循環 + seek 至起點 + 播放；
+   同一時段循環中再點 = 停止）。不再需要另外上滑點「AB 開啟」。 */
+function _applyAbRange(a, b, srcSel, label) {
+  const vid = _VCS._vid;
+  const same = _VCS.ab.active && _VCS.ab.a !== null && _VCS.ab.b !== null && _near(_VCS.ab.a, a) && _near(_VCS.ab.b, b);
+  if (same) {
+    _VCS.abSeq = { items: [], idx: 0 };
+    _VCS.ab = { a: null, b: null, active: false, srcSel: null };
+    _showToast('<span>已停止 AB 循環</span>');
+  } else {
+    _VCS.abSeq = { items: [], idx: 0 };             // 單點 = 單段，離開序列模式
+    _VCS.ab = { a, b, active: true, srcSel };
+    if (vid) { vid.currentTime = a; vid.play?.().catch?.(() => {}); }
+    _showToast(`<span>AB 循環 ${label}（再點一次停止）</span>`);
+  }
+  vcSyncPanel();
+}
+/* ── AB 序列播放（播放頁籤限定）：勾選 ≥2 列 → 依勾選順序循環（A→C→A）。
+   濾鏡頁籤色塊維持單選（色塊點擊主語意為編輯，多選會與欄位調整衝突）。 */
+function _seqHas(key) { return _VCS.abSeq.items.findIndex(x => x.key === key); }
+export function vcToggleAbSeq(key, a, b, label, srcSel = null) {
+  const seq = _VCS.abSeq;
+  const i = _seqHas(key);
+  if (i >= 0) seq.items.splice(i, 1); else seq.items.push({ key, a, b, label, srcSel });
+  const vid = _VCS._vid;
+  if (seq.items.length === 0) {
+    _VCS.ab = { a: null, b: null, active: false, srcSel: null };
+  } else {
+    // 重新從第一段開始（順序 = 勾選順序）；單段時等同一般 AB 循環
+    seq.idx = 0;
+    const f = seq.items[0];
+    _VCS.ab = { a: f.a, b: f.b, active: true, srcSel: f.srcSel ?? null };
+    if (vid) { vid.currentTime = f.a; vid.play?.().catch?.(() => {}); }
+    if (seq.items.length >= 2) _showToast(`<span>序列播放 ${seq.items.map((x, k) => `${'①②③④⑤⑥⑦⑧⑨⑩'[k] || k + 1}`).join('→')}（循環）</span>`);
+  }
+  vcSyncPanel();
+}
+export function vcClearAbSeq() {
+  _VCS.abSeq = { items: [], idx: 0 };
+  _VCS.ab = { a: null, b: null, active: false, srcSel: null };
+  vcSyncPanel();
+}
 export function vcLoadAbPreset(id) {
   const p = _loadAbPresets(_VCS._itemId).find(x => x.id === id);
   if (!p) return;
-  _VCS.ab = { a: p.abStart, b: p.abEnd, active: false, srcSel: null };
-  vcSyncPanel();
+  _applyAbRange(p.abStart, p.abEnd, null, `${fmtTimeF(p.abStart)}–${fmtTimeF(p.abEnd)}`);
 }
 
 export function vcDeleteAbPreset(id) {
@@ -314,6 +434,7 @@ export function vcRenameAbPreset(id) {
    AB 設定庫 = 已儲存（手動、無條件可存）∪ 色塊時段（自選色色塊即時抓取，隨色塊增刪自動同步）。
    去重律：色塊時段若與某已儲存設定完全相同（±0.05s）→ 只顯示已儲存那筆並加色點標示，不重複列。 */
 const _near = (x, y) => Math.abs(x - y) < 0.05;
+const _isAbOn = (a, b) => _VCS.ab.active && _VCS.ab.a !== null && _VCS.ab.b !== null && _near(_VCS.ab.a, a) && _near(_VCS.ab.b, b);
 function _chipRanges() {
   return (_VCS.selectiveList || []).filter(s => s.abStart !== null && s.abEnd !== null)
     .map((s, i) => ({ id: s.id, a: s.abStart, b: s.abEnd, idx: _VCS.selectiveList.indexOf(s) + 1,
@@ -324,8 +445,7 @@ function _chipRanges() {
 export function vcLoadChipRange(selId) {
   const s = (_VCS.selectiveList || []).find(x => x.id === selId);
   if (!s || s.abStart === null) return;
-  _VCS.ab = { a: s.abStart, b: s.abEnd, active: false, srcSel: s.id };
-  vcSyncPanel();
+  _applyAbRange(s.abStart, s.abEnd, s.id, `色塊 ${_VCS.selectiveList.indexOf(s) + 1}・${fmtTimeF(s.abStart)}–${fmtTimeF(s.abEnd)}`);
 }
 /** 把色塊時段落地成一筆已儲存設定（之後獨立於色塊） */
 export function vcSaveChipRangeAsPreset(selId) {
@@ -350,11 +470,25 @@ export function vcRenderAbPresets() {
     el.innerHTML = '<div class="vc-preset-empty">尚無 AB 設定（手動 A/B 後按「儲存」，或為選色色塊設定時段）</div>'; return;
   }
   const dot = (color, title) => `<span class="vc-ab-chip-dot" style="background:${color}" title="${title}"></span>`;
+  const seq = _VCS.abSeq.items;
+  const seqOn = seq.length >= 2 && _VCS.ab.active;
+  const ord = key => { const k = seq.findIndex(x => x.key === key); return k < 0 ? '' : ('①②③④⑤⑥⑦⑧⑨⑩'[k] || String(k + 1)); };
+  const seqBtn = (key, a, b, label, srcSel) => {
+    const k = seq.findIndex(x => x.key === key);
+    return `<button class="vc-ab-seq-btn${k >= 0 ? ' vc-on' : ''}" title="${k >= 0 ? '自序列移除' : '加入序列播放（勾選 2 段以上會依序循環）'}" ` +
+      `onclick="event.stopPropagation();vcToggleAbSeq('${key}',${a},${b},'${label.replace(/'/g, '')}',${srcSel ? `'${srcSel}'` : 'null'})">${k >= 0 ? ord(key) : '☐'}</button>`;
+  };
   let html = '';
+  if (seq.length) {
+    html += `<div class="vc-ab-seq-bar${seqOn ? ' vc-on' : ''}">` +
+      `<span>${seqOn ? '🔁 序列播放' : '序列'} ${seq.map((x, k) => ('①②③④⑤⑥⑦⑧⑨⑩'[k] || k + 1) + ' ' + x.label).join(' → ')}${seqOn ? ' → ①' : '（再勾 1 段以上開始循環）'}</span>` +
+      `<button class="vc-icon-btn" onclick="vcClearAbSeq()" title="清除序列並停止">✕</button></div>`;
+  }
   if (presets.length) {
     html += presets.map(p => { const d = dupOf(p); return (
-      `<div class="vc-preset-row">` +
-      `<button class="vc-preset-name" onclick="vcLoadAbPreset('${p.id}')">${d ? dot(d.color, `與色塊 ${d.idx} 時段相同`) : ''}${p.name}</button>` +
+      `<div class="vc-preset-row${_isAbOn(p.abStart, p.abEnd) ? ' active' : ''}">` +
+      seqBtn(p.id, p.abStart, p.abEnd, p.name, null) +
+      `<button class="vc-preset-name" onclick="vcLoadAbPreset('${p.id}')" title="點擊套用並循環播放；再點停止">${_isAbOn(p.abStart, p.abEnd) ? '🔁 ' : ''}${d ? dot(d.color, `與色塊 ${d.idx} 時段相同`) : ''}${p.name}</button>` +
       `<button class="vc-preset-edit" onclick="vcRenameAbPreset('${p.id}')" title="重新命名">✏️</button>` +
       `<button class="vc-preset-del"  onclick="vcDeleteAbPreset('${p.id}')"  title="刪除">🗑</button>` +
       `</div>`); }).join('');
@@ -362,8 +496,9 @@ export function vcRenderAbPresets() {
   if (derived.length) {
     html += `<div class="vc-preset-group-hd">色塊時段（自選色自動抓取，隨色塊同步）</div>` +
       derived.map(c =>
-        `<div class="vc-preset-row vc-preset-row-derived">` +
-        `<button class="vc-preset-name" onclick="vcLoadChipRange('${c.id}')" title="載入為 A/B（跟隨色塊時段變動）">${dot(c.color, `色塊 ${c.idx}`)}色塊 ${c.idx}・${fmtTimeF(c.a)}–${fmtTimeF(c.b)}</button>` +
+        `<div class="vc-preset-row vc-preset-row-derived${_isAbOn(c.a, c.b) ? ' active' : ''}">` +
+        seqBtn(c.id, c.a, c.b, `色塊 ${c.idx}`, c.id) +
+        `<button class="vc-preset-name" onclick="vcLoadChipRange('${c.id}')" title="點擊套用並循環播放（跟隨色塊時段變動）；再點停止">${_isAbOn(c.a, c.b) ? '🔁 ' : ''}${dot(c.color, `色塊 ${c.idx}`)}色塊 ${c.idx}・${fmtTimeF(c.a)}–${fmtTimeF(c.b)}</button>` +
         `<button class="vc-preset-edit" onclick="vcSaveChipRangeAsPreset('${c.id}')" title="存為獨立 AB 設定（之後不再跟隨色塊）">💾</button>` +
         `</div>`).join('');
   }

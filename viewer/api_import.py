@@ -193,6 +193,57 @@ def _save_user_data(obj: dict) -> None:
     tmp.replace(_USER_DATA_PATH)
 
 
+_BACKUP_DIR   = DATA_DIR / "backups"
+_BACKUP_RE    = re.compile(r"^user_data\.backup-\d{8}-\d{6}\.json$")
+
+
+def _backup_name(ts: float | None = None) -> str:
+    return time.strftime("user_data.backup-%Y%m%d-%H%M%S.json", time.localtime(ts))
+
+
+def _make_backup() -> str:
+    """複製目前 user_data.json → backups/user_data.backup-YYYYMMDD-HHMMSS.json，回傳檔名。"""
+    _BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    name = _backup_name()
+    dst = _BACKUP_DIR / name
+    if _USER_DATA_PATH.exists():
+        shutil.copy2(_USER_DATA_PATH, dst)
+    else:
+        dst.write_text(json.dumps(_EMPTY_USER_DATA, ensure_ascii=False, indent=2), "utf-8")
+    return name
+
+
+def _list_backups() -> list:
+    if not _BACKUP_DIR.exists():
+        return []
+    out = []
+    for p in _BACKUP_DIR.iterdir():
+        if not p.is_file() or not _BACKUP_RE.match(p.name):
+            continue
+        try:
+            st = p.stat()
+            out.append({"name": p.name, "size": st.st_size, "ts": int(st.st_mtime * 1000)})
+        except OSError:
+            continue
+    out.sort(key=lambda x: x["ts"], reverse=True)
+    return out
+
+
+def _restore_backup(name: str) -> dict:
+    """驗證 name（basename、符合命名規則）→ 先備份目前檔 → 覆蓋 user_data.json → 回傳新 data。"""
+    safe = Path(name).name
+    if not _BACKUP_RE.match(safe):
+        raise ValueError("invalid backup name")
+    src = _BACKUP_DIR / safe
+    if not src.exists():
+        raise FileNotFoundError("backup not found")
+    _make_backup()
+    with open(src, encoding="utf-8") as f:
+        data = json.load(f)
+    _save_user_data(data)
+    return data
+
+
 def _merge_user_data(server: dict, client: dict) -> dict:
     s_fp = {p["id"]: p for p in server.get("filterPresets", []) if "id" in p}
     for cp in client.get("filterPresets", []):
@@ -251,16 +302,27 @@ def _cookie_file(platform: str) -> Path | None:
     return None
 
 
-def _netscape_cookie_header(path: Path) -> str:
-    """Netscape cookies.txt → 'k=v; k2=v2' HTTP Cookie header string."""
+def _netscape_cookie_header(path: Path, domains: tuple[str, ...] | None = None) -> str:
+    """Netscape cookies.txt → 'k=v; k2=v2' HTTP Cookie header string.
+
+    domains 提供時，僅保留第 1 欄 domain 尾綴匹配者（全瀏覽器混雜匯出檔含他站 cookie）；
+    name/value 含非 ascii 字元一律跳過（容器內 httpx 以 ascii 組 header，中文值會拋 UnicodeEncodeError）。
+    """
     pairs = []
     for line in path.read_text("utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line or (line.startswith("#") and not line.startswith("#HttpOnly_")):
             continue
         parts = line.split("\t")
-        if len(parts) >= 7:
-            pairs.append(f"{parts[5]}={parts[6]}")
+        if len(parts) < 7:
+            continue
+        cookie_domain = parts[0].removeprefix("#HttpOnly_").lstrip(".")
+        if domains and not _host_match(cookie_domain, *domains):
+            continue
+        name, value = parts[5], parts[6]
+        if not name.isascii() or not value.isascii():
+            continue
+        pairs.append(f"{name}={value}")
     return "; ".join(pairs)
 
 
@@ -290,7 +352,7 @@ def _classify_platform(url: str) -> str:
     """Return platform key based on URL hostname（支援分享文字內嵌 URL）.
 
     keys: douyin | tiktok | xhs | x | instagram | facebook | youtube |
-          threads | linevoom | generic
+          threads | linevoom | tumblr | generic
     """
     host = _host_of(url)
     if _host_match(host, "douyin.com", "iesdouyin.com"):
@@ -311,6 +373,8 @@ def _classify_platform(url: str) -> str:
         return "threads"
     if _host_match(host, "linevoom.line.me"):
         return "linevoom"
+    if _host_match(host, "tumblr.com"):
+        return "tumblr"
     return "generic"
 
 
@@ -463,6 +527,13 @@ def _gallery_dl_download(url: str, tmp_dir: Path, platform: str = "") -> list[Pa
     ck = _cookie_file(platform)
     if ck:
         cmd += ["--cookies", str(ck)]
+    if platform == "tumblr":
+        api_key = os.environ.get("TUMBLR_CONSUMER_KEY")
+        api_secret = os.environ.get("TUMBLR_CONSUMER_SECRET")
+        if api_key and api_secret:
+            cmd += ["-o", f"extractor.tumblr.api-key={api_key}",
+                    "-o", f"extractor.tumblr.api-secret={api_secret}"]
+        # 缺值時走原行為（gallery-dl 內建共用 key，易被限流）；不在此提前失敗
     cmd.append(url)
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
@@ -482,6 +553,8 @@ def _gallery_dl_download(url: str, tmp_dir: Path, platform: str = "") -> list[Pa
     msg = f"gallery-dl: {detail}"
     if not ck and platform in _COOKIE_PLATFORMS:
         msg += f"（{_cookie_hint(platform)}）"
+    if platform == "tumblr" and not (os.environ.get("TUMBLR_CONSUMER_KEY") and os.environ.get("TUMBLR_CONSUMER_SECRET")):
+        msg += "（未設定 TUMBLR_CONSUMER_KEY/SECRET，走內建共用 key 易被限流，請於 .ai-core/config/.env 設定專屬 key）"
     raise RuntimeError(msg)
 
 
@@ -574,19 +647,27 @@ def _engine_evil0ctal(url: str, tmp_dir: Path, task_id: str, platform: str) -> l
     if any(d in src_url.lower() for d in ("v.douyin.com", "vt.tiktok.com", "vm.tiktok.com")):
         _import_task_update(task_id, status="running", progress=15)
         src_url = _resolve_redirect(src_url)
-    try:
+    def _fetch(minimal: str) -> dict:
         resp = _req.get(
             f"{_EVIL_OCTAL_API}/api/hybrid/video_data",
-            params={"url": src_url, "minimal": "true"}, timeout=45,
+            params={"url": src_url, "minimal": minimal}, timeout=45,
         )
         resp.raise_for_status()
+        return resp.json().get("data") or {}
+
+    try:
+        api_data = _fetch("true")
     except _req.exceptions.HTTPError as _he:
         if _he.response is not None and _he.response.status_code == 400:
             raise ValueError("Evil0ctal: 無法取得資料（400）— 作品可能為私密、已刪除或 cookie 失效")
         raise
-    api_data = resp.json().get("data") or {}
 
     # ── 影片 ────────────────────────────────────────────────────────────────
+    # minimal=true 時 API 會把 data.video 清空為 {}（實測），需以 minimal=false 重打取回 play_addr；
+    # 圖文的 image_data 不受影響，故只在 type=="video" 且 video 為空時才重打，維持圖文輕量路徑。
+    if api_data.get("type") == "video" and not api_data.get("video"):
+        api_data = _fetch("false")
+
     dl_url = (
         api_data.get("video", {})
                 .get("play_addr", {})
@@ -627,7 +708,7 @@ def _engine_xhs(url: str, tmp_dir: Path, task_id: str, platform: str) -> list[Pa
     ck = _cookie_file("xhs")
     if ck:
         try:
-            body["cookie"] = _netscape_cookie_header(ck)
+            body["cookie"] = _netscape_cookie_header(ck, ("xiaohongshu.com", "xhscdn.com"))
         except Exception:
             pass
     try:
@@ -719,6 +800,7 @@ _ENGINE_CHAINS: dict[str, tuple[str, ...]] = {
     "facebook":  ("cobalt", "gallery_dl"),           # FB 相片 cobalt 不支援 → gallery-dl
     "youtube":   ("cobalt", "ytdlp"),
     "linevoom":  ("linevoom",),
+    "tumblr":    ("gallery_dl", "ytdlp"),            # cobalt→ytdlp 雙敗實測；gallery-dl 專屬 API key 優先
     "generic":   ("cobalt", "ytdlp"),
 }
 

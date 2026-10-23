@@ -170,8 +170,9 @@ export function renderTree() {
         toggleFolderFilter(el.dataset.folder);
         return;
       }
-      // 單擊 = 導覽（REPLACE 語意）
-      navigate(`${libHash(_ctx.activeLibId())}/folder/${encodeURIComponent(el.dataset.folder)}`);
+      // 單擊 = 導覽（REPLACE 語意）；再點已選中的資料夾 = 取消選中，回到庫根（與濾鏡集 toggle 一致）
+      if (curFolder === el.dataset.folder) { navigate(libHash(_ctx.activeLibId())); return; }
+      navigate(libHash(_ctx.activeLibId(), el.dataset.folder));
     });
     el.addEventListener('keydown', e => { if (e.key === 'Enter') el.click(); });
   });

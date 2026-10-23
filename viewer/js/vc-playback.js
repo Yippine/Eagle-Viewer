@@ -15,6 +15,7 @@ import { _glShowCanvas, _glResetTexSrc, _glSetReadyFrame, _glClearTexture,
          _startVideoRafLoop, _stopVideoRafLoop } from './vc-webgl.js';
 import { _releaseCanvas, _scheduleCanvasUpdate } from './vc-canvas.js';
 import { vcStopEyedropper, vcApplyFilter } from './vc-filters.js';
+import { vcCompareOff } from './vc-compare.js';
 import { vcRenderFilterPresets, vcRenderAbPresets } from './vc-presets.js';
 import { vcApplyTransform, vcRenderTransformActions } from './vc-transform.js';
 import { _vcClearCropSilently } from './vc-crop.js';
@@ -79,6 +80,7 @@ export function vcInitVid(vid, itemId) {
   _VCS._itemId     = itemId || null;
   _VCS._autoRotate = 0;
   _VCS.ab          = { a: null, b: null, active: false };
+  _VCS.abSeq       = { items: [], idx: 0 };
   _setAbSeeking(false);
 
   // 首幀確認：真實一幀上傳成功前 overlay 保持隱藏
@@ -210,6 +212,7 @@ export function vcSetMediaType(mediaType) {
 ══════════════════════════════════════════════════════════════════ */
 export function vcInitMedia(el, itemId, mediaType) {
   _VCS._mediaType = mediaType || 'video';
+  vcCompareOff();                                   // 換媒體：結束比對疊層／解鎖
   vcStopEyedropper();
   _stopVideoRafLoop();
   _releaseCanvas();
@@ -222,6 +225,7 @@ export function vcInitMedia(el, itemId, mediaType) {
     _VCS._vid    = el;
     _VCS._itemId = itemId || null;
     _VCS.ab      = { a: null, b: null, active: false };
+    _VCS.abSeq   = { items: [], idx: 0 };
     _VCS.selectiveList = []; _VCS._activeSelectiveId = null;
 
     _VCS.filter               = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
@@ -288,7 +292,9 @@ export function vcSetAbPoint(vid, point) {
   }
   vcSyncPanel();
 }
+/* 時段欄位為 <input>（非 contenteditable：面板 user-select:none 下 iOS 無法輸入）→ 聚焦全選即可 */
 export function vcAbSpanFocus(el) {
+  if ('value' in el) { if (el.value.trim() === '–') el.value = ''; try { el.select(); } catch {} return; }
   if (el.textContent.trim() === '–') el.textContent = '';
   const range = document.createRange();
   range.selectNodeContents(el);
@@ -296,10 +302,11 @@ export function vcAbSpanFocus(el) {
   sel.removeAllRanges();
   sel.addRange(range);
 }
+const _abFieldText = el => ('value' in el ? el.value : el.textContent);
 
 export function vcAbSpanEdit(point, el) {
   _VCS.ab.srcSel = null;              // 手動輸入 = 解除派生綁定
-  const raw = el.textContent.trim().replace(/[^\d:.]/g, '');
+  const raw = _abFieldText(el).trim().replace(/[^\d:.]/g, '');
   const m = raw.match(/^(\d+):(\d{2}(?:\.\d+)?)$/);
   let sec = m ? +m[1] * 60 + +m[2] : parseFloat(raw);
   if (!isNaN(sec) && sec >= 0) {
@@ -316,12 +323,33 @@ export function vcToggleAbLoop() {
 }
 export function vcClearAb() {
   _VCS.ab = { a: null, b: null, active: false, srcSel: null };
+  _VCS.abSeq = { items: [], idx: 0 };
   _setAbSeeking(false);
   vcSyncPanel();
 }
 
+const _nearT = (x, y) => x !== null && y !== null && Math.abs(x - y) < 0.05;
+/** AB 序列（多選）：目前 AB 必須等於序列第 idx 段，否則視為被手動改寫 → 序列失效（自癒，不需每個寫入點都清） */
+function _seqCurrent() {
+  const seq = _VCS.abSeq;
+  if (!seq || seq.items.length < 2) return null;
+  const cur = seq.items[seq.idx];
+  if (!cur || !_nearT(_VCS.ab.a, cur.a) || !_nearT(_VCS.ab.b, cur.b)) { seq.items = []; seq.idx = 0; return null; }
+  return seq;
+}
 export function vcAbTimeUpdate(vid) {
   if (!_VCS.ab.active || _VCS.ab.a === null || _VCS.ab.b === null || _getAbSeeking()) return;
+  const seq = _seqCurrent();
+  if (seq && vid.currentTime >= _VCS.ab.b) {          // 序列：到段尾 → 跳下一段（環狀 A→C→A）
+    seq.idx = (seq.idx + 1) % seq.items.length;
+    const nx = seq.items[seq.idx];
+    _VCS.ab.a = nx.a; _VCS.ab.b = nx.b; _VCS.ab.srcSel = nx.srcSel ?? null;
+    _setAbSeeking(true);
+    vid.currentTime = nx.a;
+    vid.addEventListener('seeked', () => { _setAbSeeking(false); }, { once: true });
+    vcSyncPanel();
+    return;
+  }
   if (vid.currentTime >= _VCS.ab.b || vid.currentTime < _VCS.ab.a) {
     _setAbSeeking(true);
     vid.currentTime = _VCS.ab.a;

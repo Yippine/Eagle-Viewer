@@ -6,6 +6,7 @@
 ══════════════════════════════════════════════════════════════════════*/
 
 import { vcRenderFilterPresets } from './vc-presets.js';
+import { E2_FILTER_DEFAULT, isE2FilterDefault, isE2SelDefault } from './vc-engine2.js';
 
 export const _selDefault = (id = null) =>
   ({ id: id ?? Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
@@ -18,14 +19,23 @@ export const _newSelItem = () => _selDefault();
 export const _getActive = () =>
   _VCS.selectiveList.find(s => s.id === _VCS._activeSelectiveId) ?? null;
 
+const _ENGINE_KEY = 'eagle-vc-engine';
+function _initEngine() {
+  const n = parseInt(localStorage.getItem(_ENGINE_KEY), 10);
+  return n === 2 ? 2 : 1;
+}
+
 /* ── 狀態 ─────────────────────────────────────────────────────────── */
 export const _VCS = {
+  engine:    _initEngine(),
   filter:    { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 },
+  filter2:   { ...E2_FILTER_DEFAULT },
   selectiveList: [],
   _activeSelectiveId: null,
   tx:        { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0,
                rotate: 0, flipH: false, flipV: false },
   ab:        { a: null, b: null, active: false, srcSel: null },   // srcSel = 派生來源色塊 id（null = 手動）
+  abSeq:     { items: [], idx: 0 },   // AB 序列播放（播放頁籤設定庫多選）：items=[{key,a,b,label}]，≥2 段時依序循環；任何手動改 AB 即失效
   playback:  { loopMode: 'single', speed: 1.0 },
   _vid:                null,
   _itemId:             null,
@@ -110,6 +120,53 @@ export async function _syncLoad() {
   vcRenderFilterPresets();
   document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
   document.dispatchEvent(new CustomEvent('vc-snaps-synced'));
+  _migrateToE2Once();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Engine 2 首次升級備份（一次性）
+══════════════════════════════════════════════════════════════════ */
+const _E2_MIGRATED_KEY  = 'eagle-vc-e2-migrated';
+const _E2_BACKUP_KEY    = 'eagle-filter-presets-backup-v1';
+
+async function _migrateToE2Once() {
+  if (localStorage.getItem(_E2_MIGRATED_KEY)) return;
+  try {
+    await fetch('/api/user-data/backup', { method: 'POST' });
+    localStorage.setItem(_E2_BACKUP_KEY, JSON.stringify(_CACHE.filterPresets));
+    localStorage.setItem(_E2_MIGRATED_KEY, '1');
+  } catch (e) {
+    console.warn('[VCS] e2 migration backup failed (non-blocking):', e.message);
+  }
+}
+
+/* ── 備份／還原（W3 接 UI）─────────────────────────────────────────── */
+export async function vcBackupNow() {
+  const res = await fetch('/api/user-data/backup', { method: 'POST' });
+  if (!res.ok) throw new Error('backup failed');
+  return res.json();
+}
+
+export async function vcListBackups() {
+  const res = await fetch('/api/user-data/backups');
+  if (!res.ok) throw new Error('list backups failed');
+  return res.json();
+}
+
+export async function vcRestoreBackup(name) {
+  const res = await fetch('/api/user-data/restore', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error('restore failed');
+  const { data } = await res.json();
+  if (data) {
+    _applyServerData(data);
+    vcRenderFilterPresets();
+    document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
+  }
+  return data;
 }
 
 async function _syncPoll() {
@@ -296,6 +353,19 @@ export function _isSelectiveDefault(s) {
     && s.saturate   === 0
     && s.sepia      === 0;
 }
+/* ── Engine 切換（僅寫 state + localStorage，不碰 UI；UI 副作用由 W3 vcSetEngine 負責）── */
+export function vcSetEngineState(n) {
+  _VCS.engine = n === 2 ? 2 : 1;
+  localStorage.setItem(_ENGINE_KEY, String(_VCS.engine));
+}
+
+export function _isCurrentDefault() {
+  if (_VCS.engine === 2) {
+    return isE2FilterDefault(_VCS.filter2) && isE2SelDefault(_VCS.selectiveList.map(s => s.e2));
+  }
+  return _isFilterDefault(_VCS.filter) && _isSelectiveDefault(_VCS.selectiveList);
+}
+
 export function _isTxDefault(t) {
   return t.scaleX === 1 && t.scaleY === 1 && t.translateX === 0 && t.translateY === 0 &&
          t.rotate === 0 && !t.flipH && !t.flipV;

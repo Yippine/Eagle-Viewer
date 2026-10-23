@@ -31,12 +31,13 @@ export { vcKeepTempFilter, vcLinkPresetToVideo, vcDiscardTempFilter,
          vcBindAbToSelective, vcUnbindAbFromSelective, vcSelAbEdit, vcSelAbNow, vcRenderSelectiveChips,
          vcPlaySelectiveRange, vcIsSelectiveLooping, vcDuplicateSelective,
          vcRemoveActiveSelective, vcSetSelectiveRgb, vcSetSelectiveHex, vcSetSelectiveHueDeg, vcGetActiveSelectiveColor, vcToggleColorPopover, vcSyncColorPopover,
-         vcApplyFilter, vcSetFilter, vcResetFilters } from './vc-filters.js';
+         vcApplyFilter, vcSetFilter, vcResetFilters,
+         vcSetEngine, vcSetFilter2, vcSetSel2 } from './vc-filters.js';
 
-export { vcSaveFilterPreset, vcApplyFilterPreset, vcToggleVideoFilterPreset,
-         vcDeleteFilterPreset, vcUndoDeletePreset, vcRenameFilterPreset,
+export { vcSaveFilterPreset, vcApplyFilterPreset, vcToggleApplyFilterPreset, vcToggleVideoFilterPreset,
+         vcDeleteFilterPreset, vcUndoDeletePreset, vcRenameFilterPreset, vcDuplicateFilterPreset,
          vcOverwriteFilterPreset, vcRenderFilterPresets,
-         vcSaveAbPreset, vcLoadAbPreset, vcDeleteAbPreset, vcLoadChipRange, vcSaveChipRangeAsPreset,
+         vcSaveAbPreset, vcLoadAbPreset, vcToggleAbSeq, vcClearAbSeq, vcDeleteAbPreset, vcLoadChipRange, vcSaveChipRangeAsPreset,
          vcRenameAbPreset, vcRenderAbPresets } from './vc-presets.js';
 
 export { vcSetAutoRotate, vcHasSnapshot,
@@ -57,8 +58,13 @@ export { vcSetLoopMode, vcSetSpeed, vcSyncPlayback,
 export { vcRegisterImageZoom, vcImageZoom, vcImageZoomSet, vcImageFit,
          vcImageActualSize, vcRegisterImageNav, vcImageNav, vcSetModalBg,
          vcResetAll, vcDismissToast, vcSwitchTab,
-         toggleVcPanel, closeVcPanel, vcInitDragHandle, vcInitValueEdit, vcSyncPanel }
+         toggleVcPanel, closeVcPanel, vcInitDragHandle, vcInitValueEdit, vcInitSliderFine, vcSyncPanel,
+         vcBackupNowUI, vcRenderBackupList }
   from './vc-panel.js';
+
+export { vcBackupNow, vcListBackups, vcRestoreBackup } from './vc-state.js';
+
+export { vcIsInteractionLocked, vcCompareState, vcCompareWipeToggle, vcCompareHold, vcCompareOff } from './vc-compare.js';
 
 import { _migrateMediaFilterKeys, _migrateVideoFilterLinks, _syncLoad }
   from './vc-state.js';

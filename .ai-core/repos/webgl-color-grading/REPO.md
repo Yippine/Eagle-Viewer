@@ -7,15 +7,16 @@ stars: 0
 license: ""
 language: ["JavaScript", "GLSL"]
 tags: ["webgl", "color-grading", "hsl", "selective-color", "canvas", "shader"]
-checked_at: "2026-06-02"
-latest_version: ""
+checked_at: "2026-08-23"
+latest_version: "86ae72a"
 latest_released_at: ""
-tracked_version: ""
-version_lag: null
+tracked_version: "86ae72a"
+version_lag: 0
 default_branch: "master"
-branches: []
+branches: ["origin", "origin/master"]
 references:
   - references/webgl-color-grading.formula.md
+  - references/huesaturation-curves-brightnesscontrast-deep.md
 related: []
 ---
 

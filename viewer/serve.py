@@ -188,6 +188,10 @@ class _Handler(BaseHTTPRequestHandler):
         if up == "/api/user-data":
             _r.handle_user_data(self); return
 
+        if up == "/api/user-data/backups":
+            from api_import import _list_backups
+            self._json(200, _list_backups()); return
+
         if up == "/api/events":
             self._handle_sse(); return
 
@@ -289,6 +293,32 @@ class _Handler(BaseHTTPRequestHandler):
 
         if up == "/api/user-data":
             _m.handle_post_user_data(self); return
+
+        if up == "/api/user-data/backup":
+            from api_import import _make_backup
+            try:
+                name = _make_backup()
+                self._json(200, {"ok": True, "name": name})
+            except Exception as e:
+                self._err(500, str(e))
+            return
+
+        if up == "/api/user-data/restore":
+            from api_import import _restore_backup
+            b = self._read_json()
+            if b is None: return
+            name = str(b.get("name", "")).strip()
+            if not name: self._err(400, "Missing field: name"); return
+            try:
+                data = _restore_backup(name)
+                self._json(200, {"ok": True, "data": data})
+            except FileNotFoundError:
+                self._err(404, "Backup not found")
+            except ValueError:
+                self._err(400, "Invalid backup name")
+            except Exception as e:
+                self._err(500, str(e))
+            return
 
         if up == "/api/tags-sync/apply":
             _m.handle_post_tags_sync_apply(self); return

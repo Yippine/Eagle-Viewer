@@ -5,8 +5,10 @@
 ══════════════════════════════════════════════════════════════════════*/
 
 import { fmtTime, fmtTimeF } from './utils.js';
+import { _registerEyedropperLock } from './vc-compare.js';
 import { _VCS, _getActive, _newSelItem,
-         _loadFilterPresets, _loadVideoFilterData, _saveVideoFilterData }
+         _loadFilterPresets, _loadVideoFilterData, _saveVideoFilterData,
+         vcSetEngineState }
   from './vc-state.js';
 import { _glShowCanvas, _stopVideoRafLoop,
          _glResetTexSrc, _glClearTexture } from './vc-webgl.js';
@@ -14,6 +16,7 @@ import { _rgbToHsl, _scheduleCanvasUpdate,
          _restoreOriginalSrc, _needsCanvas } from './vc-canvas.js';
 import { vcRenderFilterPresets, vcRenderAbPresets } from './vc-presets.js';
 import { _showToast, vcDismissToast, vcSyncPanel } from './vc-panel.js';
+import { E2_FILTER_DEFAULT, ensureE2, e2CssFilter, rgbToHex } from './vc-engine2.js';
 
 /* ── 臨時濾鏡狀態機 ───────────────────────────────────────────── */
 /* 使用者互動產生新臨時濾鏡狀態：記錄來源並重置「沿用不再問」旗標 */
@@ -69,9 +72,12 @@ export function vcDiscardTempFilter() {
 
 /* ── Eyedropper ───────────────────────────────────────────────── */
 let _eyedropperActive = false;
+let _eyedropperEndAt = 0;
+// 取色中 → viewer 互動鎖；取色完成後再寬限 600ms（vid click 先於 stage click 觸發，否則同一下點擊會被當成播放）
+_registerEyedropperLock(() => _eyedropperActive || (Date.now() - _eyedropperEndAt) < 600);
 let _eyedropperHandler = null;
 
-export function vcStartEyedropper() {
+export function vcStartEyedropper(kind = 'pick') {
   const vid = _VCS._vid;
   if (!vid) return;
   if (_VCS._mediaType === 'video' && !vid.paused) vid.pause();
@@ -79,7 +85,7 @@ export function vcStartEyedropper() {
   document.getElementById('vc-eyedropper-btn')?.classList.add('vc-on');
   const hint = document.getElementById('vc-sel-pick-hint');
   const swatch = document.getElementById('vc-sel-swatch');
-  if (hint)   hint.style.display   = '';
+  if (hint)   { hint.style.display = ''; hint.textContent = kind === 'target' ? '👆 點擊畫面選目標色' : '👆 點圖取色中…'; }
   if (swatch) swatch.style.display = 'none';
   vid.style.cursor = 'crosshair';
 
@@ -159,13 +165,18 @@ export function vcStartEyedropper() {
     try {
       const d = ctx.getImageData(px, py, 1, 1).data;
       const _a = _getActive();
-      // 低飽和度像素（接近黑/灰/白）的 HSL hue 數值極不穩定：
-      // 例如 (8,8,10) 的 B 僅多 2 單位就得到 hue=240°，不代表真實色相。
-      // 飽和度 < 20% 視為中性區域，不更新 targetHue 並給予提示。
-      // 黑白灰（飽和度 < 20%）的 hue 不穩定 → 改以「明度選取」模式（Resolve Luminance Qualifier 語彙），
-      // 仍可調亮度/對比/飽和(上色)/復古；色調滑桿在此模式下 = 上色色相。
-      if (_a) _applyPickedColor(_a, d[0], d[1], d[2]);
-      if (_a?.mode === 'lum') _showToast(`<span>已選取中性色（明度 ${Math.round((_a.targetLum ?? 0) * 100)}%）——以明度範圍選取，色調滑桿 = 上色色相</span>`);
+      if (kind === 'target') {
+        if (_a) { ensureE2(_a); _a.e2.target.hex = rgbToHex([d[0], d[1], d[2]]); }
+      } else {
+        // 低飽和度像素（接近黑/灰/白）的 HSL hue 數值極不穩定：
+        // 例如 (8,8,10) 的 B 僅多 2 單位就得到 hue=240°，不代表真實色相。
+        // 飽和度 < 20% 視為中性區域，不更新 targetHue 並給予提示。
+        // 黑白灰（飽和度 < 20%）的 hue 不穩定 → 改以「明度選取」模式（Resolve Luminance Qualifier 語彙），
+        // 仍可調亮度/對比/飽和(上色)/復古；色調滑桿在此模式下 = 上色色相。
+        if (_a) _applyPickedColor(_a, d[0], d[1], d[2]);
+        if (_a?.mode === 'lum') _showToast(`<span>已選取中性色（明度 ${Math.round((_a.targetLum ?? 0) * 100)}%）——以明度範圍選取，色調滑桿 = 上色色相</span>`);
+      }
+      _markTempFilterDirty();
       if (_VCS._mediaType === 'image' && !_VCS._imgOriginalSrc) _VCS._imgOriginalSrc = vid.src;
       vcStopEyedropper();
       vcSyncPanel();
@@ -196,6 +207,7 @@ export function vcStartEyedropper() {
 }
 
 export function vcStopEyedropper() {
+  if (_eyedropperActive) _eyedropperEndAt = Date.now();
   _eyedropperActive = false;
   document.getElementById('vc-eyedropper-btn')?.classList.remove('vc-on');
   const hint = document.getElementById('vc-sel-pick-hint');
@@ -337,6 +349,7 @@ export function vcClearSelectiveColor() {
 
 export function vcAddSelectiveColor() {
   const item = _newSelItem();
+  ensureE2(item);
   _VCS.selectiveList.push(item);
   _VCS._activeSelectiveId = item.id;
   _markTempFilterDirty();
@@ -359,6 +372,7 @@ export function vcDuplicateSelective(id) {
     if (dur && isFinite(dur)) { a = Math.min(a, dur); b = Math.min(b, dur); }
     dup.abStart = a; dup.abEnd = b;
   }
+  ensureE2(dup);
   _VCS.selectiveList.push(dup);
   _VCS._activeSelectiveId = dup.id;
   _markTempFilterDirty();
@@ -405,7 +419,7 @@ export function vcBindAbToSelective() {
 export function vcSelAbEdit(point, el) {
   const item = _getActive();
   if (!item) { vcSyncPanel(); return; }
-  const raw = el.textContent.trim().replace(/[^\d:.]/g, '');
+  const raw = ('value' in el ? el.value : el.textContent).trim().replace(/[^\d:.]/g, '');
   const m = raw.match(/^(\d+):(\d{1,2}(?:\.\d+)?)$/);
   let sec = m ? +m[1] * 60 + +m[2] : parseFloat(raw);
   const dur = _VCS._vid?.duration;
@@ -467,6 +481,8 @@ function _releaseDerivedAb(itemId) {
   return true;
 }
 function _followDerivedAb(item) {
+  // 序列中的色塊時段也跟隨（不然序列自癒檢查會因不一致而失效）
+  for (const x of (_VCS.abSeq?.items || [])) if (x.srcSel === item.id && item.abStart !== null) { x.a = item.abStart; x.b = item.abEnd; }
   if (_VCS.ab.srcSel !== item.id) return;
   if (item.abStart === null) { _releaseDerivedAb(item.id); return; }
   _VCS.ab.a = item.abStart; _VCS.ab.b = item.abEnd;
@@ -480,6 +496,7 @@ export function vcPlaySelectiveRange(id) {
     _VCS.ab = { a: null, b: null, active: false, srcSel: null };     // 停止 = 釋放派生 AB（不殘留）
     _showToast(`<span>已停止時段循環</span>`);
   } else {
+    _VCS.abSeq = { items: [], idx: 0 };   // 濾鏡頁籤色塊 = 單段（不參與序列）
     _VCS.ab.a = item.abStart; _VCS.ab.b = item.abEnd; _VCS.ab.active = true; _VCS.ab.srcSel = item.id;
     if (_VCS._activeSelectiveId !== item.id) { _VCS._activeSelectiveId = item.id; }
     vid.currentTime = item.abStart;
@@ -549,17 +566,21 @@ export function vcRenderSelectiveChips() {
 ══════════════════════════════════════════════════════════════════ */
 export function vcApplyFilter(vid) {
   if (!vid) return;
-  const f = _VCS.filter;
-  const blurPx = f.sharpness < 0 ? Math.abs(f.sharpness) * 0.5 : 0;
-  const parts = [
-    `brightness(${f.brightness})`,
-    `contrast(${f.contrast})`,
-    `saturate(${f.saturate})`,
-    `hue-rotate(${f.hueRotate}deg)`,
-    `sepia(${f.sepia ?? 0}%)`,
-  ];
-  if (blurPx > 0) parts.push(`blur(${blurPx.toFixed(1)}px)`);
-  vid.style.filter = parts.join(' ');
+  if (_VCS.engine === 2) {
+    vid.style.filter = e2CssFilter(_VCS.filter2);
+  } else {
+    const f = _VCS.filter;
+    const blurPx = f.sharpness < 0 ? Math.abs(f.sharpness) * 0.5 : 0;
+    const parts = [
+      `brightness(${f.brightness})`,
+      `contrast(${f.contrast})`,
+      `saturate(${f.saturate})`,
+      `hue-rotate(${f.hueRotate}deg)`,
+      `sepia(${f.sepia ?? 0}%)`,
+    ];
+    if (blurPx > 0) parts.push(`blur(${blurPx.toFixed(1)}px)`);
+    vid.style.filter = parts.join(' ');
+  }
 
   if (_needsCanvas()) {
     if (!_VCS._imgOriginalSrc) _VCS._imgOriginalSrc = vid.src;
@@ -577,9 +598,42 @@ export function vcSetFilter(key, val) {
   vcSyncPanel();
 }
 
+/* ── Engine 切換 ──────────────────────────────────────────────── */
+export function vcSetEngine(n) {
+  vcSetEngineState(n);
+  if (_VCS.engine === 2) _VCS.selectiveList.forEach(ensureE2);
+  vcApplyFilter(_VCS._vid);
+  _scheduleCanvasUpdate();
+  _markTempFilterDirty();
+  vcSyncPanel();
+}
+
+/* ── Setter（v2 全域濾鏡）─────────────────────────────────────── */
+export function vcSetFilter2(key, val) {
+  _VCS.filter2[key] = val;
+  _markTempFilterDirty();
+  vcApplyFilter(_VCS._vid);
+  vcSyncPanel();
+}
+
+/* ── Setter（v2 選色，點路徑：'qual.hW'、'target.hex' 等）───────── */
+export function vcSetSel2(path, val) {
+  const a = _getActive();
+  if (!a) return;
+  ensureE2(a);
+  const parts = String(path).split('.');
+  let obj = a.e2;
+  for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]];
+  obj[parts[parts.length - 1]] = val;
+  _markTempFilterDirty();
+  _scheduleCanvasUpdate();
+  vcSyncPanel();
+}
+
 /* ── Reset（濾鏡）─────────────────────────────────────────────── */
 export function vcResetFilters() {
   _VCS.filter               = { brightness: 1, contrast: 1, saturate: 1, hueRotate: 0, sepia: 0, sharpness: 0 };
+  _VCS.filter2               = { ...E2_FILTER_DEFAULT };
   _VCS.selectiveList = []; _VCS._activeSelectiveId = null;
   _VCS._activeFilterPresetId = null;
   _VCS._tempOriginItemId = null;
