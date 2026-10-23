@@ -68,6 +68,9 @@ export function defaultFilters() {
     domains: [],      // OR 網域
     folders: [],      // 疊加 AND 資料夾 id（URL: folders=+id1,+id2）
     presets: [],      // OR 濾鏡 preset id（URL: presets=p1|p2，C12）
+    people: '',       // '' | '1' | '2' | '3-5' | '6+'（B5 入鏡人數）
+    scene: '',        // '' | 場景中文標籤（B5）
+    sport: '',        // '' | 運動中文標籤（B5）
   };
 }
 

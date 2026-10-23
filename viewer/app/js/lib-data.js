@@ -5,8 +5,23 @@
 
 import { store, defaultFilters } from './store.js';
 import { api } from './api.js';
+import { parseLibId } from './router.js';
 import { adaptItem, filterItems, sortItems, seededShuffle } from './items.js';
 import { setItems, appendItems, setLoading, showMessage } from './grid.js';
+import { aiTagsSync, loadAiTags } from './ai-tags.js';
+
+/** B5 人數/場景/運動篩選啟用時取 aiTags map；未載入 → 觸發載入 + 完成回呼 */
+function _aiTagsFor(f, onLoaded) {
+  if (!(f.people || f.scene || f.sport)) return null;
+  const slug = parseLibId(store.state.libId || '')?.slug;
+  if (!slug) return null;
+  const m = aiTagsSync(slug);
+  if (m) return m;
+  loadAiTags(slug).then(() => {
+    if (parseLibId(store.state.libId || '')?.slug === slug) onLoaded();
+  });
+  return null;                      // 載入前不套用該維度（載入後重繪）
+}
 
 let _c = {
   vmItems: () => [],                       // () => 當前庫全部 vm items
@@ -45,16 +60,23 @@ export function refreshEagle(route, opts = {}) {
   }
   const visibleTotal = base.filter(i => !(i.tags || []).includes('archived')).length;
   const folderSets = (f.folders || []).map(fid => _c.folderWithDescendants(fid));
-  let list = filterItems(base, f, { folderSets });
+  const aiTags = _aiTagsFor(f, () => refreshEagle(route, { keepScroll: true }));
+  let list = filterItems(base, f, { folderSets, aiTags });
   list = s.key === 'shuffle'
     ? seededShuffle(list, store.state.seed ?? 0)
     : sortItems(list, s.key, s.dir);
   setItems(list, { total: visibleTotal, keepScroll: opts.keepScroll });
 }
 
-/* ── 垃圾桶視圖（C56）：僅 archived、修改日期新→舊 ─────────────────── */
+/* ── 垃圾桶視圖（C56；Phase A：三種庫型統一）───────────────────────────
+   Eagle = 快取 archived tag 客端過濾；Excire/dir = journal（.viewer-trash）
+   伺服端清單（GET /api/trash/list），修改日期新→舊。 */
+
+let _trashToken = 0;
 
 export function refreshTrash(opts = {}) {
+  const t = store.state.libType;
+  if (t === 'excire' || t === 'dir') { _refreshTrashRemote(opts); return; }
   const list = sortItems(
     filterItems(_c.vmItems(), defaultFilters(), { trash: true }), 'mtime', 'desc');
   setItems(list, { total: list.length, keepScroll: opts.keepScroll });
@@ -62,13 +84,66 @@ export function refreshTrash(opts = {}) {
   if (!list.length) showMessage('trash', '垃圾桶是空的', '封存（加入垃圾桶）的項目會顯示在這裡');
 }
 
-export function updateTrashBadge() {
+async function _refreshTrashRemote(opts) {
+  const lib = parseLibId(store.state.libId || '');
+  if (!lib) return;
+  const tok = ++_trashToken;
+  setLoading(true);
+  try {
+    const d = await api.trashList(lib.slug);
+    if (tok !== _trashToken) return;                        // 視圖已切換，丟棄
+    const vms = sortItems((d.items || []).map(r => adaptItem(r, lib.type)), 'mtime', 'desc');
+    store.set({ allItems: vms });                           // 供選取/Inspector/操作層查找
+    setItems(vms, { total: vms.length, keepScroll: opts.keepScroll });
+    document.getElementById('ibar').hidden = false;
+    _setBadge(vms.length);
+    if (!vms.length) showMessage('trash', '垃圾桶是空的', '刪除（加入垃圾桶）的項目會顯示在這裡');
+  } catch (e) {
+    if (tok === _trashToken) showMessage('close', '垃圾桶載入失敗', e.message);
+  } finally {
+    if (tok === _trashToken) setLoading(false);
+  }
+}
+
+function _setBadge(n) {
   const el = document.getElementById('trash-badge');
   if (!el) return;
-  const n = store.state.libType === 'excire' ? 0
-    : store.state.allItems.filter(i => (i.tags || []).includes('archived')).length;
   el.hidden = !n;
   el.textContent = n ? String(n) : '';
+}
+
+let _badgeCache = { lib: null, ts: 0 };   // journal 計數節流（grid-items 事件頻繁）
+
+export function updateTrashBadge(opts = {}) {
+  const t = store.state.libType;
+  if (t !== 'excire' && t !== 'dir') {
+    _setBadge(store.state.allItems.filter(i => (i.tags || []).includes('archived')).length);
+    return;
+  }
+  const lib = parseLibId(store.state.libId || '');
+  if (!lib) { _setBadge(0); return; }
+  if (!opts.force && _badgeCache.lib === lib.slug && Date.now() - _badgeCache.ts < 5000) return;
+  _badgeCache = { lib: lib.slug, ts: Date.now() };
+  api.trashList(lib.slug)
+    .then(d => {
+      if (parseLibId(store.state.libId || '')?.slug === lib.slug)
+        _setBadge(d.total ?? (d.items || []).length);
+    })
+    .catch(() => _setBadge(0));
+}
+
+/** 垃圾桶計數快取失效（封存/還原/刪除後由 actions.js 呼叫） */
+export function bustTrashBadge() { _badgeCache = { lib: null, ts: 0 }; updateTrashBadge({ force: true }); }
+
+/** Excire 分頁視圖：寫入操作（封存）後就地剔除 archived 項（分頁狀態不重抓） */
+export function dropArchivedFromExcireGrid() {
+  const all = store.state.allItems;
+  const vms = all.filter(i => !(i.tags || []).includes('archived'));
+  const removed = all.length - vms.length;
+  if (!removed) return;
+  _pg.total = Math.max(0, _pg.total - removed);
+  store.set({ allItems: vms });
+  setItems(vms, { total: _pg.total, hasMore: !_pg.done, keepScroll: true });
 }
 
 /* ── Excire：offset/limit 分頁 ──────────────────────────────────────── */
@@ -105,8 +180,13 @@ export async function loadExcirePage() {
     _pg.total = d.total ?? 0;
     if (!raw.length || _pg.offset >= _pg.total) _pg.done = true;
     let vms = raw.map(r => adaptItem(r, 'excire'));
-    // API 未支援的維度（型別/星等/日期/尺寸/q/第 2+ 標籤）→ 已載入頁 client-side 過濾
-    vms = filterItems(vms, { ...f, tags: (f.tags || []).slice(1), domains: [], folders: [] });
+    // API 未支援的維度（型別/星等/日期/尺寸/q/第 2+ 標籤/人數/場景/運動）
+    // → 已載入頁 client-side 過濾（B5 aiTags 未載入時先 await，避免漏濾）
+    let aiTags = null;
+    if (f.people || f.scene || f.sport)
+      aiTags = aiTagsSync(_pg.lib.slug) || await loadAiTags(_pg.lib.slug);
+    vms = filterItems(vms, { ...f, tags: (f.tags || []).slice(1), domains: [], folders: [] },
+                      { aiTags });
     // 隨機排序：分頁內 seeded shuffle（seed^offset 決定性 → 同 seed 可重播）
     if (s.key === 'shuffle') vms = seededShuffle(vms, ((store.state.seed ?? 0) ^ _pg.offset) >>> 0);
     store.set({ allItems: store.state.allItems.concat(vms) });

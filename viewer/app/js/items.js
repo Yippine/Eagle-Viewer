@@ -132,6 +132,15 @@ const DATE_DAYS = { today: 1, '7d': 7, '30d': 30, '365d': 365 };
 const MP = 1e6;   // megapixel
 const SIZE_MP = { s: [0, MP], m: [MP, 4 * MP], l: [4 * MP, 12 * MP], xl: [12 * MP, Infinity] };
 
+/** 人數 bucket 判定（B5；純函式——ai-tags.js 亦取用）：'1'|'2'|'3-5'|'6+' */
+export function peopleMatch(bucket, n) {
+  if (bucket === '1') return n === 1;
+  if (bucket === '2') return n === 2;
+  if (bucket === '3-5') return n >= 3 && n <= 5;
+  if (bucket === '6+') return n >= 6;
+  return true;
+}
+
 /** 尺寸分級：width×height 像素量 → '' | 's' | 'm' | 'l' | 'xl' */
 export function sizeBucket(w, hgt) {
   const px = (w || 0) * (hgt || 0);
@@ -144,7 +153,9 @@ export function sizeBucket(w, hgt) {
  * 依 filters 過濾 items（純函式）。
  * @param {object} f defaultFilters() 形
  * @param {object} opts { folderSets?: Set<string>[]（每選中資料夾一個含後代集合，AND）,
- *                        trash?: boolean, now?: number }
+ *                        trash?: boolean, now?: number,
+ *                        aiTags?: {id: {people, scene, sport}}|null（B5；
+ *                        null/未給 = 尚未載入 → 人數/場景/運動維度不過濾） }
  */
 export function filterItems(items, f, opts = {}) {
   const terms = parseQuery(f.q || '');
@@ -152,6 +163,7 @@ export function filterItems(items, f, opts = {}) {
   const folderSets = opts.folderSets || [];
   const domains = f.domains?.length ? new Set(f.domains) : null;
   const dateMin = f.date && DATE_DAYS[f.date] ? now - DATE_DAYS[f.date] * 86400000 : null;
+  const aiTags = opts.aiTags || null;
 
   return items.filter(i => {
     const archived = (i.tags || []).includes('archived');
@@ -163,6 +175,13 @@ export function filterItems(items, f, opts = {}) {
     if (dateMin !== null && !(i.mtime >= dateMin)) return false;
     if (f.size && sizeBucket(i.width, i.height) !== f.size) return false;
     if (domains && !domains.has(i.domain)) return false;
+
+    if (aiTags && (f.people || f.scene || f.sport)) {      // B5 人數/場景/運動
+      const t = aiTags[i.id] || {};
+      if (f.people && !peopleMatch(f.people, t.people || 0)) return false;
+      if (f.scene && t.scene !== f.scene) return false;
+      if (f.sport && t.sport !== f.sport) return false;
+    }
 
     if (folderSets.length) {
       const own = i.folders || [];

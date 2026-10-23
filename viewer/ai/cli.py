@@ -105,7 +105,37 @@ def _cmd_face_cluster(args) -> int:
     from .face_cluster import build_clusters
 
     t0 = time.time()
-    result = build_clusters(args.lib, eps=args.eps, min_samples=args.min_samples)
+    result = build_clusters(args.lib, eps=args.eps, min_samples=args.min_samples,
+                            split_threshold=args.split_threshold,
+                            split_eps=args.split_eps)
+    result["elapsed_s"] = round(time.time() - t0, 2)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cmd_video_face_index(args) -> int:
+    from .face_indexer import build_video_face_index
+
+    def _progress(done, total):
+        pct = done * 100 // max(total, 1)
+        print(f"  進度 {done}/{total}（{pct}%）", flush=True)
+
+    print(f"開始影片多幀人臉索引：{args.lib}（limit={args.limit or '全量'}，"
+          f"interval={args.interval}s，max-frames={args.max_frames}）")
+    result = build_video_face_index(args.lib, limit=args.limit,
+                                    interval=args.interval,
+                                    max_frames=args.max_frames,
+                                    progress_cb=_progress)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print("提醒：faces.npy 列序已變，請重跑 face-cluster 更新 persons.json")
+    return 0
+
+
+def _cmd_scene_tags(args) -> int:
+    from .scene_tags import build_scene_tags
+
+    t0 = time.time()
+    result = build_scene_tags(args.lib)
     result["elapsed_s"] = round(time.time() - t0, 2)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
@@ -179,6 +209,19 @@ def main(argv=None) -> int:
     p_fc.add_argument("--lib", required=True)
     p_fc.add_argument("--eps", type=float, default=0.45, help="cosine distance 半徑（預設 0.45）")
     p_fc.add_argument("--min-samples", type=int, default=2, help="成簇最少臉數（預設 2）")
+    p_fc.add_argument("--split-threshold", type=int, default=5000,
+                      help="超級簇拆分門檻臉數（B4；0 = 停用，預設 5000）")
+    p_fc.add_argument("--split-eps", type=float, default=0.35,
+                      help="簇內二次聚類起始 eps（預設 0.35，逐步收緊至 0.25）")
+
+    p_vf = sub.add_parser("video-face-index", help="影片多幀人臉索引（B3；ffmpeg 抽幀）")
+    p_vf.add_argument("--lib", required=True, help="Eagle 庫名（Excire 庫無影片）")
+    p_vf.add_argument("--limit", type=int, default=None, help="本次最多新處理 N 支影片")
+    p_vf.add_argument("--interval", type=float, default=10.0, help="每 N 秒 1 幀（預設 10）")
+    p_vf.add_argument("--max-frames", type=int, default=12, help="每片抽幀上限（預設 12）")
+
+    p_st = sub.add_parser("scene-tags", help="人數/場景/運動標籤索引（B5）")
+    p_st.add_argument("--lib", required=True)
 
     p_fs = sub.add_parser("face-search", help="以臉找臉（item 的臉 → top-k 相似臉）")
     p_fs.add_argument("--lib", required=True, help="查詢 item 所在庫")
@@ -192,7 +235,9 @@ def main(argv=None) -> int:
         return {"setup": _cmd_setup, "libs": _cmd_libs,
                 "index": _cmd_index, "search": _cmd_search,
                 "face-index": _cmd_face_index, "face-cluster": _cmd_face_cluster,
-                "face-search": _cmd_face_search}[args.cmd](args)
+                "face-search": _cmd_face_search,
+                "video-face-index": _cmd_video_face_index,
+                "scene-tags": _cmd_scene_tags}[args.cmd](args)
     except RuntimeError as e:
         print(f"[錯誤] {e}", file=sys.stderr)
         return 1

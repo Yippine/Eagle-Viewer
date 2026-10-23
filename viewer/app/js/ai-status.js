@@ -58,6 +58,7 @@ function _build() {
     else if (act === 'refresh') _refresh();
     else if (act === 'index-all') startAiIndex('all', 'both');
     else if (act === 'index-lib') startAiIndex(e.target.closest('[data-lib]').dataset.lib, 'both');
+    else if (act === 'index-tags') startAiIndex(e.target.closest('[data-lib]').dataset.lib, 'tags');
   });
   store.on('ai-progress', evt => { if (_dlg?.open) _renderJobLine(evt); });
 }
@@ -97,6 +98,7 @@ async function _refresh() {
         <span class="ai-lib-name">${h(name)}</span>
         <span class="ai-lib-persons">${l.persons ? `${l.persons.n_persons} 人物` : '未聚類'}</span>
         <button class="btn btn-sm" data-act="index-lib">索引</button>
+        <button class="btn btn-sm" data-act="index-tags" title="人數/場景/運動標籤索引（B5）">標籤</button>
       </div>
       ${_cov('語意 clip', l.clip?.indexed || 0, l.total || 0)}
       ${_cov('人臉 faces', l.faces?.items_done || 0, l.total || 0)}
@@ -113,7 +115,8 @@ async function _refresh() {
   }
 }
 
-const _KIND = { clip: '語意索引', faces: '人臉索引' };
+const _KIND = { clip: '語意索引', faces: '人臉索引',
+                'video-faces': '影片抽幀人臉索引', tags: '人數/場景/運動標籤' };
 
 function _jobHTML(lib, kind, done, total) {
   const p = total ? _pct(done || 0, total) : null;

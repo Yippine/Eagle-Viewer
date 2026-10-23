@@ -7,12 +7,14 @@
 import { store, defaultFilters } from './store.js';
 import { navigate, parseRoute } from './router.js';
 import { SORT_KEYS, h } from './items.js';
+import { PEOPLE_OPTS, SCENE_OPTS, SPORT_OPTS } from './ai-tags.js';
 
 const TYPE_OPTS = [['all', '全部'], ['image', '圖片'], ['video', '影片'], ['gif', '動圖'], ['bookmark', '書籤']];
 const DATE_OPTS = [['', '任意時間'], ['today', '今天'], ['7d', '7 天內'], ['30d', '30 天內'], ['365d', '一年內']];
 const SIZE_OPTS = [['', '任意尺寸'], ['s', '小（<1MP）'], ['m', '中（1–4MP）'], ['l', '大（4–12MP）'], ['xl', '特大（>12MP）']];
 const DIM_LABEL = { type: '型別', star: '星等', tags: '標籤', date: '日期', size: '尺寸' };
-const ESC_ORDER = ['q', 'presets', 'folders', 'tags', 'domains', 'size', 'date', 'star', 'type'];   // Escape 逐層
+const ESC_ORDER = ['q', 'presets', 'folders', 'tags', 'domains',
+                   'sport', 'scene', 'people', 'size', 'date', 'star', 'type'];   // Escape 逐層
 const MAX_SEEDS_KEY = 'eagle-pref-max-seeds';
 
 let _folderName = id => id;      // app.js 注入（chips 顯示資料夾名）
@@ -59,6 +61,9 @@ export function syncFromRoute(route) {
   f.domains = (q.get('domain') || '').split(',').filter(Boolean);
   f.folders = (q.get('folders') || '').split(',').map(s => s.replace(/^\+/, '')).filter(Boolean);
   f.presets = (q.get('presets') || '').split('|').filter(Boolean);
+  f.people  = q.get('people') || '';
+  f.scene   = q.get('scene') || '';
+  f.sport   = q.get('sport') || '';
   const key = q.get('sort') || 'shuffle';
   const dir = q.get('dir') === 'asc' ? 'asc' : 'desc';
   const seed = q.get('seed') ? (parseInt(q.get('seed'), 10) >>> 0) : null;
@@ -81,6 +86,9 @@ function _serialize() {
   if (f.domains.length) p.set('domain', f.domains.join(','));
   if (f.folders.length) p.set('folders', f.folders.map(x => '+' + x).join(','));
   if (f.presets.length) p.set('presets', f.presets.join('|'));
+  if (f.people)         p.set('people', f.people);
+  if (f.scene)          p.set('scene', f.scene);
+  if (f.sport)          p.set('sport', f.sport);
   if (f.q)              p.set('q', f.q);
   if (s.key !== 'shuffle' || s.dir !== 'desc') { p.set('sort', s.key); p.set('dir', s.dir); }
   if (s.key === 'shuffle' && store.state.seed != null) p.set('seed', String(store.state.seed));
@@ -154,6 +162,10 @@ export function renderChips() {
     f.domains.length ? `網域 ${f.domains.length}` : '網域'));
   chips.push(dim('date', !!f.date, DATE_OPTS.find(o => o[0] === f.date)?.[1] || '日期'));
   chips.push(dim('size', !!f.size, SIZE_OPTS.find(o => o[0] === f.size)?.[1] || '尺寸'));
+  chips.push(dim('people', !!f.people,
+    f.people ? (PEOPLE_OPTS.find(o => o[0] === f.people)?.[1] || f.people) : '人數'));
+  chips.push(dim('scene', !!f.scene, f.scene || '場景'));
+  chips.push(dim('sport', !!f.sport, f.sport || '運動'));
 
   for (const t of f.tags)     chips.push(val('tags', t, t, '🏷 '));
   for (const d of f.domains)  chips.push(val('domains', d, d, '🌐 '));
@@ -162,7 +174,8 @@ export function renderChips() {
   if (f.q) chips.push(val('q', f.q, f.q, '🔍 '));
 
   const any = f.type !== 'all' || f.star > 0 || f.tags.length || f.date || f.size
-    || f.domains.length || f.folders.length || f.presets.length || f.q;
+    || f.domains.length || f.folders.length || f.presets.length || f.q
+    || f.people || f.scene || f.sport;
   if (any) chips.push(`<button class="chip" data-clear-all title="清除全部篩選">✕ 全清</button>`);
 
   box.innerHTML = chips.join('');
@@ -188,6 +201,8 @@ function _escapePop() {
     if (k === 'q' && f.q) return _patch(x => { x.q = ''; });
     if (['presets', 'folders', 'tags', 'domains'].includes(k) && f[k].length)
       return _patch(x => { x[k] = x[k].slice(0, -1); });
+    if (['sport', 'scene', 'people'].includes(k) && f[k])
+      return _patch(x => { x[k] = ''; });
     if (k === 'size' && f.size) return _patch(x => { x.size = ''; });
     if (k === 'date' && f.date) return _patch(x => { x.date = ''; });
     if (k === 'star' && f.star) return _patch(x => { x.star = 0; });
@@ -231,6 +246,12 @@ function _dimMenu(anchor, dim) {
     html = DATE_OPTS.map(([v, l]) => _mi(v, l, f.date === v)).join('');
   } else if (dim === 'size') {
     html = SIZE_OPTS.map(([v, l]) => _mi(v, l, f.size === v)).join('');
+  } else if (dim === 'people') {
+    html = PEOPLE_OPTS.map(([v, l]) => _mi(v, l, f.people === v)).join('');
+  } else if (dim === 'scene' || dim === 'sport') {
+    const opts = dim === 'scene' ? SCENE_OPTS : SPORT_OPTS;
+    html = _mi('', dim === 'scene' ? '任意場景' : '任意運動', f[dim] === '') +
+      opts.map(v => _mi(v, v, f[dim] === v)).join('');
   } else if (dim === 'tags' || dim === 'domains') {
     /* 多選清單（標籤 AND / 網域 OR，C09）：搜尋 + 計數 + toggle 不關選單 */
     const field = dim, isTags = dim === 'tags';
@@ -276,6 +297,7 @@ function _dimMenu(anchor, dim) {
       else if (dim === 'star') x.star = parseInt(it.dataset.v, 10) || 0;
       else if (dim === 'date') x.date = it.dataset.v;
       else if (dim === 'size') x.size = it.dataset.v;
+      else if (['people', 'scene', 'sport'].includes(dim)) x[dim] = it.dataset.v;
     });
   });
 }

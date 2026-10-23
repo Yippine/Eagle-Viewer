@@ -4,9 +4,13 @@
     GET  /api/ai/status              各庫 clip/faces 索引狀態 + 模型/引擎就緒度
     GET  /api/ai/search              ?q=...[&lib=...][&topk=40] 語意搜尋（lib 省略＝跨庫）
     GET  /api/ai/similar             ?lib=...&item=...[&topk=40][&all=1] 以圖找圖
-    GET  /api/ai/faces/persons       ?lib=... 人物聚類清單（person_id/臉數/代表臉）
+    GET  /api/ai/faces/persons       ?lib=... 人物聚類清單（person_id/name/性別/年齡/代表臉）
     GET  /api/ai/faces/search        ?lib=...&item=...[&face=N][&topk=40][&all=1] 以臉找臉
-    POST /api/ai/index               {lib: 庫名|"all", kind: clip|faces|both} 背景索引
+    GET  /api/ai/tags                ?lib=... 人數/場景/運動標籤（B5；scene_tags.json）
+    POST /api/ai/faces/persons/name  {lib, person_id, name|null} 人物命名/清除（B1）
+    POST /api/ai/index               {lib: 庫名|"all", kind: clip|faces|both|
+                                      video-faces|tags[, limit]} 背景索引
+                                     video-faces = 影片多幀人臉（B3）；tags = B5 標籤
     GET  /api/ai/index/progress      索引進度輪詢（SSE 備援）
 
 設計：
@@ -249,8 +253,14 @@ def _lib_ai_status(lib: str) -> dict:
         pass
     persons = None
     try:
+        sf = d / "persons_summary.json"       # 輕量 sidecar 優先（見 face_cluster）
         pf = d / "persons.json"
-        if pf.exists():
+        if sf.exists():
+            pd = json.loads(sf.read_text(encoding="utf-8"))
+            persons = {"n_persons": pd.get("n_persons"),
+                       "noise": pd.get("noise_count"),
+                       "clustered_at": pd.get("clustered_at")}
+        elif pf.exists():                     # 舊庫相容：重聚類後自動產 sidecar
             pd = json.loads(pf.read_text(encoding="utf-8"))
             persons = {"n_persons": len(pd.get("persons", [])),
                        "noise": pd.get("noise_count"),
@@ -368,6 +378,11 @@ def _handle_faces_persons(h):
                       "message": "尚未聚類；請 POST /api/ai/index {kind: faces} "
                                  "或執行 face-cluster"}); return
     _, meta = load_face_index(lib)
+    try:                                  # B2：性別/年齡屬性（Excire 庫；快取自動重建）
+        from ai.face_attrs import get_person_attrs
+        attrs = get_person_attrs(lib, data)
+    except Exception:
+        attrs = {}
     ex_cache: dict = {}
     persons = []
     for pr in data.get("persons", []):
@@ -378,18 +393,81 @@ def _handle_faces_persons(h):
             rep_info = {"face_idx": rep, "item": m["id"], "bbox": m["bbox"],
                         "det_score": m["det_score"],
                         **_resolve_item(lib, m["id"], ex_cache)}
+            if m.get("frame_ts") is not None:      # B3：影片抽幀臉（bbox 屬該幀）
+                rep_info["frame_ts"] = m["frame_ts"]
+        a = attrs.get(pr.get("person_id")) or {}
         persons.append({
             "person_id": pr.get("person_id"),
             "name":      pr.get("name"),
             "count":     pr.get("count", 0),
             "items":     pr.get("items", []),
+            "gender":    a.get("gender"),
+            "age":       a.get("age"),
             "rep_face":  rep_info,
         })
     h._json(200, {"ok": True, "lib": lib, "clustered": True,
+                  "attrs_available": bool(attrs),
                   "eps": data.get("eps"), "n_faces": data.get("n_faces"),
                   "noise_count": data.get("noise_count"),
                   "clustered_at": data.get("clustered_at"),
                   "count": len(persons), "persons": persons})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/ai/faces/persons/name（B1 人物命名；寫本專案自有 persons.json）
+# ---------------------------------------------------------------------------
+
+def _handle_post_person_name(h):
+    b = h._read_json()
+    if b is None:
+        return
+    lib = b.get("lib") if isinstance(b.get("lib"), str) else ""
+    person_id = b.get("person_id") if isinstance(b.get("person_id"), str) else ""
+    if not lib or not person_id:
+        h._err(400, "缺少 lib 或 person_id"); return
+    if lib not in LIBRARY_PATHS and lib not in EXCIRE_PATHS:
+        h._err(404, f"未知的庫：{lib}（可用：{_known_libs()}）"); return
+    name = b.get("name")
+    if name is not None and not isinstance(name, str):
+        h._err(400, "name 需為字串或 null"); return
+    name = (name or "").strip() or None      # 空字串 / 純空白 = 清除命名
+    if name and len(name) > 80:
+        h._err(400, "name 長度上限 80 字"); return
+    try:
+        from ai.face_cluster import set_person_name
+    except Exception as e:
+        h._json(503, {"ok": False, "error": f"AI 模組載入失敗（numpy？）：{e}"}); return
+    try:
+        res = set_person_name(lib, person_id, name)
+    except RuntimeError as e:
+        h._json(400, {"ok": False, "error": str(e)}); return
+    h._json(200, {"ok": True, **res})
+
+
+# ---------------------------------------------------------------------------
+# GET /api/ai/tags（B5：人數/場景/運動標籤；讀 scene_tags.json）
+# ---------------------------------------------------------------------------
+
+def _handle_tags(h):
+    p = _params(h)
+    lib = p.get("lib", "")
+    if not lib:
+        h._err(400, "缺少 ?lib= 參數"); return
+    if lib not in LIBRARY_PATHS and lib not in EXCIRE_PATHS:
+        h._err(404, f"未知的庫：{lib}（可用：{_known_libs()}）"); return
+    try:
+        from ai.scene_tags import load_scene_tags
+    except Exception as e:
+        h._json(503, {"ok": False, "error": f"AI 模組載入失敗（numpy？）：{e}"}); return
+    data = load_scene_tags(lib)
+    if not data:
+        h._json(200, {"ok": True, "lib": lib, "built": False, "items": {},
+                      "message": "尚未建立標籤索引；請 POST /api/ai/index "
+                                 "{kind: tags} 或執行 scene-tags CLI"}); return
+    h._json(200, {"ok": True, "lib": lib, "built": True,
+                  "built_at": data.get("built_at"), "clip": data.get("clip"),
+                  "labels": data.get("labels", {}),
+                  "items": data.get("items", {})})
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +526,7 @@ def _progress(lib: str, kind: str, done: int, total: int):
                          "phase": "running", "done": done, "total": total})
 
 
-def _index_worker(libs: list, kinds: list):
+def _index_worker(libs: list, kinds: list, limit: int = None):
     for lib in libs:
         for kind in kinds:
             with _index_lock:
@@ -457,21 +535,33 @@ def _index_worker(libs: list, kinds: list):
             _sse_broadcast(lib, {"type": "ai-index-progress", "lib": lib,
                                  "kind": kind, "phase": "start"})
             try:
+                cb = lambda d, t, _l=lib, _k=kind: _progress(_l, _k, d, t)
                 if kind == "clip":
                     from ai.indexer import build_index
                     with _engine_init_lock:      # session 建立集中上鎖
                         from ai.clip_engine import get_engine
                         _ = get_engine().visual
-                    res = build_index(
-                        lib, progress_cb=lambda d, t, _l=lib, _k=kind: _progress(_l, _k, d, t))
-                else:                            # faces
-                    from ai.face_indexer import build_face_index
+                    res = build_index(lib, limit=limit, progress_cb=cb)
+                elif kind == "tags":             # B5：人數/場景/運動標籤
+                    from ai.scene_tags import build_scene_tags
+                    with _engine_init_lock:      # CLIP text 塔（zero-shot 用）
+                        from ai.clip_engine import get_engine
+                        try:
+                            _ = get_engine().text
+                        except Exception:
+                            pass                 # 無 CLIP → 模組內優雅降級
+                    res = build_scene_tags(lib, progress_cb=cb)
+                else:                            # faces / video-faces
                     with _engine_init_lock:
                         from ai.face_engine import get_face_engine
                         eng = get_face_engine()
                         _ = eng.det, eng.rec
-                    res = build_face_index(
-                        lib, progress_cb=lambda d, t, _l=lib, _k=kind: _progress(_l, _k, d, t))
+                    if kind == "video-faces":    # B3：影片多幀抽幀
+                        from ai.face_indexer import build_video_face_index
+                        res = build_video_face_index(lib, limit=limit, progress_cb=cb)
+                    else:
+                        from ai.face_indexer import build_face_index
+                        res = build_face_index(lib, limit=limit, progress_cb=cb)
                     try:                         # 索引後自動重聚類（重跑不重算 embedding）
                         from ai.face_cluster import build_clusters
                         res["cluster"] = build_clusters(lib)
@@ -502,8 +592,11 @@ def _handle_post_index(h):
     lib = b.get("lib") if isinstance(b.get("lib"), str) else ""
     lib = (lib or "all").strip()
     kind = (b.get("kind") or "both").strip().lower() if isinstance(b.get("kind"), (str, type(None))) else ""
-    if kind not in ("clip", "faces", "both"):
-        h._err(400, "kind 需為 clip | faces | both"); return
+    if kind not in ("clip", "faces", "both", "video-faces", "tags"):
+        h._err(400, "kind 需為 clip | faces | both | video-faces | tags"); return
+    limit = b.get("limit")
+    if limit is not None and (not isinstance(limit, int) or limit < 1):
+        h._err(400, "limit 需為正整數"); return
     if lib == "all":
         libs = _known_libs()
         if not libs:
@@ -527,7 +620,7 @@ def _handle_post_index(h):
             "current": None, "results": [], "errors": [],
             "started_at": _now(), "finished_at": None,
         })
-    threading.Thread(target=_index_worker, args=(libs, kinds), daemon=True).start()
+    threading.Thread(target=_index_worker, args=(libs, kinds, limit), daemon=True).start()
     h._json(202, {"ok": True, "started": True, "libs": libs, "kinds": kinds,
                   "progress": "/api/ai/index/progress",
                   "sse": "type=ai-index-progress（/api/events?lib=…）"})
@@ -553,6 +646,8 @@ def handle_ai_get(h, up: str):
         _handle_faces_persons(h); return
     if up == "/api/ai/faces/search":
         _handle_faces_search(h); return
+    if up == "/api/ai/tags":
+        _handle_tags(h); return
     if up == "/api/ai/index/progress":
         _handle_index_progress(h); return
     h._err(404, "Not found: " + up)
@@ -561,4 +656,6 @@ def handle_ai_get(h, up: str):
 def handle_ai_post(h, up: str):
     if up == "/api/ai/index":
         _handle_post_index(h); return
+    if up == "/api/ai/faces/persons/name":
+        _handle_post_person_name(h); return
     h._err(404, "Not found: " + up)

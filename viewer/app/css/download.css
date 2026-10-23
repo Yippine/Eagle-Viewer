@@ -298,8 +298,75 @@
   transition: border-color var(--dur-fast) var(--ease);
 }
 .pp-tile:hover { border-color: var(--accent); }
-.pp-tile-name { font-size: var(--fs-sm); font-weight: 600; }
+.pp-tile-name { font-size: var(--fs-sm); font-weight: 600; max-width: 100%; overflow-wrap: anywhere; }
 .pp-tile-count { font-size: var(--fs-xs); color: var(--text3); }
+.pp-tile-pid, .pp-tile-attr { font-size: var(--fs-xs); color: var(--text3); }
+
+/* 人物總覽工具列（B1 搜尋 + B2 性別/年齡篩選） */
+.pp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 860px;
+  margin: 0 auto var(--sp-3);
+}
+.pp-search {
+  flex: 1;
+  min-width: 160px;
+  height: 30px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.pp-search:focus { outline: none; border-color: var(--accent); }
+.pp-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-xs);
+  color: var(--text3);
+}
+.pp-filter select {
+  height: 30px;
+  padding: 0 var(--sp-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.pp-toolbar-count { font-size: var(--fs-xs); color: var(--text3); white-space: nowrap; }
+.pp-empty { grid-column: 1 / -1; text-align: center; }
+
+/* 就地命名（✎ hover 顯示；editing 時鎖住導航） */
+.pp-tile { position: relative; }
+.pp-tile .pp-edit {
+  position: absolute;
+  top: var(--sp-1);
+  right: var(--sp-1);
+  opacity: 0;
+}
+.pp-tile:hover .pp-edit,
+.pp-tile:focus-within .pp-edit { opacity: 1; }
+.pp-name-input {
+  width: 100%;
+  max-width: 120px;
+  padding: 2px var(--sp-1);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--bg2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+.pp-name-input:focus { outline: none; }
 
 /* ── AI 狀態面板（dialog）──────────────────────────────────────────── */
 
