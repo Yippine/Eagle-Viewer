@@ -144,7 +144,7 @@ function _renderSingle(body, it) {
       ${tags.length ? '' : `<span class="insp-note">無標籤</span>`}
     </div>
     ${ro ? '' : `<div class="insp-tag-add">
-      <input class="insp-input" data-tag-input placeholder="新增標籤（自動完成）…">
+      <input class="insp-input" data-tag-input placeholder="新增標籤（可連點多個再套用）…">
       <div class="te-suggest" data-tag-suggest hidden></div>
     </div>`}
 
@@ -300,33 +300,71 @@ function _wireSingle(body, it, ro) {
     b.addEventListener('click', () => ACT[b.dataset.act]?.()));
 }
 
-/** 標籤自動完成（既有標籤 ∪ 資料夾名，C49） */
+/** 標籤自動完成（既有標籤 ∪ 資料夾名，C49）
+    260823：改為「暫存多選 → 套用」——點建議／Enter 只加入待套用 chips（不立即寫入、清單不關閉），
+    聚焦空輸入即列常用標籤（免打字快速多選），按「套用 (n)」一次寫入；Esc／取消清空。 */
 function _wireTagInput(body, input, it) {
+  const wrap  = input.closest('.insp-tag-add');
   const sugEl = body.querySelector('[data-tag-suggest]');
-  const sugs = act.tagSuggestions();
-  const cur = () => (it.tags || []).filter(t => t !== 'archived');
-  const add = t => {
+  const sugs  = act.tagSuggestions();
+  const cur   = () => (it.tags || []).filter(t => t !== 'archived');
+  const pending = [];
+
+  // 待套用列：chips + 套用/取消
+  const pendEl = document.createElement('div');
+  pendEl.className = 'insp-tag-pending'; pendEl.hidden = true;
+  wrap.appendChild(pendEl);
+  const renderPending = () => {
+    pendEl.hidden = !pending.length;
+    pendEl.innerHTML = pending.length ? `
+      <div class="insp-tag-pending-chips">${pending.map(t =>
+        `<span class="chip chip-filter">${h(t)}<button class="chip-x" data-pend-rm="${h(t)}" title="移除">✕</button></span>`).join('')}</div>
+      <div class="insp-tag-pending-actions">
+        <button class="btn btn-ghost btn-sm" data-pend-cancel>取消</button>
+        <button class="btn btn-primary btn-sm" data-pend-apply>套用 (${pending.length})</button>
+      </div>` : '';
+    pendEl.querySelectorAll('[data-pend-rm]').forEach(b => b.addEventListener('click', () => {
+      const i = pending.indexOf(b.dataset.pendRm); if (i >= 0) pending.splice(i, 1);
+      renderPending(); renderSug();
+    }));
+    pendEl.querySelector('[data-pend-cancel]')?.addEventListener('click', () => { pending.length = 0; renderPending(); renderSug(); });
+    pendEl.querySelector('[data-pend-apply]')?.addEventListener('click', apply);
+  };
+  const apply = () => {
+    if (!pending.length) return;
+    act.setTags(it.id, [...cur(), ...pending.filter(t => !cur().includes(t))]);   // 觸發重繪
+  };
+  const stage = t => {
     t = String(t || '').trim();
-    if (!t || cur().includes(t)) return;
-    act.setTags(it.id, [...cur(), t]);
+    if (!t || t === 'archived' || cur().includes(t) || pending.includes(t)) return;
+    pending.push(t); input.value = '';
+    renderPending(); renderSug();
   };
   const renderSug = () => {
     const q = input.value.trim().toLowerCase();
-    if (!q) { sugEl.hidden = true; sugEl.innerHTML = ''; return; }
-    const list = sugs.filter(s => !cur().includes(s.tag) && s.tag.toLowerCase().includes(q)).slice(0, 12);
-    sugEl.innerHTML = list.map(s =>
+    const taken = new Set([...cur(), ...pending]);
+    // 空輸入：常用標籤前 16（快速多選）；有輸入：子字串比對前 12
+    const list = sugs.filter(s => !taken.has(s.tag) && (!q || s.tag.toLowerCase().includes(q)))
+                     .slice(0, q ? 12 : 16);
+    sugEl.innerHTML = (q || list.length ? '' : '') + list.map(s =>
       `<button class="te-sug" data-t="${h(s.tag)}">${s.isFolder ? '📁 ' : ''}${h(s.tag)}${s.count ? `<span class="menu-count">${s.count}</span>` : ''}</button>`).join('');
-    sugEl.hidden = !list.length;
+    sugEl.hidden = !list.length || document.activeElement !== input && !pending.length && !q;
     sugEl.querySelectorAll('[data-t]').forEach(b => b.addEventListener('mousedown', e => {
-      e.preventDefault(); add(b.dataset.t);
+      e.preventDefault(); stage(b.dataset.t); input.focus();
     }));
   };
+  input.addEventListener('focus', renderSug);
   input.addEventListener('input', renderSug);
   input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); add(input.value); }
-    if (e.key === 'Escape') { sugEl.hidden = true; }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (input.value.trim()) stage(input.value); else apply();     // 空 Enter = 套用
+    }
+    if (e.key === 'Escape') { sugEl.hidden = true; input.blur(); }
   });
-  input.addEventListener('blur', () => setTimeout(() => { sugEl.hidden = true; }, 150));
+  input.addEventListener('blur', () => setTimeout(() => {
+    if (!wrap.contains(document.activeElement)) sugEl.hidden = true;
+  }, 150));
 }
 
 /* ── 人臉框 overlay（E06：/api/excire/{lib}/faces/{photoId}）────────── */

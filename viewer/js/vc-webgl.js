@@ -17,6 +17,10 @@ let _glLocs     = null;
 let _glPosBuf   = null;
 let _videoRafId = null;
 let _glReadyFrame = false;   // 當前媒體已成功上傳一幀真實內容（首幀閘門）
+let _glTexW = 0, _glTexH = 0; // GL 紋理實際尺寸（與 canvas 尺寸獨立追蹤；
+                              // _glClearTexture 會把紋理縮為 1×1 但 canvas 尺寸不變，
+                              // 若僅比對 canvas 尺寸，下一支同尺寸影片會誤走 texSubImage2D
+                              // → GL INVALID_VALUE 靜默失敗 → 紋理全黑 → 畫面黑掉）
 const _GL_QUAD  = new Float32Array([0,0, 0,1, 1,0, 1,1]);
 
 const _GL_VERT = `
@@ -180,6 +184,7 @@ export function _glUploadTexture(img) {
   gl.viewport(0, 0, _glCanvas.width, _glCanvas.height);
   gl.bindTexture(gl.TEXTURE_2D, _glTexture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+  _glTexW = _glCanvas.width; _glTexH = _glCanvas.height;
   _glTexSrc = src;
   _glReadyFrame = true;   // 圖片已完整載入，上傳即為真實內容
 }
@@ -192,7 +197,11 @@ export function _glUploadVideoFrame(vid) {
   if (_glCanvas.width !== w || _glCanvas.height !== h) {
     _glCanvas.width = w; _glCanvas.height = h;
     gl.viewport(0, 0, w, h);
+  }
+  if (_glTexW !== w || _glTexH !== h) {
+    // 紋理尺寸不符（首次上傳／尺寸改變／_glClearTexture 後的 1×1）→ 必須 texImage2D 重配
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vid);
+    _glTexW = w; _glTexH = h;
   } else {
     // 使用 texSubImage2D 前確保影片 readyState >= 2（有可用幀）
     if (vid.readyState < 2) return;
@@ -201,6 +210,7 @@ export function _glUploadVideoFrame(vid) {
     } catch (e) {
       // 影片解碼尺寸不符（尺寸剛改變但 readyState 未更新）→ 回退 texImage2D
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, vid);
+      _glTexW = w; _glTexH = h;
     }
   }
 }
@@ -280,7 +290,7 @@ function _glDestroy() {
   _gl.deleteBuffer(_glPosBuf);
   if (_glCanvas && _glCanvas.parentElement) _glCanvas.parentElement.removeChild(_glCanvas);
   _gl = _glCanvas = _glProgram = _glTexture = _glPosBuf = _glLocs = _glTexSrc = null;
-  _glReadyFrame = false;
+  _glReadyFrame = false; _glTexW = _glTexH = 0;
 }
 
 export function _glShowCanvas(show) {
@@ -375,5 +385,6 @@ export function _glClearTexture() {
     _gl.bindTexture(_gl.TEXTURE_2D, _glTexture);
     _gl.texImage2D(_gl.TEXTURE_2D, 0, _gl.RGBA, 1, 1, 0, _gl.RGBA, _gl.UNSIGNED_BYTE,
       new Uint8Array([0, 0, 0, 0]));
+    _glTexW = _glTexH = 1;   // 紋理已縮為 1×1，下次上傳必走 texImage2D 重配
   }
 }

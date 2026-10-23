@@ -41,7 +41,11 @@ const _fmt = s => { if (!isFinite(s)) return '–:––';
 
 /* ── 對外：開啟（selection.js 卡片點擊/Enter 呼叫）───────────────────── */
 
-export function openViewerFor(id) {
+let _ctxList = null;   // 來源清單覆寫（統計 TOP10／觀看記錄等非 grid 清單 → 上下切換依該清單順序）
+
+/** @param {string} id  @param {Array<vm>=} list 來源清單（可含順序）；省略則用 grid 清單 */
+export function openViewerFor(id, list = null) {
+  _ctxList = Array.isArray(list) && list.length ? list : null;
   const r = parseRoute();
   r.query.set('item', id);
   _expectPush = true;
@@ -63,6 +67,11 @@ export function syncViewerFromRoute(route) {
 
   const grid = store.state.gridItems || [];
   let items = grid, idx = grid.findIndex(i => i.id === id);
+  if (_ctxList) {                           // 來源清單優先（TOP10／觀看記錄的點擊重播）
+    const ci = _ctxList.findIndex(i => i.id === id);
+    if (ci >= 0) { items = _ctxList; idx = ci; }
+    _ctxList = null;                        // 一次性消費；之後 viewer 內部導覽沿用 V.items
+  }
   if (idx < 0) {
     const it = (store.state.allItems || []).find(i => i.id === id);
     if (it) { items = [it]; idx = 0; }
@@ -78,9 +87,23 @@ export function syncViewerFromRoute(route) {
   V.items = items; V.idx = idx;
   V.pushed = V.open ? V.pushed : _expectPush;
   _expectPush = false;
-  if (!V.open) { V.open = true; $('uviewer').hidden = false; _resetUITimer(); }
+  if (!V.open) {
+    V.open = true; $('uviewer').hidden = false; _resetUITimer();
+    _autoFullscreenOnMobile();
+  }
   _load();
   syncDrawerFromQuery(route.query);
+}
+
+/* 手機：開啟媒體即進入全螢幕（沉浸式，同 YouTube／TikTok 行為）。
+   需在使用者手勢的 transient activation 內（點格子 → hashchange → 此處，仍在 5s 視窗）；
+   iOS Safari 不支援非 <video> 全螢幕 → 靜默略過（viewer 本身已滿版）。 */
+const _MQ_PHONE = window.matchMedia('(max-width: 767px)');
+function _autoFullscreenOnMobile() {
+  if (!_MQ_PHONE.matches || !document.fullscreenEnabled) return;
+  const root = $('uviewer');
+  if (document.fullscreenElement === root) return;
+  root.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
 }
 
 export function setViewerResolvers(r) { Object.assign(_resolvers, r); }
@@ -192,6 +215,8 @@ function _buildImage(it, zoom) {
   img.alt = '';
   img.fetchPriority = 'high';
   img.src = mediaURL(it.source === 'excire' ? (it.preview || it.file) : (it.file || it.thumb));
+  // 書籤（無本地檔）只有縮圖：比照影片自動放大填滿視窗（object-fit:contain），而非以縮圖原尺寸顯示
+  img.classList.toggle('uv-fit', it.mediaType === 'bookmark' || (!it.file && !!it.thumb));
   img.addEventListener('mousedown', _izDown);
   img.addEventListener('dblclick', e => { e.stopPropagation(); V.iz = { ...V.iz, s: 1, px: 0, py: 0 }; _izApply(); });
   zoom.appendChild(img);
@@ -414,6 +439,22 @@ function _toggleFs() {
   if (document.fullscreenElement === root) document.exitFullscreen().catch(() => {});
   else root.requestFullscreen().catch(() => {});
 }
+
+/* 全螢幕時瀏覽器只渲染 fullscreenElement 子樹（top layer）；vc-panel／toast／
+   裁切 overlay 原為 body 直屬兄弟節點，會被整個遮蔽而「打不開控制面板」。
+   → fullscreenchange 時把這些 position:fixed overlay 暫時搬進 #uviewer，離開時搬回 body。 */
+const _FS_OVERLAY_IDS = ['vc-panel', 'vc-toast', 'toast-root', 'vc-crop-overlay', 'vc-crop-toolbar'];
+function _reparentOverlays() {
+  const root = $('uviewer');
+  const intoRoot = document.fullscreenElement === root;
+  _FS_OVERLAY_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (intoRoot && el.parentElement !== root) root.appendChild(el);
+    else if (!intoRoot && el.parentElement === root) document.body.appendChild(el);
+  });
+}
+document.addEventListener('fullscreenchange', _reparentOverlays);
 function _toggleMute() {
   const v = V.media;
   if (V.kind !== 'video' || !v) return;
@@ -431,6 +472,8 @@ export function initViewer(resolvers = {}) {
   $('uv-play').addEventListener('click', _togglePlay);
   $('uv-mute').addEventListener('click', _toggleMute);
   $('uv-fs').addEventListener('click', _toggleFs);
+  // iOS Safari 不支援非 <video> 元素 requestFullscreen → 隱藏按鈕（viewer 本身已是滿版 overlay）
+  if (!document.fullscreenEnabled) $('uv-fs').hidden = true;
   $('uv-orig').addEventListener('click', _toggleOriginal);
   $('uv-tags').addEventListener('click', _toggleTagsPop);
   $('uv-kbd-btn').addEventListener('click', () => { $('uv-kbd').hidden = !$('uv-kbd').hidden; });
@@ -462,9 +505,13 @@ export function initViewer(resolvers = {}) {
   stage.addEventListener('click', e => {
     if (e.target.closest('.uv-nav, #uv-controls')) return;
     if (V.iz.dragging) return;
+    const cur = V.items[V.idx];
     if (V.kind === 'video' && e.target === V.media) {
       clearTimeout(V.dblTimer);
       V.dblTimer = setTimeout(() => _togglePlay(), 260);
+    } else if (cur?.mediaType === 'bookmark' && cur.url && e.target === V.media) {
+      // 書籤：點縮圖 = 開原始連結（與 grid 點擊行為一致；上下切換到書籤時亦可用）
+      window.open(cur.url, '_blank', 'noopener');
     } else if (e.target === stage || e.target === $('uv-wrap') || e.target === $('uv-zoom')) {
       _requestClose();
     }
@@ -479,6 +526,13 @@ export function initViewer(resolvers = {}) {
     kind: () => V.kind,
     nav: _nav,
     seekBy: _seekBy,
+    seekInfo: () => (V.kind === 'video' && V.media?.duration) ? { t: V.media.currentTime, d: V.media.duration } : null,
+    seekTo: sec => { const v = V.media; if (V.kind === 'video' && v?.duration) { v.currentTime = Math.max(0, Math.min(v.duration, sec)); _resetUITimer(); } },
+    seekHint: text => {
+      let el = $('uv-seek-hint');
+      if (!el) { el = document.createElement('div'); el.id = 'uv-seek-hint'; el.className = 'uv-seek-hint'; $('uv-stage').appendChild(el); }
+      el.textContent = text || ''; el.classList.toggle('show', !!text);
+    },
     requestClose: _requestClose,
     togglePlay: _togglePlay,
     toggleUi: () => { $('uviewer').classList.toggle('ui-hidden'); clearTimeout(V.uiTimer); },

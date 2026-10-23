@@ -9,7 +9,7 @@
 
 import { store } from './store.js';
 import { h, parseQuery, serializeTerms, QUERY_FIELDS } from './items.js';
-import { setQuery } from './toolbar.js';
+import { setQuery, serializeFiltersNoQ } from './toolbar.js';
 import { navigate } from './router.js';
 import { toast } from './notifications.js';
 import { ensureAiStatus, aiCaps, searchScope } from './ai-search.js';
@@ -32,9 +32,12 @@ export function getSearchProviders() { return [..._providers.values()]; }
 let _scopeAll = false;      // nl 範圍：false = 跟隨當前庫路由、true = 全部庫
 
 function _scopeParam() {
-  const libScope = searchScope();
+  // 預設只搜「當前資源庫」：路由有庫 → 該庫；否則退回 store 記錄的當前庫；都沒有才全部庫
+  const libScope = searchScope() || store.state.libId || null;
   return _scopeAll || !libScope ? 'all' : libScope;
 }
+/** NL 搜尋路由攜帶既有篩選（type/star/tags/…），結果視圖沿用同一條篩選鏈 */
+function _filterQS() { const qs = serializeFiltersNoQ(); return qs ? '&' + qs : ''; }
 
 registerSearchProvider({
   id: 'syntax', label: '語法', icon: 'command',
@@ -47,7 +50,7 @@ registerSearchProvider({
   tip: () => aiCaps().loaded ? 'AI 模型/語意索引未就緒（People 區可建立索引）' : 'AI 狀態載入中…',
   execute: q => {
     if (!q) { toast('請以自然語言描述想找的畫面', { err: true }); return null; }
-    navigate(`#/search?mode=nl&q=${encodeURIComponent(q)}&scope=${encodeURIComponent(_scopeParam())}`);
+    navigate(`#/search?mode=nl&q=${encodeURIComponent(q)}&scope=${encodeURIComponent(_scopeParam())}${_filterQS()}`);
     return { provider: 'nl', query: q };
   },
 });
@@ -132,6 +135,7 @@ export function openPalette() {
   _chips = terms.filter(t => t.field !== '*');
   _input.value = serializeTerms(terms.filter(t => t.field === '*'));
   _root.classList.add('show');
+  _scopeAll = false;          // 每次開啟預設「當前庫」；跨庫需明確點選 scope chip（不跨 session 黏住）
   _restoreMode();
   _renderModes();
   _renderChips();
@@ -153,6 +157,7 @@ function _build() {
   _root.innerHTML = `
     <div class="palette" role="dialog" aria-label="搜尋指揮中心">
       <div class="palette-input-row">
+        <button class="palette-close" id="ck-close" aria-label="關閉搜尋" type="button">${_icon('close')}</button>
         ${_icon('search')}
         <div class="qchips" id="ck-chips"></div>
         <input id="ck-input" autocomplete="off" spellcheck="false"
@@ -168,6 +173,7 @@ function _build() {
   _sugsEl = _root.querySelector('#ck-sugs');
 
   _root.addEventListener('mousedown', e => { if (e.target === _root) closePalette(); });
+  _root.querySelector('#ck-close')?.addEventListener('click', () => closePalette());
   _input.addEventListener('input', () => { _sugIdx = -1; _suggest(); });
   _input.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {

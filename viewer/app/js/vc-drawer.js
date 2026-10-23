@@ -14,6 +14,7 @@ import { h, fmtSize, fmtDate, fmtDuration } from './items.js';
 const TAB2PARAM = { info: 'info', playback: 'play', filters: 'filter',
                     color: 'color', transform: 'geo', image: 'view' };
 const PARAM2TAB = Object.fromEntries(Object.entries(TAB2PARAM).map(([k, v]) => [v, k]));
+PARAM2TAB.color = 'filters';   // 選色已併入濾鏡 tab（舊 URL &drawer=color 相容）
 
 const $ = id => document.getElementById(id);
 

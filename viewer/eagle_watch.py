@@ -10,6 +10,12 @@ _eagle_last_ids        = {}   # lib -> frozenset of all .info folder IDs
 _eagle_trashed_ids     = {}   # lib -> set of IDs known to be isDeleted=True in Eagle
 _eagle_watcher_started = set()
 _eagle_snap_cache      = {}   # lib -> { item_id -> snap_dict }（供永久刪除時回查）
+_eagle_meta_sig        = {}   # lib -> { item_id -> sig }（tags/folders/name/star/annotation/url 變更偵測）
+
+_SIG_FIELDS = ("tags", "folders", "name", "star", "annotation", "url", "duration", "width", "height")
+
+def _meta_sig(meta: dict):
+    return tuple(json.dumps(meta.get(k), ensure_ascii=False, sort_keys=True) for k in _SIG_FIELDS)
 
 
 def _scan_lib_item_ids(lib: str):
@@ -24,6 +30,89 @@ def _scan_lib_item_ids(lib: str):
         p.name[:-5] for p in images_dir.iterdir()
         if p.is_dir() and p.name.endswith(".info")
     )
+
+
+def _scan_metas(lib: str, item_ids):
+    """單趟讀全部 metadata.json：回傳 (isDeleted 集合, {id: sig}, {id: meta})。
+    watcher 原本每 10s 就全量讀一次（只看 isDeleted），這裡順便取 tags/folders 等欄位簽章，
+    讓 Eagle 內改標籤／移資料夾／改名／評分能即時反映到 viewer 快取（修「快取過期、標籤對不上」）。"""
+    lib_path = LIBRARY_PATHS.get(lib)
+    if not lib_path:
+        return set(), {}, {}
+    images_dir = Path(lib_path) / "images"
+    trashed, sigs, metas = set(), {}, {}
+    for item_id in item_ids:
+        meta_path = images_dir / f"{item_id}.info" / "metadata.json"
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            if meta.get("isDeleted"):
+                trashed.add(item_id)
+            sigs[item_id] = _meta_sig(meta)
+            metas[item_id] = meta
+        except Exception:
+            pass
+    return trashed, sigs, metas
+
+
+def _sync_meta_changes(lib: str, changed_ids, metas: dict) -> int:
+    """把變更過的 metadata 欄位寫回 urls_data.json 快取並廣播 item_updated。回傳更新筆數。"""
+    from config import _lib_locks
+    cache_path = DATA_DIR / lib / "urls_data.json"
+    if not cache_path.exists() or not changed_ids:
+        return 0
+    n = 0
+    with _lib_locks[lib]:
+        try:
+            data = json.loads(cache_path.read_text("utf-8"))
+            by_id = {it.get("id"): it for it in data.get("items", [])}
+            for item_id in changed_ids:
+                meta = metas.get(item_id); it = by_id.get(item_id)
+                if not meta or not it:
+                    continue
+                it["tags"]       = list(meta.get("tags", [])) + (["archived"] if meta.get("isDeleted") else [])
+                it["folders"]    = meta.get("folders", [])
+                it["name"]       = meta.get("name", it.get("name", ""))
+                it["star"]       = meta.get("star", 0)
+                it["annotation"] = meta.get("annotation", "")
+                if meta.get("url"): it["url"] = meta.get("url")
+                if meta.get("duration") is not None: it["duration"] = meta.get("duration")
+                w, h = meta.get("width"), meta.get("height")
+                if isinstance(w, int) and w > 0: it["width"] = w
+                if isinstance(h, int) and h > 0: it["height"] = h
+                n += 1
+            if n:
+                tmp = cache_path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+                tmp.replace(cache_path)
+        except Exception:
+            return 0
+    for item_id in changed_ids:
+        _sse_broadcast(lib, {"type": "item_updated", "id": item_id, "lib": lib, "source": "eagle"})
+    return n
+
+
+def _find_cache_stale(lib: str, metas: dict) -> list:
+    """快取 vs metadata 對帳：tags/folders/name/star 任一不同者回傳 id 清單。"""
+    cache_path = DATA_DIR / lib / "urls_data.json"
+    if not cache_path.exists():
+        return []
+    try:
+        data = json.loads(cache_path.read_text("utf-8"))
+    except Exception:
+        return []
+    stale = []
+    for it in data.get("items", []):
+        m = metas.get(it.get("id"))
+        if not m:
+            continue
+        exp_tags = list(m.get("tags", [])) + (["archived"] if m.get("isDeleted") else [])
+        if (sorted(it.get("tags", [])) != sorted(exp_tags)
+                or list(it.get("folders", [])) != list(m.get("folders", []))
+                or it.get("name", "") != m.get("name", "")
+                or (it.get("star", 0) or 0) != (m.get("star", 0) or 0)):
+            stale.append(it.get("id"))
+    return stale
 
 
 def _check_isdeleted(lib: str, item_ids):
@@ -154,20 +243,31 @@ def _start_eagle_watcher(lib: str, interval: int = 10):
             known_trashed = _eagle_trashed_ids.setdefault(lib, set())
 
             if prev_ids is None:
-                # ── 首次掃描：建立基準線（全量讀取 isDeleted 狀態）
-                initial_trashed = _check_isdeleted(lib, current_ids)
+                # ── 首次掃描：建立基準線（全量讀取 isDeleted 狀態 + 欄位簽章），
+                #    並與快取對帳一次（伺服器離線期間 Eagle 的標籤／資料夾變更在此補上）
+                initial_trashed, sigs, metas = _scan_metas(lib, current_ids)
                 _eagle_last_ids[lib]    = current_ids
                 _eagle_trashed_ids[lib] = initial_trashed
-                _wlog(f"[watcher:{lib}] 基準線建立：{len(current_ids)} 個 items，{len(initial_trashed)} 個已垃圾桶")
+                _eagle_meta_sig[lib]    = sigs
+                stale = _find_cache_stale(lib, metas)
+                n_fix = _sync_meta_changes(lib, stale, metas) if stale else 0
+                _wlog(f"[watcher:{lib}] 基準線建立：{len(current_ids)} 個 items，{len(initial_trashed)} 個已垃圾桶，快取對帳更新 {n_fix} 筆")
             else:
                 added   = current_ids - prev_ids   # 新增的 .info 資料夾
                 removed = prev_ids    - current_ids # 消失的 .info 資料夾（永久刪除）
 
-                # 全量讀取 isDeleted 狀態（移除 mtime filter：WSL2 DrvFS mtime 不可靠）
-                current_trashed = _check_isdeleted(lib, current_ids)
+                # 全量讀取 isDeleted 狀態 + 欄位簽章（移除 mtime filter：WSL2 DrvFS mtime 不可靠）
+                current_trashed, sigs, metas = _scan_metas(lib, current_ids)
                 newly_trashed = (current_trashed - known_trashed) - removed
                 known_trashed -= removed          # 已永久刪除的不再追蹤
                 known_trashed |= newly_trashed    # 累積已知垃圾桶狀態
+
+                prev_sigs = _eagle_meta_sig.get(lib, {})
+                changed = [i for i, sg in sigs.items() if i in prev_sigs and prev_sigs[i] != sg and i not in added]
+                _eagle_meta_sig[lib] = sigs
+                if changed:
+                    n_upd = _sync_meta_changes(lib, changed, metas)
+                    _wlog(f"[watcher:{lib}] metadata 變更 {len(changed)} 筆（tags/folders/name/star…）→ 快取更新 {n_upd} 筆")
 
                 _eagle_last_ids[lib] = current_ids
 

@@ -25,7 +25,7 @@ export { vcKeepTempFilter, vcLinkPresetToVideo, vcDiscardTempFilter,
          vcStartEyedropper, vcStopEyedropper,
          vcSetSelectiveHue, vcClearSelectiveColor, vcAddSelectiveColor,
          vcSetActiveSelective, vcRemoveSelective,
-         vcBindAbToSelective, vcUnbindAbFromSelective, vcRenderSelectiveChips,
+         vcBindAbToSelective, vcUnbindAbFromSelective, vcSelAbEdit, vcSelAbNow, vcRenderSelectiveChips,
          vcApplyFilter, vcSetFilter, vcResetFilters } from './vc-filters.js';
 
 export { vcSaveFilterPreset, vcApplyFilterPreset, vcToggleVideoFilterPreset,
@@ -52,7 +52,7 @@ export { vcSetLoopMode, vcSetSpeed, vcSyncPlayback,
 export { vcRegisterImageZoom, vcImageZoom, vcImageZoomSet, vcImageFit,
          vcImageActualSize, vcRegisterImageNav, vcImageNav, vcSetModalBg,
          vcResetAll, vcDismissToast, vcSwitchTab,
-         toggleVcPanel, closeVcPanel, vcInitDragHandle, vcSyncPanel }
+         toggleVcPanel, closeVcPanel, vcInitDragHandle, vcInitValueEdit, vcSyncPanel }
   from './vc-panel.js';
 
 import { _migrateMediaFilterKeys, _migrateVideoFilterLinks, _syncLoad }

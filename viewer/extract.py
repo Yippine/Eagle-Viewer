@@ -375,7 +375,12 @@ def _run_incremental(lib_name: str) -> bool:
         for entry in it:
             if entry.is_dir() and entry.name.endswith(".info"):
                 try:
-                    current[entry.name] = entry.stat().st_mtime
+                    # 以 max(目錄 mtime, metadata.json mtime) 為鍵：Eagle 改標籤／資料夾只動 metadata.json，
+                    # NTFS/DrvFS 目錄 mtime 不變 → 舊鍵永遠偵測不到（快取標籤過期的根因之一）
+                    m = entry.stat().st_mtime
+                    try: m = max(m, os.stat(os.path.join(entry.path, "metadata.json")).st_mtime)
+                    except OSError: pass
+                    current[entry.name] = m
                 except OSError:
                     pass
 

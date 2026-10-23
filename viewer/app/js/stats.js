@@ -5,7 +5,7 @@
    /api/views、/api/delete-view、/api/clear-views。 */
 
 import { api, mediaURL } from './api.js';
-import { navigate } from './router.js';
+import { navigate, parseRoute } from './router.js';
 import { h, fmtDuration } from './items.js';
 import { renderBreadcrumb, setContentChrome, pagePanel } from './page-chrome.js';
 import { openViewerFor } from './viewer.js';
@@ -41,7 +41,16 @@ export async function renderStatsRoute(route, ctx) {
     item: byId.get(id) || null,
   })).sort((a, b) => b.views - a.views);
 
+  // 已刪除資源（views 有紀錄、庫中已不存在）：總覽 TOP10 不顯示（無法重播），
+  // 並於頁首提供一鍵清除（不自動清：庫載入中／垃圾桶暫存／Excire 分頁未載入都可能誤判，清除不可逆）
+  const deletedRows = _rows.filter(r => !r.item);
+  const deletedBar = deletedRows.length ? `
+    <div class="stats-deleted-bar" id="stats-deleted-bar">
+      <span>${_icon('trash')} 有 <b>${deletedRows.length}</b> 個已刪除資源仍留有觀看紀錄</span>
+      <button class="btn btn-sm btn-danger" id="stats-prune-deleted">一鍵清除</button>
+    </div>` : '';
   panel.innerHTML = `<div class="stats-page">
+    ${deletedBar}
     <div class="seg-tabs">
       <button class="seg-tab${tab === 'overview' ? ' on' : ''}" data-tab="overview">總覽</button>
       <button class="seg-tab${tab === 'history' ? ' on' : ''}" data-tab="history">觀看記錄</button>
@@ -50,6 +59,20 @@ export async function renderStatsRoute(route, ctx) {
   </div>`;
   panel.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () =>
     navigate(`#/stats?tab=${b.dataset.tab}`, { replace: true })));
+  panel.querySelector('#stats-prune-deleted')?.addEventListener('click', async () => {
+    const n = deletedRows.length;
+    const ok = await confirmDialog({
+      title: `清除 ${n} 個已刪除資源的觀看紀錄？`,
+      body: '僅移除庫中已不存在之項目的紀錄（含其全部歷史與觀看時長），現存資源不受影響。此動作無法復原。',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const r = await api.pruneViews(_ctx.slug, deletedRows.map(x => x.id));
+      toast(`已清除 ${r.removed ?? n} 筆已刪除資源的紀錄`);
+      renderStatsRoute(route, _ctx);
+    } catch (err) { toast(`清除失敗：${err.message}`, { err: true }); }
+  });
   tab === 'overview' ? _wireOverview(panel) : _wireHistory(panel, route);
 }
 
@@ -58,7 +81,7 @@ export async function renderStatsRoute(route, ctx) {
 function _overviewHTML() {
   const totalViews = _rows.reduce((s, v) => s + v.views, 0);
   const totalTime = _rows.reduce((s, v) => s + v.total, 0);
-  const top10 = _rows.slice(0, 10);
+  const top10 = _rows.filter(r => r.item).slice(0, 10);   // 已刪除資源不列 TOP10（不可重播）
 
   // 近 30 天每日次數
   const days = [];
@@ -94,7 +117,7 @@ function _overviewHTML() {
 
     <h3 class="stats-h">TOP 10 最常觀看</h3>
     <div class="hist-list">
-      ${top10.map((v, i) => _rowHTML(v, { rank: i + 1 })).join('')
+      ${top10.map((v, i) => _rowHTML(v, { rank: i + 1, del: true })).join('')
         || `<p class="insp-note">尚無觀看紀錄</p>`}
     </div>
 
@@ -110,6 +133,14 @@ function _overviewHTML() {
 
 function _wireOverview(panel) {
   _wireRowClicks(panel);
+  panel.querySelectorAll('[data-del-item]').forEach(b => b.addEventListener('click', async e => {
+    e.stopPropagation();
+    const row = b.closest('[data-id]'); const id = row.dataset.id;
+    const name = _rows.find(x => x.id === id)?.name || id;
+    if (!await confirmDialog({ title: `移除「${name}」的全部觀看紀錄？`, body: '含次數、歷史與觀看時長。此動作無法復原。', danger: true })) return;
+    try { await api.pruneViews(_ctx.slug, [id]); renderStatsRoute(parseRoute(), _ctx); }
+    catch (err) { toast(`移除失敗：${err.message}`, { err: true }); }
+  }));
   _wireChartTooltip(panel);
 }
 
@@ -232,10 +263,11 @@ function _rowHTML(v, { rank = 0, time = false, del = false } = {}) {
   const thumbSrc = it?.thumb ? mediaURL(it.thumb)
     : (it?.file && it.mediaType === 'image') ? mediaURL(it.file) : '';
   const clickable = !!it;
+  // TOP10（rank）與觀看記錄（time）同一套 meta 版式：次數 · 時長 · 相對時間
   const meta = [
     v.n > 1 ? `▶ ${v.n} 次` : (rank ? `▶ ${v.views} 次` : ''),
     (v.dur || v.total) ? `⏱ ${fmtDuration(time ? v.dur : v.total)}` : '',
-    time ? _relTime(v.t) : '',
+    time ? _relTime(v.t) : (rank && v.last ? _relTime(v.last) : ''),
   ].filter(Boolean).join(' · ');
   return `<div class="hist-row${clickable ? ' clickable' : ''}" data-id="${h(v.id)}" ${v.t ? `data-t="${h(v.t)}"` : ''}
        data-name="${h((v.name || '').toLowerCase())}" ${clickable ? 'data-open' : ''}>
@@ -245,14 +277,21 @@ function _rowHTML(v, { rank = 0, time = false, del = false } = {}) {
       <span class="hist-name">${h(v.name)}${it ? '' : '<i class="hist-del-badge">已刪除</i>'}</span>
       <span class="hist-meta">${h(meta)}</span>
     </span>
-    ${del ? `<button class="btn btn-ghost btn-sm btn-icon" data-del-entry title="刪除此紀錄">✕</button>` : ''}
+    ${del ? `<button class="btn btn-ghost btn-sm btn-icon" ${rank ? 'data-del-item title="移除此項目的全部觀看紀錄"' : 'data-del-entry title="刪除此紀錄"'}>✕</button>` : ''}
   </div>`;
 }
 
 function _wireRowClicks(panel) {
   panel.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', e => {
-    if (e.target.closest('[data-del-entry]')) return;
-    openViewerFor(el.dataset.id);                    // 點擊重播（C63）
+    if (e.target.closest('[data-del-entry],[data-del-item]')) return;
+    // 點擊重播（C63）：上下切換依「所在清單」順序（同一 .hist-list 群組內可開啟的項目；觀看記錄同一項目多筆去重）
+    const group = el.closest('.hist-list') || panel;
+    const seen = new Set(), list = [];
+    group.querySelectorAll('[data-open]').forEach(r => {
+      const id = r.dataset.id; if (seen.has(id)) return; seen.add(id);
+      const row = _rows.find(x => x.id === id); if (row?.item) list.push(row.item);
+    });
+    openViewerFor(el.dataset.id, list);
   }));
 }
 

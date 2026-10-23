@@ -366,7 +366,8 @@ function _buildCropOverlay() {
       '<button class="vc-ctb vc-ctb-cancel" onclick="vcCancelCrop()">取消</button>' +
       '<button class="vc-ctb vc-ctb-apply"  onclick="vcApplyCrop()">套用裁切</button>' +
     '</div>';
-  document.body.appendChild(el);
+  // 全螢幕中建立時掛進 fullscreenElement（否則位於 top layer 之外不可見）
+  (document.fullscreenElement || document.body).appendChild(el);
   _updateCropUI();
   _initCropDrag(el);
 }

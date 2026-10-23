@@ -217,7 +217,58 @@ function _initSliderScrollFix(content) {
   });
 }
 
+/* ── 數值點擊直接輸入（.vc-val → inline number input → 寫回 range 並觸發 input）──
+   特例：vc-speed 為對數刻度（顯示 x× ↔ range=(log10 x+1)*100）、vc-img-zoom 顯示 %。 */
+let _valEditInited = false;
+export function vcInitValueEdit() {
+  if (_valEditInited) return;
+  const panel = document.getElementById('vc-panel');
+  if (!panel) return;
+  _valEditInited = true;
+  panel.addEventListener('click', e => {
+    const val = e.target.closest('.vc-val');
+    if (!val || val.querySelector('input')) return;
+    const row = val.closest('.vc-slider-row');
+    const range = row?.querySelector('input[type="range"]');
+    if (!range) return;
+    const id = range.id;
+    const shown = parseFloat(val.textContent.replace(/[^\d.\-+]/g, ''));
+    // 顯示值 → range 值
+    const toRange = x => id === 'vc-speed' ? (Math.log10(x) + 1) * 100
+                      : id === 'vc-img-zoom' ? x / 100 : x;
+    const fromRange = v => id === 'vc-speed' ? Math.pow(10, v / 100 - 1)
+                        : id === 'vc-img-zoom' ? v * 100 : v;
+    const cur = isFinite(shown) ? shown : fromRange(+range.value);
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.inputMode = 'decimal'; inp.className = 'vc-val-input';
+    inp.value = String(+cur.toFixed(2));
+    const prev = val.textContent;
+    val.textContent = ''; val.appendChild(inp);
+    inp.focus(); inp.select();
+    let done = false;
+    const commit = ok => {
+      if (done) return; done = true;
+      const x = parseFloat(inp.value);
+      if (ok && isFinite(x)) {
+        const min = +range.min, max = +range.max;
+        const v = Math.min(max, Math.max(min, toRange(x)));
+        range.value = String(v);
+        range.dispatchEvent(new Event('input', { bubbles: true }));   // 走原 oninput（即時套用＋數值重繪）
+      } else val.textContent = prev;
+      if (val.contains(inp)) inp.remove();
+    };
+    inp.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') { ev.preventDefault(); commit(true); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); commit(false); }
+      ev.stopPropagation();
+    });
+    inp.addEventListener('blur', () => commit(true));
+    inp.addEventListener('click', ev => ev.stopPropagation());
+  });
+}
+
 export function vcInitDragHandle() {
+  vcInitValueEdit();
   if (_vcDragInited) return;
   _vcDragInited = true;
   const panel   = document.getElementById('vc-panel');
@@ -295,6 +346,14 @@ export function vcSyncPanel() {
   const unbindAbBtn = document.getElementById('vc-sel-unbind-ab-btn');
   if (unbindAbBtn) {
     unbindAbBtn.style.display = (sel !== null && sel.abStart !== null) ? '' : 'none';
+  }
+  // 選色時段列（併入濾鏡 tab 後可直接輸入；取色後即顯示）
+  const abRow = document.getElementById('vc-sel-ab-row');
+  if (abRow) {
+    abRow.style.display = hasPick ? '' : 'none';
+    const sEl = document.getElementById('vc-sel-ab-start'), eEl = document.getElementById('vc-sel-ab-end');
+    if (sEl && document.activeElement !== sEl) sEl.textContent = sel && sel.abStart !== null ? fmtTime(sel.abStart) : '–';
+    if (eEl && document.activeElement !== eEl) eEl.textContent = sel && sel.abEnd   !== null ? fmtTime(sel.abEnd)   : '–';
   }
   const _fmtDelta = v => (v > 0 ? '+' : '') + v.toFixed(2);
   const _s = sel ?? { hueShift: 0, range: 30, brightness: 0, contrast: 0, saturate: 0, sepia: 0 };

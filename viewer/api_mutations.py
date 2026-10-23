@@ -23,7 +23,7 @@ from api_import import (
     _parse_multipart, _save_user_data, start_import_url,
 )
 from api_routes import (
-    _clear_all_views, _delete_history_entry, _start_folder_scan, _track_view,
+    _clear_all_views, _delete_history_entry, _prune_views, _start_folder_scan, _track_view,
 )
 
 # ---------------------------------------------------------------------------
@@ -92,6 +92,16 @@ def handle_post_delete_view(h):
     h._json(200, {"ok": True, "record": _delete_history_entry(lib, item_id, t)})
 
 
+def handle_post_prune_views(h):
+    b = h._read_json(1_048_576)
+    if b is None: return
+    lib = str(b.get("lib", "")).strip()
+    ids = b.get("ids") or []
+    if not lib: h._err(400, "Missing field: lib"); return
+    if not isinstance(ids, list): h._err(400, "ids must be a list"); return
+    h._json(200, {"ok": True, "removed": _prune_views(lib, ids)})
+
+
 def handle_post_clear_views(h):
     b = h._read_json()
     if b is None: return
@@ -124,7 +134,7 @@ def handle_post_items_tags_sync_apply(h):
     if b is None: return
     lib = str(b.get("lib", "")).strip()
     if not lib: h._err(400, "Missing field: lib"); return
-    applied = _apply_items_tags_sync(lib)
+    applied = _apply_items_tags_sync(lib, str(b.get("only", "")).strip())
     _sse_broadcast(lib, {"type": "tags_synced", "lib": lib})
     h._json(200, {"ok": True, "applied": applied})
 

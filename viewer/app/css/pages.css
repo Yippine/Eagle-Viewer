@@ -8,6 +8,16 @@
   padding: var(--sp-2) 0 var(--sp-8);
 }
 
+.stats-deleted-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-3);
+  border: 1px solid var(--danger, #e5484d); border-radius: var(--r);
+  background: color-mix(in srgb, var(--danger, #e5484d) 10%, transparent);
+  font-size: var(--fs-sm); color: var(--text);
+}
+.stats-deleted-bar span { display: inline-flex; align-items: center; gap: var(--sp-1); min-width: 0; }
+.stats-deleted-bar .btn { flex-shrink: 0; }
+
 .seg-tabs {
   display: inline-flex;
   gap: 2px;

@@ -12,7 +12,7 @@ import { closeDrawer } from './vc-drawer.js';
 Object.assign(window, {
   /* 面板 / tab（關閉走 drawer 包裝，順帶清 &drawer= URL 參數） */
   closeVcPanel: closeDrawer,
-  vcSwitchTab:  VC.vcSwitchTab,
+  vcSwitchTab:  t => VC.vcSwitchTab(t === 'color' ? 'filters' : t),   // 選色已併入濾鏡 tab
 
   /* 播放 */
   vcSetLoopMode: VC.vcSetLoopMode,
@@ -53,6 +53,8 @@ Object.assign(window, {
   vcSetActiveSelective:  VC.vcSetActiveSelective,
   vcRemoveSelective:     VC.vcRemoveSelective,
   vcBindAbToSelective:   VC.vcBindAbToSelective,
+  _vcSelAbEdit:          (pt, el) => VC.vcSelAbEdit(pt, el),
+  _vcSelAbNow:           pt => VC.vcSelAbNow(pt),
   vcUnbindAbFromSelective: VC.vcUnbindAbFromSelective,
 
   /* 幾何 / 裁切 / 快照 */

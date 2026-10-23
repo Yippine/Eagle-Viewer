@@ -101,10 +101,30 @@ function _serialize() {
   return p.toString();
 }
 
-/** filters/sort 變更 → replaceState URL → router 宣告式 re-render（§5.4） */
+/** 目前 filters/sort 的 query string（排除 q；供 ⌘K 搜尋路由攜帶既有篩選） */
+export function serializeFiltersNoQ() {
+  const p = new URLSearchParams(_serialize());
+  p.delete('q');
+  return p.toString();
+}
+
+/** filters/sort 變更 → replaceState URL → router 宣告式 re-render（§5.4）
+    #/search 路由：保留 mode/scope/src/all；移除 q（NL 查詢）時退回當前庫視圖並保留其餘篩選 */
 function _updateURL() {
   const cur = parseRoute();
-  const qs = _serialize();
+  const p = new URLSearchParams(_serialize());
+  if (cur.name === 'search') {
+    const mode = cur.query.get('mode') || 'nl';
+    if (mode === 'nl' && !store.state.filters.q) {
+      const libId = store.state.libId;
+      p.delete('q');
+      const qs = p.toString();
+      navigate(libId ? `#/lib/${encodeURIComponent(libId)}${qs ? '?' + qs : ''}` : '#/', { replace: true });
+      return;
+    }
+    ['mode', 'scope', 'src', 'all'].forEach(k => { const v = cur.query.get(k); if (v) p.set(k, v); });
+  }
+  const qs = p.toString();
   navigate('#' + cur.path + (qs ? '?' + qs : ''), { replace: true });
 }
 
@@ -392,7 +412,7 @@ function _renderSeedNav() {
   const prev = st.seedIdx > 0, next = st.seedIdx < st.seeds.length - 1;
   el.innerHTML = `
     <button class="seed-btn" data-seed-nav="-1" ${prev ? '' : 'disabled'} title="上一個 seed">‹</button>
-    <span class="seed-label" title="seed 可重播（URL ?seed=）">seed ${st.seed}${st.seeds.length > 1 ? ` · ${st.seedIdx + 1}/${st.seeds.length}` : ''}</span>
+    <span class="seed-label" title="seed ${st.seed} 可重播（URL ?seed=）"><span class="ibar-long">seed ${st.seed}${st.seeds.length > 1 ? ' · ' : ''}</span>${st.seeds.length > 1 ? `${st.seedIdx + 1}/${st.seeds.length}` : '<span class="ibar-short">🎲</span>'}</span>
     <button class="seed-btn" data-seed-nav="1" ${next ? '' : 'disabled'} title="下一個 seed">›</button>`;
   el.querySelectorAll('[data-seed-nav]').forEach(b => b.addEventListener('click', () => {
     const st2 = store.state;

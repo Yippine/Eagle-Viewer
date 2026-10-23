@@ -167,11 +167,12 @@ function _unlinkPresetFromAllItems(presetId) {
     .filter(k => k.startsWith('eagle-media-filter-'))
     .forEach(k => {
       try {
-        const d = JSON.parse(localStorage.getItem(k) || '{}');
+        const itemId = k.slice('eagle-media-filter-'.length);
+        const d = _loadVideoFilterData(itemId);
         if (!d.presetIds?.includes(presetId)) return;
         d.presetIds = d.presetIds.filter(x => x !== presetId);
         if (d.lastUsed === presetId) d.lastUsed = d.presetIds[0] || null;
-        localStorage.setItem(k, JSON.stringify(d));
+        _saveVideoFilterData(itemId, d);   // 經 Server Sync 同步解除連結
       } catch (_) {}
     });
 }

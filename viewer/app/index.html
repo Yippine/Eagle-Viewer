@@ -150,7 +150,7 @@ try {
           <nav class="breadcrumb" id="breadcrumb" aria-label="麵包屑"></nav>
         </div>
         <div class="toolbar-row" id="toolbar-controls">
-          <div id="filter-chips" role="group" aria-label="作用中篩選" style="display:flex;gap:var(--sp-2);flex-wrap:wrap"></div>
+          <div id="filter-chips" role="group" aria-label="作用中篩選"></div>
           <span class="spacer"></span>
           <button class="btn btn-ghost btn-sm" id="btn-sort" title="排序">
             <svg class="icon icon-sm" aria-hidden="true"><use href="#i-sort"/></svg><span>排序</span>
@@ -315,7 +315,6 @@ try {
     <button class="vc-tab-btn"        data-tab="image"     onclick="vcSwitchTab('image')" style="display:none">檢視</button>
     <button class="vc-tab-btn active" data-tab="playback"  onclick="vcSwitchTab('playback')">播放</button>
     <button class="vc-tab-btn"        data-tab="filters"   onclick="vcSwitchTab('filters')">濾鏡</button>
-    <button class="vc-tab-btn"        data-tab="color"     onclick="vcSwitchTab('color')">選色</button>
     <button class="vc-tab-btn"        data-tab="transform" onclick="vcSwitchTab('transform')">幾何</button>
   </div>
 
@@ -370,17 +369,9 @@ try {
         <div class="vc-slider-row"><span class="vc-label">色調</span><input type="range" id="vc-hue" min="0" max="360" step="1" value="0"oninput="_vcFilter('hueRotate',+this.value)"><span class="vc-val" id="vc-hue-v">0°</span></div>
         <div class="vc-slider-row"><span class="vc-label">復古</span><input type="range" id="vc-sepia" min="0" max="100" step="1" value="0"oninput="_vcFilter('sepia',+this.value)"><span class="vc-val" id="vc-sepia-v">0%</span></div>
         <div class="vc-slider-row"><span class="vc-label">銳化</span><input type="range" id="vc-sharpness" min="-10" max="10" step="1" value="0"oninput="_vcFilter('sharpness',+this.value)"><span class="vc-val" id="vc-sharpness-v">0</span></div>
-        <button class="vc-filter-save-btn" onclick="vcSaveFilterPreset()">＋ 儲存為濾鏡</button>
       </div>
-      <div class="vc-section">
-        <div class="vc-section-label">🔖 濾鏡庫</div>
-        <div id="vc-filter-presets"></div>
-      </div>
-    </div><!-- /vc-pane-filters -->
-
-    <!-- TAB：選色（WebGL；自濾鏡 tab 升為一級，spec §3.2） -->
-    <div class="vc-tab-pane" id="vc-pane-color">
-      <div class="vc-section">
+      <!-- 選色（260823 自獨立 tab 併回濾鏡：濾鏡庫同時保存色彩調整＋選色，避免跨頁籤往返） -->
+<div class="vc-section">
         <div class="vc-sel-header-row">
           <span class="vc-sel-section-label">🎨 選色</span>
           <button class="vc-icon-btn vc-sel-add-btn" onclick="vcAddSelectiveColor()" title="新增色彩範圍，點圖取色">＋</button>
@@ -403,18 +394,34 @@ try {
           <div class="vc-slider-row"><span class="vc-label">飽和</span><input type="range" id="vc-sel-saturate" min="-1" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('saturate',+this.value)"><span class="vc-val" id="vc-sel-saturate-v">0.00</span></div>
           <div class="vc-slider-row"><span class="vc-label">復古</span><input type="range" id="vc-sel-sepia" min="0" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('sepia',+this.value)"><span class="vc-val" id="vc-sel-sepia-v">0.00</span></div>
         </div>
-        <button class="vc-text-btn" id="vc-sel-bind-ab-btn"
-                onclick="vcBindAbToSelective()" title="將當前 A/B 時段綁定到此選色項目"
-                style="display:none;margin-top:8px">
-          ⏱ 套用此 AB 設定
-        </button>
-        <button class="vc-text-btn" id="vc-sel-unbind-ab-btn"
-                onclick="vcUnbindAbFromSelective()" title="移除時段綁定"
-                style="display:none;margin-top:8px">
-          ✕ 移除 AB 綁定
-        </button>
+        <!-- 選色時段（直接在此輸入／以目前位置設定；「套用目前 AB」只是快捷） -->
+        <div class="vc-sel-ab-row" id="vc-sel-ab-row" style="display:none">
+          <span class="vc-label">⏱ 時段</span>
+          <button class="vc-point-btn vc-sel-ab-now" title="以目前播放位置設為起點" onclick="_vcSelAbNow('start')">A</button>
+          <span class="vc-ab-editable vc-sel-ab-time" id="vc-sel-ab-start" contenteditable="true" inputmode="decimal" spellcheck="false"
+                title="點擊輸入起點（m:ss 或秒）" onfocus="_vcAbSpanFocus(this)" onblur="_vcSelAbEdit('start',this)"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">–</span>
+          <span class="vc-ab-sep">→</span>
+          <span class="vc-ab-editable vc-sel-ab-time" id="vc-sel-ab-end" contenteditable="true" inputmode="decimal" spellcheck="false"
+                title="點擊輸入終點（m:ss 或秒）" onfocus="_vcAbSpanFocus(this)" onblur="_vcSelAbEdit('end',this)"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">–</span>
+          <button class="vc-point-btn vc-sel-ab-now" title="以目前播放位置設為終點" onclick="_vcSelAbNow('end')">B</button>
+          <button class="vc-icon-btn" id="vc-sel-bind-ab-btn" onclick="vcBindAbToSelective()"
+                  title="快捷：套用播放頁籤目前的 A/B 時段" style="display:none">⟲</button>
+          <button class="vc-icon-btn" id="vc-sel-unbind-ab-btn" onclick="vcUnbindAbFromSelective()"
+                  title="移除時段（全片套用）" style="display:none">✕</button>
+        </div>
       </div>
-    </div><!-- /vc-pane-color -->
+          <div class="vc-section">
+        <button class="vc-filter-save-btn" onclick="vcSaveFilterPreset()">＋ 儲存為濾鏡（含色彩調整＋選色）</button>
+      </div>
+      <div class="vc-section">
+        <div class="vc-section-label">🔖 濾鏡庫</div>
+        <div id="vc-filter-presets"></div>
+      </div>
+    </div><!-- /vc-pane-filters -->
+
+    
 
     <!-- TAB：幾何 -->
     <div class="vc-tab-pane" id="vc-pane-transform">

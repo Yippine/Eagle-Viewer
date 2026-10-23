@@ -282,6 +282,42 @@ export function vcBindAbToSelective() {
   _showToast(`<span>已綁定 ${fmtTime(start)}–${fmtTime(end)}</span>`);
 }
 
+/** 選色時段直接輸入（m:ss 或秒）：只設一端時另一端補 0／片長，確保時段有效 */
+export function vcSelAbEdit(point, el) {
+  const item = _getActive();
+  if (!item) { vcSyncPanel(); return; }
+  const raw = el.textContent.trim().replace(/[^\d:.]/g, '');
+  const m = raw.match(/^(\d+):(\d{1,2}(?:\.\d+)?)$/);
+  let sec = m ? +m[1] * 60 + +m[2] : parseFloat(raw);
+  const dur = _VCS._vid?.duration;
+  if (!raw) {                                   // 清空 = 移除該端；兩端皆空 = 全片
+    if (point === 'start') item.abStart = null; else item.abEnd = null;
+    if (item.abStart === null || item.abEnd === null) { item.abStart = null; item.abEnd = null; }
+  } else if (!isNaN(sec) && sec >= 0) {
+    if (dur && isFinite(dur)) sec = Math.min(sec, dur);
+    if (point === 'start') { item.abStart = sec; if (item.abEnd === null) item.abEnd = (dur && isFinite(dur)) ? dur : sec; }
+    else                   { item.abEnd = sec;   if (item.abStart === null) item.abStart = 0; }
+    if (item.abStart > item.abEnd) [item.abStart, item.abEnd] = [item.abEnd, item.abStart];
+  }
+  _scheduleCanvasUpdate();
+  vcSyncPanel();
+  vcRenderSelectiveChips();
+}
+/** 以目前播放位置設定選色時段端點 */
+export function vcSelAbNow(point) {
+  const item = _getActive();
+  const vid = _VCS._vid;
+  if (!item || !vid) return;
+  const t = vid.currentTime || 0, dur = vid.duration;
+  if (point === 'start') { item.abStart = t; if (item.abEnd === null) item.abEnd = (dur && isFinite(dur)) ? dur : t; }
+  else                   { item.abEnd = t;   if (item.abStart === null) item.abStart = 0; }
+  if (item.abStart > item.abEnd) [item.abStart, item.abEnd] = [item.abEnd, item.abStart];
+  _scheduleCanvasUpdate();
+  vcSyncPanel();
+  vcRenderSelectiveChips();
+  _showToast(`<span>時段 ${fmtTime(item.abStart)}–${fmtTime(item.abEnd)}</span>`);
+}
+
 export function vcUnbindAbFromSelective() {
   const item = _getActive();
   if (!item) return;

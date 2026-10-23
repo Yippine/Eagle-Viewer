@@ -284,6 +284,9 @@ class _Handler(BaseHTTPRequestHandler):
         if up == "/api/clear-views":
             _m.handle_post_clear_views(self); return
 
+        if up == "/api/prune-views":
+            _m.handle_post_prune_views(self); return
+
         if up == "/api/user-data":
             _m.handle_post_user_data(self); return
 

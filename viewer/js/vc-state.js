@@ -51,7 +51,33 @@ const _VFL_MIGRATED_KEY = 'eagle-vfl-migrated';
 /* ══════════════════════════════════════════════════════════════════
    Server Sync（Union Merge + LWW by modifiedAt / savedAt）
 ══════════════════════════════════════════════════════════════════ */
-const _CACHE = { filterPresets: [], transformSnapshots: {}, version: 0, loaded: false };
+const _CACHE = { filterPresets: [], transformSnapshots: {}, videoFilterLinks: {}, version: 0, loaded: false };
+
+/* 收集本機 localStorage 既有的 per-video 濾鏡連結（eagle-media-filter-*）
+   → 供首次同步時上傳伺服器（桌面先前的連結資料不會遺失）*/
+function _collectLocalVfl() {
+  const out = {};
+  Object.keys(localStorage).filter(k => k.startsWith('eagle-media-filter-')).forEach(k => {
+    try {
+      const d = JSON.parse(localStorage.getItem(k) || '{}');
+      if (d.presetIds?.length || d.lastUsed)
+        out[k.slice('eagle-media-filter-'.length)] = { presetIds: d.presetIds || [], lastUsed: d.lastUsed || null, savedAt: d.savedAt || 0 };
+    } catch (_) {}
+  });
+  return out;
+}
+/* 伺服器資料落地：cache + localStorage 鏡像（離線／未 loaded 前的讀取路徑） */
+function _applyServerData(data) {
+  _CACHE.filterPresets      = data.filterPresets      || [];
+  _CACHE.transformSnapshots = data.transformSnapshots || {};
+  _CACHE.videoFilterLinks   = data.videoFilterLinks   || {};
+  _CACHE.version            = data.version            || 0;
+  localStorage.setItem(_FILTER_PRESETS_KEY, JSON.stringify(_CACHE.filterPresets));
+  Object.entries(_CACHE.transformSnapshots).forEach(([id, snap]) =>
+    localStorage.setItem(_txKey(id), JSON.stringify(snap)));
+  Object.entries(_CACHE.videoFilterLinks).forEach(([id, vfl]) =>
+    localStorage.setItem(_vflKey(id), JSON.stringify(vfl)));
+}
 let _debounceTimer = null;
 
 export async function _syncLoad() {
@@ -61,17 +87,18 @@ export async function _syncLoad() {
     const hasFP = data.filterPresets?.length;
     const hasTS = Object.keys(data.transformSnapshots || {}).length;
     if (hasFP || hasTS) {
-      _CACHE.filterPresets      = data.filterPresets      || [];
-      _CACHE.transformSnapshots = data.transformSnapshots || {};
-      _CACHE.version            = data.version            || 0;
-      localStorage.setItem(_FILTER_PRESETS_KEY, JSON.stringify(_CACHE.filterPresets));
-      Object.entries(_CACHE.transformSnapshots).forEach(([id, snap]) =>
-        localStorage.setItem(_txKey(id), JSON.stringify(snap)));
+      // 伺服器尚無 per-video 連結（舊版升級）但本機有 → 先把本機連結併入再落地上傳
+      const localVfl = _collectLocalVfl();
+      const needUploadVfl = !Object.keys(data.videoFilterLinks || {}).length && Object.keys(localVfl).length;
+      if (needUploadVfl) data.videoFilterLinks = localVfl;
+      _applyServerData(data);
+      if (needUploadVfl) _syncSave();
     } else {
       const local = JSON.parse(localStorage.getItem(_FILTER_PRESETS_KEY) || '[]');
       if (local.length) {
-        _CACHE.filterPresets = local;
-        _CACHE.version       = data.version || 0;
+        _CACHE.filterPresets    = local;
+        _CACHE.videoFilterLinks = _collectLocalVfl();
+        _CACHE.version          = data.version || 0;
         _syncSave();
       }
     }
@@ -89,12 +116,7 @@ async function _syncPoll() {
     const res  = await fetch('/api/user-data');
     const data = await res.json();
     if ((data.version || 0) > _CACHE.version) {
-      _CACHE.filterPresets      = data.filterPresets      || [];
-      _CACHE.transformSnapshots = data.transformSnapshots || {};
-      _CACHE.version            = data.version;
-      localStorage.setItem(_FILTER_PRESETS_KEY, JSON.stringify(_CACHE.filterPresets));
-      Object.entries(_CACHE.transformSnapshots).forEach(([id, snap]) =>
-        localStorage.setItem(_txKey(id), JSON.stringify(snap)));
+      _applyServerData(data);
       vcRenderFilterPresets();
       document.dispatchEvent(new CustomEvent('vc-filter-presets-changed'));
       document.dispatchEvent(new CustomEvent('vc-snaps-synced'));
@@ -117,6 +139,7 @@ function _syncSave() {
       if (merged) {
         _CACHE.filterPresets      = merged.filterPresets      || [];
         _CACHE.transformSnapshots = merged.transformSnapshots || {};
+        _CACHE.videoFilterLinks   = merged.videoFilterLinks   || _CACHE.videoFilterLinks;
         _CACHE.version            = merged.version            || _CACHE.version;
         vcRenderFilterPresets();
       }
@@ -237,12 +260,20 @@ export function _saveFilterPresets(arr) {
 /* ── Per-video filter link CRUD ──────────────────────────────────── */
 export function _loadVideoFilterData(itemId) {
   if (!itemId) return { presetIds: [], lastUsed: null };
+  if (_CACHE.loaded && _CACHE.videoFilterLinks[itemId]) {
+    const v = _CACHE.videoFilterLinks[itemId];
+    return { presetIds: [...(v.presetIds || [])], lastUsed: v.lastUsed ?? null, savedAt: v.savedAt };
+  }
   try { return JSON.parse(localStorage.getItem(_vflKey(itemId)) || '{"presetIds":[],"lastUsed":null}'); }
   catch { return { presetIds: [], lastUsed: null }; }
 }
 export function _saveVideoFilterData(itemId, data) {
   if (!itemId) return;
-  localStorage.setItem(_vflKey(itemId), JSON.stringify(data));
+  // 與 transformSnapshots 同一套 Server Sync（LWW by savedAt）→ 手機／其他裝置可共用連結
+  const rec = { presetIds: data.presetIds || [], lastUsed: data.lastUsed ?? null, savedAt: Date.now() };
+  _CACHE.videoFilterLinks[itemId] = rec;
+  localStorage.setItem(_vflKey(itemId), JSON.stringify(rec));
+  _syncSave();
 }
 
 export function _uid() {

@@ -12,6 +12,9 @@ import { store } from './store.js';
 import { parseLibId, parseRoute } from './router.js';
 import { adaptItem } from './items.js';
 import { setItems, showMessage } from './grid.js';
+import { filterItems, sortItems } from './items.js';
+import { aiTagsSync, loadAiTags } from './ai-tags.js';
+import { syncFromRoute } from './toolbar.js';
 import { renderBreadcrumb, setContentChrome, hidePagePanel } from './page-chrome.js';
 import { openAiStatusPanel } from './ai-status.js';
 
@@ -46,7 +49,7 @@ export function aiCaps() {
 /** 目前路由的搜尋範圍：lib/folder 路由 → libId；否則 null（= 跨庫） */
 export function searchScope() {
   const r = parseRoute();
-  return (r.name === 'lib' || r.name === 'folder' || r.name === 'trash')
+  return (r.name === 'lib' || r.name === 'folder' || r.name === 'collection' || r.name === 'trash')
     ? r.params.libId : null;
 }
 
@@ -86,11 +89,10 @@ export async function adaptHits(hits) {
       }, 'excire');
     } else {
       const raw = (await _eagleMap(hit.lib)).get(hit.id);
-      vm = adaptItem(raw || {
-        id: hit.id, name: hit.name || hit.id,
-        media_type: hit.media_type || 'image',
-        thumb: String(hit.thumb || '').replace(/^\//, ''),
-      }, 'eagle');
+      // AI 索引可能殘留已刪除／已不在庫中的項目（只剩 id 亂碼、無縮圖）→ 直接捨棄，不顯示幽靈結果
+      if (!raw) continue;
+      if ((raw.tags || []).includes('archived')) continue;   // 垃圾桶內項目不列入搜尋結果
+      vm = adaptItem(raw, 'eagle');
       if (hit.lib !== curSlug) vm.readOnly = true;   // 跨庫：以唯讀防誤寫
     }
     vm._score = typeof hit.score === 'number' ? hit.score : null;
@@ -121,8 +123,33 @@ export function renderVirtualView(vms, { crumbs, note = '' } = {}) {
 
 let _sig = null;            // mode|q|scope|src 簽章（?item= 浮層變動不重查）
 let _retryTimer = 0;
+let _lastVms = null;        // 上次查詢結果（同簽章下篩選鏈變動 → 不重查，只重套篩選）
+let _lastCrumbs = null;
 
-export function resetSearchView() { _sig = null; clearTimeout(_retryTimer); }
+export function resetSearchView() { _sig = null; _lastVms = null; clearTimeout(_retryTimer); }
+
+/** 搜尋結果沿用庫視圖的篩選鏈（type/star/tags/date/size/domain/AI 維度；q 為 NL 查詢本身故排除）
+    排序：預設（shuffle）維持相關度排序；使用者明確選排序鍵才重排 */
+function _applyChain(vms, route) {
+  const f = { ...store.state.filters, q: '' };
+  let aiTags = null;
+  if (f.people || f.scene || f.sport || f.expr || f.clothing) {
+    const scope = route.query.get('scope') || 'all';
+    const slug = scope !== 'all' ? parseLibId(scope)?.slug : null;
+    if (slug) {
+      aiTags = aiTagsSync(slug);
+      if (!aiTags) loadAiTags(slug).then(() => { if (_lastVms) _renderFiltered(route); });
+    }
+  }
+  let list = filterItems(vms, f, { aiTags });
+  const s = store.state.sort;
+  if (s.key !== 'shuffle') list = sortItems(list, s.key, s.dir);
+  return list;
+}
+function _renderFiltered(route) {
+  renderVirtualView(_applyChain(_lastVms, route), { crumbs: _lastCrumbs, note: '此範圍沒有相符結果' });
+  setContentChrome(true);               // 顯示篩選鏈（renderVirtualView 預設關閉）
+}
 
 const MODE_LABEL = { nl: '語意搜尋', face: '以臉搜尋', similar: '相似圖' };
 
@@ -132,8 +159,12 @@ export async function renderSearchRoute(route) {
   const scope = route.query.get('scope') || 'all';
   const src   = route.query.get('src') || '';
   const sig = [mode, q, scope, src].join('|');
-  if (sig === _sig) return;                        // 僅 ?item=/viewer 參數變動
-  _sig = sig;
+  syncFromRoute(route);                            // URL query → filters/sort + chips（搜尋視圖亦套篩選鏈）
+  if (sig === _sig) {                              // 僅 ?item=/篩選參數變動 → 不重查
+    if (_lastVms) _renderFiltered(route);
+    return;
+  }
+  _sig = sig; _lastVms = null;
   clearTimeout(_retryTimer);
 
   const lib = scope !== 'all' ? parseLibId(scope) : null;
@@ -175,9 +206,41 @@ export async function renderSearchRoute(route) {
     return;
   }
 
-  const vms = await adaptHits(r.body.hits || []);
+  let vms = await adaptHits(r.body.hits || []);
   if (sig !== _sig) return;
-  renderVirtualView(vms, { crumbs, note: '此範圍沒有相符結果' });
+  if (mode === 'nl' && lib) vms = await _lexicalFirst(vms, q, lib.slug);   // 檔名／標籤命中靠最前（混合搜尋）
+  if (sig !== _sig) return;
+  _lastVms = vms; _lastCrumbs = crumbs;
+  _renderFiltered(route);
+}
+
+/* 混合搜尋：使用者常直接打檔名／標籤，純語意向量會把精確命中淹沒。
+   → 先列「名稱或標籤包含全部查詢詞」的項目（同庫全量掃描，名稱命中優先於標籤命中），
+     再接 AI 語意結果（去重）。業界作法（Google Photos／Spotify）皆為 lexical exact-match boost。 */
+async function _lexicalFirst(aiVms, q, slug) {
+  const tokens = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return aiVms;
+  const map = await _eagleMap(slug);
+  const nameHits = [], tagHits = [];
+  for (const raw of map.values()) {
+    if ((raw.tags || []).includes('archived')) continue;
+    const name = String(raw.name || '').toLowerCase();
+    const tags = (raw.tags || []).map(t => String(t).toLowerCase());
+    if (tokens.every(t => name.includes(t))) nameHits.push(raw);
+    else if (tokens.every(t => tags.some(tag => tag.includes(t)))) tagHits.push(raw);
+  }
+  if (!nameHits.length && !tagHits.length) return aiVms;
+  const seen = new Set();
+  const out = [];
+  for (const raw of [...nameHits, ...tagHits]) {
+    if (seen.has(String(raw.id))) continue;
+    seen.add(String(raw.id));
+    const vm = adaptItem(raw, 'eagle');
+    vm._lib = slug; vm._score = null; vm._lexical = true;
+    out.push(vm);
+  }
+  for (const vm of aiVms) if (!seen.has(vm.id)) { seen.add(vm.id); out.push(vm); }
+  return out;
 }
 
 function _fail(title, note, panelBtn = false) {

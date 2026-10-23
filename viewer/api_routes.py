@@ -96,6 +96,22 @@ def _clear_all_views(lib_name: str) -> None:
         _save_views({}, lib_name)
 
 
+def _prune_views(lib_name: str, ids: list) -> int:
+    """整筆移除指定 item id 的觀看紀錄（統計頁「一鍵清除已刪除資源」用）；回傳移除筆數。"""
+    want = {str(i) for i in ids if i}
+    if not want:
+        return 0
+    with _lib_locks[lib_name]:
+        data = _load_views(lib_name)
+        before = len(data)
+        for i in want:
+            data.pop(i, None)
+        removed = before - len(data)
+        if removed:
+            _save_views(data, lib_name)
+    return removed
+
+
 # ---------------------------------------------------------------------------
 # Async folder scan tasks
 # ---------------------------------------------------------------------------
@@ -238,7 +254,8 @@ def handle_tags_sync_diff(h):
 def handle_items_tags_sync_diff(h):
     lib = h._query_lib()
     if not lib: h._err(400, "Missing ?lib= parameter"); return
-    ch = _compute_items_tags_diff(lib)
+    only = unquote(parse_qs(h.path.split("?", 1)[1] if "?" in h.path else "").get("only", [""])[0]).strip()
+    ch = _compute_items_tags_diff(lib, only)
     h._json(200, {"ok": True, "changes": ch, "total": len(ch)})
 
 

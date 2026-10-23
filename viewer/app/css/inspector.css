@@ -110,6 +110,16 @@
   z-index: 20;
 }
 .te-suggest[hidden] { display: none; }
+/* 標籤待套用列（多選 → 套用） */
+.insp-tag-pending { margin-top: var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-2); }
+.insp-tag-pending[hidden] { display: none; }
+.insp-tag-pending-chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.insp-tag-pending-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); }
+@media (max-width: 767px) {
+  .insp-tag-add .te-suggest { max-height: 40vh; }
+  .te-sug { min-height: 44px; }
+  .insp-tag-pending-actions .btn { min-height: 40px; }
+}
 .te-sug {
   display: flex; align-items: center; gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);

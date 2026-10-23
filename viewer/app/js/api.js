@@ -166,6 +166,7 @@ export const api = {
 
   /** POST /api/clear-views {lib} — 清除全部觀看紀錄 */
   clearViews: lib => _json('/api/clear-views', _POST_JSON({ lib })),
+  pruneViews: (lib, ids) => _json('/api/prune-views', _POST_JSON({ lib, ids })),
 
   /* ── 設定（B6：來源管理 + 標籤同步）──────────────────────────── */
 

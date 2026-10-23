@@ -161,7 +161,7 @@ def _create_eagle_item_from_file(
 # ---------------------------------------------------------------------------
 
 _USER_DATA_PATH  = DATA_DIR / "user_data.json"
-_EMPTY_USER_DATA = {"version": 0, "filterPresets": [], "transformSnapshots": {}}
+_EMPTY_USER_DATA = {"version": 0, "filterPresets": [], "transformSnapshots": {}, "videoFilterLinks": {}}
 
 
 def _load_user_data() -> dict:
@@ -205,10 +205,18 @@ def _merge_user_data(server: dict, client: dict) -> dict:
     for vid_id, snap in client.get("transformSnapshots", {}).items():
         if vid_id not in s_ts or snap.get("savedAt", 0) > s_ts[vid_id].get("savedAt", 0):
             s_ts[vid_id] = snap
+    # per-video 濾鏡連結（eagle-media-filter-*）：LWW by savedAt，跨裝置共用
+    s_vfl = dict(server.get("videoFilterLinks", {}))
+    for vid_id, vfl in client.get("videoFilterLinks", {}).items():
+        if not isinstance(vfl, dict):
+            continue
+        if vid_id not in s_vfl or vfl.get("savedAt", 0) >= s_vfl[vid_id].get("savedAt", 0):
+            s_vfl[vid_id] = vfl
     return {
         "version":            int(time.time() * 1000),
         "filterPresets":      list(s_fp.values()),
         "transformSnapshots": s_ts,
+        "videoFilterLinks":   s_vfl,
     }
 
 
