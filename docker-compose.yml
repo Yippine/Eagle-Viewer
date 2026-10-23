@@ -38,6 +38,9 @@ services:
     container_name: eagle-xhs
     ports:
       - "127.0.0.1:5555:5556"         # 容器內部 port 為 5556（A3）
+    dns:                              # C2：台灣 ISP DNS 將 xiaohongshu.com/xhslink.com 汙染至
+      - 8.8.8.8                       #     140.111.x.x 政府 sinkhole，改走公共 DNS 取回真實 IP
+      - 1.1.1.1
     volumes:
       - xhs_downloader_volume:/app/Volume  # cookie 持久化
     command: python main.py api       # API server mode

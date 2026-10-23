@@ -5,11 +5,14 @@ import random
 import re
 import shutil
 import string
+import subprocess
+import sys
 import tempfile
 import threading
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 from config import DATA_DIR, LIBRARY_PATHS, _lib_locks
 from api_helpers import _build_folder_map, _sse_broadcast
@@ -210,7 +213,8 @@ def _merge_user_data(server: dict, client: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# wf-008: URL Import  (async background download + 3 engines)
+# wf-008: URL Import  (async background download + 5 engines)
+#   cobalt / Evil0ctal / XHS-Downloader / yt-dlp / gallery-dl
 # ---------------------------------------------------------------------------
 
 _import_tasks: dict    = {}
@@ -221,17 +225,85 @@ _COBALT_API      = os.environ.get("COBALT_API",      "http://localhost:9001")
 _EVIL_OCTAL_API  = os.environ.get("EVIL_OCTAL_API",  "http://localhost:9003")
 _XHS_API         = os.environ.get("XHS_DOWNLOADER_API", "http://localhost:5555")
 
+# ── Cookie 機制（C1）：config/cookies/{platform}.txt（Netscape 格式）────────
+# 取得方式見 config/cookies/README.md（瀏覽器擴充「Get cookies.txt LOCALLY」匯出）
+_COOKIES_DIR = Path(__file__).resolve().parent.parent / "config" / "cookies"
+# 登入牆平台：受限內容（NSFW / 私密 / 反爬）需要 cookie 才能下載
+_COOKIE_PLATFORMS = {"x", "instagram", "facebook"}
+
+
+def _cookie_file(platform: str) -> Path | None:
+    """Return config/cookies/{platform}.txt if present and non-empty, else None."""
+    p = _COOKIES_DIR / f"{platform}.txt"
+    try:
+        if p.is_file() and p.stat().st_size > 0:
+            return p
+    except OSError:
+        pass
+    return None
+
+
+def _netscape_cookie_header(path: Path) -> str:
+    """Netscape cookies.txt → 'k=v; k2=v2' HTTP Cookie header string."""
+    pairs = []
+    for line in path.read_text("utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line or (line.startswith("#") and not line.startswith("#HttpOnly_")):
+            continue
+        parts = line.split("\t")
+        if len(parts) >= 7:
+            pairs.append(f"{parts[5]}={parts[6]}")
+    return "; ".join(pairs)
+
+
+def _cookie_hint(platform: str) -> str:
+    """優雅降級訊息：告知使用者放置 cookie 檔的位置。"""
+    return (
+        f"此平台受限內容需登入 cookie，請放置 config/cookies/{platform}.txt"
+        f"（Netscape 格式，匯出方式見 config/cookies/README.md）後重試"
+    )
+
+
+def _host_of(url_or_text: str) -> str:
+    """Extract hostname from a URL（或含 URL 的分享文字）."""
+    m = re.search(r'https?://[^\s]+', url_or_text)
+    target = m.group(0) if m else url_or_text
+    try:
+        return (urlparse(target).netloc or "").lower().split("@")[-1].split(":")[0]
+    except Exception:
+        return ""
+
+
+def _host_match(host: str, *domains: str) -> bool:
+    return any(host == d or host.endswith("." + d) for d in domains)
+
 
 def _classify_platform(url: str) -> str:
-    """Return 'douyin' | 'xhs' | 'ytdlp' | 'cobalt' based on URL domain."""
-    u = url.lower()
-    if "douyin.com" in u or "v.douyin.com" in u:
+    """Return platform key based on URL hostname（支援分享文字內嵌 URL）.
+
+    keys: douyin | tiktok | xhs | x | instagram | facebook | youtube |
+          threads | linevoom | generic
+    """
+    host = _host_of(url)
+    if _host_match(host, "douyin.com", "iesdouyin.com"):
         return "douyin"
-    if "xiaohongshu.com" in u or "xhslink.com" in u:
+    if _host_match(host, "tiktok.com", "tiktokv.com"):
+        return "tiktok"
+    if _host_match(host, "xiaohongshu.com", "xhslink.com"):
         return "xhs"
-    if "linevoom.line.me" in u:
+    if _host_match(host, "x.com", "twitter.com", "fxtwitter.com", "t.co"):
+        return "x"
+    if _host_match(host, "instagram.com", "instagr.am", "ddinstagram.com"):
+        return "instagram"
+    if _host_match(host, "facebook.com", "fb.com", "fb.watch", "m.facebook.com"):
+        return "facebook"
+    if _host_match(host, "youtube.com", "youtu.be"):
+        return "youtube"
+    if _host_match(host, "threads.net", "threads.com"):
+        return "threads"
+    if _host_match(host, "linevoom.line.me"):
         return "linevoom"
-    return "cobalt"
+    return "generic"
 
 
 def _extract_url_from_text(text: str, domain_hint: str) -> str:
@@ -261,9 +333,31 @@ def _resolve_redirect(url: str, timeout: int = 10) -> str:
             return url
 
 
-def _is_youtube_url(url: str) -> bool:
-    u = url.lower()
-    return "youtube.com" in u or "youtu.be" in u
+# ── 共用下載小工具 ──────────────────────────────────────────────────────────
+
+_CT_EXT_MAP = {
+    "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+    "image/gif": ".gif",  "image/avif": ".avif", "image/heic": ".heic",
+    "video/mp4": ".mp4",  "video/quicktime": ".mov",
+}
+
+
+def _ext_from_content_type(content_type: str, fallback: str) -> str:
+    ct = (content_type or "").split(";")[0].strip().lower()
+    return _CT_EXT_MAP.get(ct, fallback)
+
+
+def _stream_download(req, dl_url: str, dest_stem: Path, fallback_ext: str,
+                     timeout: int = 120, headers: dict | None = None) -> Path:
+    """Stream dl_url → {dest_stem}{ext}（副檔名依 Content-Type 修正）."""
+    r = req.get(dl_url, stream=True, timeout=timeout, headers=headers or {})
+    r.raise_for_status()
+    ext = _ext_from_content_type(r.headers.get("Content-Type", ""), fallback_ext)
+    file_path = Path(str(dest_stem) + ext)
+    with open(file_path, "wb") as fh:
+        for chunk in r.iter_content(65536):
+            fh.write(chunk)
+    return file_path
 
 
 def _linevoom_download(url: str, tmp_dir: Path) -> Path:
@@ -346,221 +440,343 @@ def _import_task_update(task_id: str, **kwargs) -> None:
         _import_tasks[task_id] = dict(_import_tasks.get(task_id, {}), **kwargs)
 
 
+def _gallery_dl_download(url: str, tmp_dir: Path, platform: str = "") -> list[Path]:
+    """C1: Download via gallery-dl（本機 pip 套件）。Returns downloaded files.
+
+    cookie 機制：config/cookies/{platform}.txt 存在即掛載；不存在則裸連，
+    失敗時回覆優雅降級訊息（提示放置 cookie 檔）。
+    """
+    try:
+        import gallery_dl  # noqa: F401 — 僅檢查安裝
+    except ImportError:
+        raise RuntimeError("gallery-dl not installed (pip install gallery-dl)")
+
+    cmd = [sys.executable, "-m", "gallery_dl", "-D", str(tmp_dir), "--quiet"]
+    ck = _cookie_file(platform)
+    if ck:
+        cmd += ["--cookies", str(ck)]
+    cmd.append(url)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("gallery-dl: 下載逾時（900s）")
+
+    files = sorted(
+        (f for f in tmp_dir.rglob("*")
+         if f.is_file() and f.stat().st_size > 0 and f.suffix.lower() != ".json"),
+        key=lambda f: f.name,
+    )
+    if files:
+        return files
+
+    err_lines = (proc.stderr or proc.stdout or "").strip().splitlines()
+    detail = err_lines[-1][:200] if err_lines else f"exit code {proc.returncode}"
+    msg = f"gallery-dl: {detail}"
+    if not ck and platform in _COOKIE_PLATFORMS:
+        msg += f"（{_cookie_hint(platform)}）"
+    raise RuntimeError(msg)
+
+
+# ---------------------------------------------------------------------------
+# Engine functions — 統一簽名 (url, tmp_dir, task_id, platform) -> list[Path]
+# ---------------------------------------------------------------------------
+
+def _engine_cobalt(url: str, tmp_dir: Path, task_id: str, platform: str) -> list[Path]:
+    import requests as _req
+    try:
+        resp = _req.post(
+            f"{_COBALT_API}/",
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            json={"url": url}, timeout=10,
+        )
+    except (_req.exceptions.ConnectionError, _req.exceptions.Timeout):
+        raise RuntimeError(f"cobalt 服務未啟動（{_COBALT_API}），請先啟動 cobalt Docker")
+    try:
+        data = resp.json()   # cobalt 4xx 也帶 JSON error body（error.code 較 HTTP 碼有資訊量）
+    except ValueError:
+        resp.raise_for_status()
+        raise ValueError("cobalt: invalid JSON response")
+    status = data.get("status", "")
+
+    if status == "picker":
+        # Multi-image picker (e.g. X.com tweet with multiple photos)
+        picker_items = data.get("picker", [])
+        if not picker_items:
+            raise ValueError("cobalt: picker response has no items")
+        files: list[Path] = []
+        for idx, item in enumerate(picker_items):
+            item_url = item.get("url")
+            if not item_url:
+                continue
+            _import_task_update(task_id, status="running",
+                                progress=30 + int(45 * idx / len(picker_items)))
+            img_r = _req.get(item_url, stream=True, timeout=120)
+            img_r.raise_for_status()
+            cd = img_r.headers.get("Content-Disposition", "")
+            fn_m = re.search(r'filename[^;=\n]*=(([\'"]).*?\2|[^\n;]+)', cd)
+            if fn_m:
+                img_name = fn_m.group(1).strip("\"'")
+            else:
+                url_base = item_url.split("?")[0].split("/")[-1]
+                img_name = url_base if "." in url_base else f"photo_{idx + 1}.jpg"
+            img_path = tmp_dir / img_name
+            with open(img_path, "wb") as fh:
+                for chunk in img_r.iter_content(65536):
+                    fh.write(chunk)
+            if img_path.stat().st_size > 0:
+                files.append(img_path)
+        if not files:
+            raise RuntimeError("cobalt picker: no items downloaded successfully")
+        return files
+
+    if status not in ("stream", "redirect", "tunnel"):
+        err_code = data.get("error", {}).get("code", "unknown")
+        raise ValueError(f"cobalt: unexpected status '{status}' (error: {err_code})")
+    dl_url = data.get("url")
+    if not dl_url:
+        raise ValueError("cobalt: no URL in response")
+    _import_task_update(task_id, status="running", progress=30)
+    r = _req.get(dl_url, stream=True, timeout=300)
+    r.raise_for_status()
+    cd = r.headers.get("Content-Disposition", "")
+    # RFC 5987: filename*=UTF-8''... 優先；fallback filename="..."
+    fn_m = re.search(r"filename\*=UTF-8''([^\s;]+)", cd, re.IGNORECASE)
+    if fn_m:
+        from urllib.parse import unquote as _unquote
+        file_name = _unquote(fn_m.group(1))
+    else:
+        fn_m2 = re.search(r'filename[^;=\n]*=(([\'"]).*?\2|[^\n;]+)', cd)
+        file_name = fn_m2.group(1).strip("\"'") if fn_m2 else "cobalt_download.mp4"
+    file_path = tmp_dir / file_name
+    with open(file_path, "wb") as fh:
+        for chunk in r.iter_content(65536):
+            fh.write(chunk)
+    if file_path.stat().st_size == 0:
+        file_path.unlink(missing_ok=True)
+        # 空檔案（CDN 限制）→ 交由 fallback 鏈換引擎（youtube→yt-dlp 等）
+        raise RuntimeError("cobalt tunnel 回傳空檔案（CDN 限制）")
+    return [file_path]
+
+
+def _engine_evil0ctal(url: str, tmp_dir: Path, task_id: str, platform: str) -> list[Path]:
+    """Evil0ctal /api/hybrid/video_data：抖音 + TikTok（影片 & 圖文全圖）。"""
+    import requests as _req
+    hint = "tiktok.com" if platform == "tiktok" else "douyin.com"
+    src_url = _extract_url_from_text(url, hint)
+    if any(d in src_url.lower() for d in ("v.douyin.com", "vt.tiktok.com", "vm.tiktok.com")):
+        _import_task_update(task_id, status="running", progress=15)
+        src_url = _resolve_redirect(src_url)
+    try:
+        resp = _req.get(
+            f"{_EVIL_OCTAL_API}/api/hybrid/video_data",
+            params={"url": src_url, "minimal": "true"}, timeout=45,
+        )
+        resp.raise_for_status()
+    except _req.exceptions.HTTPError as _he:
+        if _he.response is not None and _he.response.status_code == 400:
+            raise ValueError("Evil0ctal: 無法取得資料（400）— 作品可能為私密、已刪除或 cookie 失效")
+        raise
+    api_data = resp.json().get("data") or {}
+
+    # ── 影片 ────────────────────────────────────────────────────────────────
+    dl_url = (
+        api_data.get("video", {})
+                .get("play_addr", {})
+                .get("url_list", [None])[0]
+    )
+    if dl_url:
+        base_title = (api_data.get("desc") or "video")[:80]
+        _import_task_update(task_id, status="running", progress=30)
+        return [_stream_download(_req, dl_url, tmp_dir / base_title, ".mp4")]
+
+    # ── 圖文作品：下載全部圖片 ──────────────────────────────────────────────
+    img_urls = api_data.get("image_data", {}).get("no_watermark_image_list", []) or []
+    if not img_urls:
+        raise ValueError("Evil0ctal: 無法取得影片或圖片 URL（私密、已刪除或 cookie 失效）")
+    base_title = (api_data.get("desc") or platform)[:60]
+    files: list[Path] = []
+    for _idx, _img_url in enumerate(img_urls):
+        _import_task_update(task_id, status="running",
+                            progress=30 + int(45 * _idx / len(img_urls)))
+        try:
+            files.append(_stream_download(
+                _req, _img_url, tmp_dir / f"{base_title}_{_idx + 1}", ".jpg", timeout=60))
+        except Exception:
+            continue
+    if not files:
+        raise RuntimeError(f"{platform} 圖文：所有圖片下載失敗")
+    return files
+
+
+def _engine_xhs(url: str, tmp_dir: Path, task_id: str, platform: str) -> list[Path]:
+    """XHS-Downloader /xhs/detail：C2 — 圖集完整抓取（非只取第一張）。
+
+    新版容器回傳 data 為單一 dict（中文鍵：作品标题/作品类型/下载地址）；
+    舊版為 list + 英文鍵。兩者皆相容。
+    """
+    import requests as _req
+    body: dict = {"url": url, "download": False}
+    ck = _cookie_file("xhs")
+    if ck:
+        try:
+            body["cookie"] = _netscape_cookie_header(ck)
+        except Exception:
+            pass
+    try:
+        resp = _req.post(f"{_XHS_API}/xhs/detail", json=body, timeout=90)
+        resp.raise_for_status()
+    except _req.exceptions.ConnectionError:
+        raise RuntimeError(f"XHS-Downloader 服務未啟動（{_XHS_API}），請先啟動 xhs Docker")
+    except _req.exceptions.Timeout:
+        raise RuntimeError(
+            "XHS-Downloader: 解析逾時（若容器無法連上 xiaohongshu.com，"
+            "多為台灣 DNS 封鎖，docker-compose 已改用 8.8.8.8，請 docker compose up -d 重建容器）"
+        )
+    payload = resp.json()
+    data = payload.get("data")
+    items = data if isinstance(data, list) else ([data] if data else [])
+    items = [i for i in items if isinstance(i, dict) and i]
+    if not items:
+        msg = payload.get("message") or "no data in response"
+        extra = ""
+        if "xhslink.com" in url.lower():
+            extra = "（xhslink.com 短鏈在台灣可能被 DNS 封鎖，請改貼 xiaohongshu.com 完整連結或啟用 VPN）"
+        elif not ck:
+            extra = "（小紅書多數內容需登入 cookie，請放置 config/cookies/xhs.txt，Netscape 格式，見 config/cookies/README.md）"
+        raise ValueError(f"XHS-Downloader: {msg}{extra}")
+
+    files: list[Path] = []
+    for item in items:
+        raw_title = (item.get("作品标题") or item.get("title")
+                     or item.get("作品描述") or "xhs_media").strip()[:60] or "xhs_media"
+        typ = str(item.get("作品类型") or item.get("type") or "").lower()
+        addrs = item.get("下载地址") or item.get("download_address") or []
+        if isinstance(addrs, str):
+            addrs = addrs.split()
+        if not addrs:
+            continue
+        is_video = typ in ("视频", "video")
+        if is_video:
+            addrs = addrs[:1]  # 影片僅取主檔
+        for i, dl_url in enumerate(addrs):
+            _import_task_update(task_id, status="running",
+                                progress=30 + int(45 * i / len(addrs)))
+            stem = tmp_dir / (raw_title if (is_video or len(addrs) == 1)
+                              else f"{raw_title}_{i + 1}")
+            try:
+                files.append(_stream_download(
+                    _req, dl_url, stem, ".mp4" if is_video else ".jpg"))
+            except Exception:
+                continue
+    if not files:
+        raise RuntimeError("XHS-Downloader: 圖集/影片所有檔案下載失敗")
+    return files
+
+
+def _engine_ytdlp(url: str, tmp_dir: Path, task_id: str, platform: str) -> list[Path]:
+    _import_task_update(task_id, status="running", progress=35)
+    return [_ytdlp_download(url, tmp_dir)]
+
+
+def _engine_gallery_dl(url: str, tmp_dir: Path, task_id: str, platform: str) -> list[Path]:
+    _import_task_update(task_id, status="running", progress=35)
+    # facebook.com/share/{p,v}/ 與 t.co 短鏈 gallery-dl 不吃，先展開 redirect
+    low = url.lower()
+    if "facebook.com/share/" in low or "//t.co/" in low or "fb.watch" in low:
+        url = _resolve_redirect(url)
+    return _gallery_dl_download(url, tmp_dir, platform)
+
+
+def _engine_linevoom(url: str, tmp_dir: Path, task_id: str, platform: str) -> list[Path]:
+    _import_task_update(task_id, status="running", progress=20)
+    return [_linevoom_download(url, tmp_dir)]
+
+
+_ENGINES = {
+    "cobalt":     _engine_cobalt,
+    "evil0ctal":  _engine_evil0ctal,
+    "xhs":        _engine_xhs,
+    "ytdlp":      _engine_ytdlp,
+    "gallery_dl": _engine_gallery_dl,
+    "linevoom":   _engine_linevoom,
+}
+
+# ── 八平台引擎優先序表（宣告式 fallback 鏈）─────────────────────────────────
+_ENGINE_CHAINS: dict[str, tuple[str, ...]] = {
+    "douyin":    ("evil0ctal",),
+    "tiktok":    ("cobalt", "evil0ctal", "ytdlp"),   # C3：cobalt/evil0ctal 實測失效時自動落到 yt-dlp
+    "xhs":       ("xhs",),
+    "x":         ("cobalt", "gallery_dl"),           # NSFW/受限推文 → gallery-dl + cookie
+    "instagram": ("cobalt", "gallery_dl"),           # IG 反爬 → gallery-dl + cookie
+    "facebook":  ("cobalt", "gallery_dl"),           # FB 相片 cobalt 不支援 → gallery-dl
+    "youtube":   ("cobalt", "ytdlp"),
+    "linevoom":  ("linevoom",),
+    "generic":   ("cobalt", "ytdlp"),
+}
+
+
+def _run_engine_chain(task_id: str, platform: str, url: str, tmp_dir: Path) -> list[Path]:
+    """依 _ENGINE_CHAINS 逐引擎嘗試，全數失敗時彙整錯誤（含 cookie 降級提示）。"""
+    chain = _ENGINE_CHAINS.get(platform, ("cobalt",))
+    errors: list[str] = []
+    for idx, engine in enumerate(chain):
+        engine_tmp = tmp_dir / f"eng{idx}_{engine}"
+        engine_tmp.mkdir(parents=True, exist_ok=True)
+        if idx:
+            _import_task_update(task_id, status="running", progress=25,
+                                message=f"改用備援引擎 {engine} …")
+        try:
+            files = _ENGINES[engine](url, engine_tmp, task_id, platform)
+            if files:
+                return files
+            errors.append(f"{engine}: 無檔案產出")
+        except Exception as exc:
+            errors.append(f"{engine}: {exc}")
+    msg = "；".join(errors) or "無可用引擎"
+    hint = _cookie_hint(platform)
+    if platform in _COOKIE_PLATFORMS and not _cookie_file(platform) and hint not in msg:
+        msg += f"。{hint}"
+    raise RuntimeError(msg)
+
+
 def _download_worker(task_id: str, url: str, lib_name: str, folder_id: str = "", name: str = "") -> None:
-    """Background thread: download URL, create Eagle item, broadcast SSE."""
+    """Background thread: download URL via engine chain, create Eagle item(s), broadcast SSE."""
     _import_task_update(task_id, status="running", progress=10)
     tmp_dir = Path(tempfile.mkdtemp())
     try:
-        try:
-            import requests as _req
-        except ImportError:
-            raise RuntimeError("requests library not installed (pip install requests)")
-
         platform = _classify_platform(url)
 
-        # ── Engine dispatch ──────────────────────────────────────────────────
-        if platform == "linevoom":
-            # Line VOOM: scrape OG meta tags for direct video/image URL
-            _import_task_update(task_id, status="running", progress=20)
-            file_path = _linevoom_download(url, tmp_dir)
-
-        elif platform == "douyin":
-            # Extract URL from share text, then resolve v.douyin.com short link
-            douyin_url = _extract_url_from_text(url, "douyin.com")
-            if "v.douyin.com" in douyin_url.lower():
-                _import_task_update(task_id, status="running", progress=15)
-                douyin_url = _resolve_redirect(douyin_url)
-            try:
-                resp = _req.get(
-                    f"{_EVIL_OCTAL_API}/api/hybrid/video_data",
-                    params={"url": douyin_url, "minimal": "true"}, timeout=30,
-                )
-                resp.raise_for_status()
-            except _req.exceptions.HTTPError as _he:
-                if _he.response is not None and _he.response.status_code == 400:
-                    raise ValueError("Evil0ctal: 無法取得抖音資料（400）— 影片可能為私密、已刪除或 cookie 失效")
-                raise
-            api_data = resp.json().get("data") or {}
-
-            # ── 影片 ────────────────────────────────────────────────────────
-            dl_url = (
-                api_data.get("video", {})
-                        .get("play_addr", {})
-                        .get("url_list", [None])[0]
+        if platform == "threads":
+            raise ValueError(
+                "Threads 平台暫不支援：目前無穩定下載工具鏈（規劃於後期支援）"
             )
-            if dl_url:
-                file_name = (api_data.get("desc") or "video")[:80] + ".mp4"
-                _import_task_update(task_id, status="running", progress=30)
-                r = _req.get(dl_url, stream=True, timeout=120)
-                r.raise_for_status()
-                file_path = tmp_dir / file_name
-                with open(file_path, "wb") as fh:
-                    for chunk in r.iter_content(65536):
-                        fh.write(chunk)
-            else:
-                # ── 圖文作品：下載全部圖片，各建一個 Eagle item ────────────
-                img_urls = api_data.get("image_data", {}).get("no_watermark_image_list", [])
-                if not img_urls:
-                    raise ValueError("Evil0ctal: 無法取得影片或圖片 URL（私密、已刪除或 cookie 失效）")
-                base_title = (api_data.get("desc") or "douyin")[:60]
-                results_list = []
-                for _idx, _img_url in enumerate(img_urls):
-                    _import_task_update(task_id, status="running",
-                                        progress=30 + int(50 * _idx / len(img_urls)))
-                    _img_r = _req.get(_img_url, stream=True, timeout=60)
-                    _img_r.raise_for_status()
-                    _img_path = tmp_dir / f"{base_title}_{_idx + 1}.jpg"
-                    with open(_img_path, "wb") as fh:
-                        for chunk in _img_r.iter_content(65536):
-                            fh.write(chunk)
-                    _cname = f"{name}_{_idx + 1}" if name else f"{base_title}_{_idx + 1}"
-                    _res = _create_eagle_item_from_file(
-                        lib_name, folder_id, _img_path.name, _img_path.read_bytes(), url,
-                        custom_name=_cname,
-                    )
-                    if _res["ok"]:
-                        _sse_broadcast(lib_name, {"type": "item_created",
-                                                   "id": _res["id"], "lib": lib_name})
-                        results_list.append(_res)
-                if not results_list:
-                    raise RuntimeError("douyin 圖文：所有圖片下載失敗")
-                _import_task_update(task_id, status="completed", progress=100,
-                                    result={"count": len(results_list),
-                                            "ids": [_r["id"] for _r in results_list],
-                                            "name": results_list[0]["name"]})
-                return  # 圖文已處理完畢，跳過後續影片流程
 
-        elif platform == "xhs":
-            # XHS-Downloader API mode（joeanamier/xhs-downloader, port 5556）
-            # endpoint: POST /xhs/detail（非 /xhs/download）
-            resp = _req.post(
-                f"{_XHS_API}/xhs/detail",
-                json={"url": url, "download": False}, timeout=30,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            # response: {"data": [{"type": "video"|"image", "title": "...",
-            #                      "download_address": ["url1", ...]}]}
-            items = data.get("data") or []
-            if not items:
-                raise ValueError("XHS-Downloader: no data in response")
-            item0 = items[0]
-            raw_title = (item0.get("title") or "xhs_media")[:80]
-            addrs = item0.get("download_address", [])
-            dl_url = addrs[0] if addrs else None
-            if not dl_url:
-                raise ValueError("XHS-Downloader: no download URL in response")
-            ext_guess = ".mp4" if item0.get("type", "").lower() == "video" else ".jpg"
-            file_name = raw_title + ext_guess
-            _import_task_update(task_id, status="running", progress=30)
-            r = _req.get(dl_url, stream=True, timeout=120)
-            r.raise_for_status()
-            file_path = tmp_dir / file_name
-            with open(file_path, "wb") as fh:
-                for chunk in r.iter_content(65536):
-                    fh.write(chunk)
-
-        else:  # cobalt
-            try:
-                resp = _req.post(
-                    f"{_COBALT_API}/",
-                    headers={"Content-Type": "application/json", "Accept": "application/json"},
-                    json={"url": url}, timeout=10,
-                )
-            except (_req.exceptions.ConnectionError, _req.exceptions.Timeout):
-                raise RuntimeError(f"cobalt 服務未啟動（{_COBALT_API}），請先啟動 cobalt Docker")
-            resp.raise_for_status()
-            data = resp.json()
-            status = data.get("status", "")
-
-            if status == "picker":
-                # Multi-image picker (e.g. X.com tweet with multiple photos)
-                picker_items = data.get("picker", [])
-                if not picker_items:
-                    raise ValueError("cobalt: picker response has no items")
-                results_list = []
-                for idx, item in enumerate(picker_items):
-                    item_url = item.get("url")
-                    if not item_url:
-                        continue
-                    _import_task_update(task_id, status="running",
-                                        progress=30 + int(50 * idx / len(picker_items)))
-                    img_r = _req.get(item_url, stream=True, timeout=120)
-                    img_r.raise_for_status()
-                    cd = img_r.headers.get("Content-Disposition", "")
-                    fn_m = re.search(r'filename[^;=\n]*=(([\'"]).*?\2|[^\n;]+)', cd)
-                    if fn_m:
-                        img_name = fn_m.group(1).strip("\"'")
-                    else:
-                        url_base = item_url.split("?")[0].split("/")[-1]
-                        img_name = url_base if "." in url_base else f"photo_{idx + 1}.jpg"
-                    img_path = tmp_dir / img_name
-                    with open(img_path, "wb") as fh:
-                        for chunk in img_r.iter_content(65536):
-                            fh.write(chunk)
-                    cname = f"{name}_{idx + 1}" if name else ""
-                    res_i = _create_eagle_item_from_file(
-                        lib_name, folder_id, img_path.name, img_path.read_bytes(), url,
-                        custom_name=cname,
-                    )
-                    if res_i["ok"]:
-                        _sse_broadcast(lib_name, {"type": "item_created",
-                                                   "id": res_i["id"], "lib": lib_name})
-                        results_list.append(res_i)
-                if not results_list:
-                    raise RuntimeError("cobalt picker: no items downloaded successfully")
-                _import_task_update(task_id, status="completed", progress=100,
-                                    result={"count": len(results_list),
-                                            "ids": [r["id"] for r in results_list],
-                                            "name": results_list[0]["name"]})
-                return
-
-            if status not in ("stream", "redirect", "tunnel"):
-                err_code = data.get("error", {}).get("code", "unknown")
-                raise ValueError(f"cobalt: unexpected status '{status}' (error: {err_code})")
-            dl_url = data.get("url")
-            if not dl_url:
-                raise ValueError("cobalt: no URL in response")
-            _import_task_update(task_id, status="running", progress=30)
-            r = _req.get(dl_url, stream=True, timeout=300)
-            r.raise_for_status()
-            cd = r.headers.get("Content-Disposition", "")
-            # RFC 5987: filename*=UTF-8''... 優先；fallback filename="..."
-            fn_m = re.search(r"filename\*=UTF-8''([^\s;]+)", cd, re.IGNORECASE)
-            if fn_m:
-                from urllib.parse import unquote as _unquote
-                file_name = _unquote(fn_m.group(1))
-            else:
-                fn_m2 = re.search(r'filename[^;=\n]*=(([\'"]).*?\2|[^\n;]+)', cd)
-                file_name = fn_m2.group(1).strip("\"'") if fn_m2 else "cobalt_download.mp4"
-            file_path = tmp_dir / file_name
-            with open(file_path, "wb") as fh:
-                for chunk in r.iter_content(65536):
-                    fh.write(chunk)
-            if file_path.stat().st_size == 0:
-                file_path.unlink(missing_ok=True)
-                if _is_youtube_url(url):
-                    _import_task_update(task_id, status="running", progress=35)
-                    file_path = _ytdlp_download(url, tmp_dir)
-                else:
-                    raise RuntimeError(
-                        "cobalt tunnel 回傳空檔案（CDN 限制，請確認 URL 是否有效）"
-                    )
-
+        files = _run_engine_chain(task_id, platform, url, tmp_dir)
         _import_task_update(task_id, status="running", progress=80)
 
-        # ── Create Eagle item ────────────────────────────────────────────────
-        file_bytes = file_path.read_bytes()
-        result     = _create_eagle_item_from_file(
-            lib_name, folder_id, file_path.name, file_bytes, url,
-            custom_name=name,
-        )
-        if not result["ok"]:
-            raise RuntimeError(result.get("error", "item creation failed"))
+        # ── Create Eagle item(s) ─────────────────────────────────────────────
+        multi = len(files) > 1
+        results_list = []
+        for idx, fp in enumerate(files):
+            cname = (f"{name}_{idx + 1}" if name else "") if multi else name
+            res = _create_eagle_item_from_file(
+                lib_name, folder_id, fp.name, fp.read_bytes(), url,
+                custom_name=cname,
+            )
+            if res["ok"]:
+                _sse_broadcast(lib_name, {"type": "item_created",
+                                          "id": res["id"], "lib": lib_name})
+                results_list.append(res)
+        if not results_list:
+            raise RuntimeError("item creation failed（所有檔案入庫失敗）")
 
-        _sse_broadcast(lib_name, {"type": "item_created", "id": result["id"], "lib": lib_name})
-        _import_task_update(task_id, status="completed", progress=100,
-                            result={"id": result["id"], "name": result["name"]})
+        if multi:
+            result = {"count": len(results_list),
+                      "ids": [r["id"] for r in results_list],
+                      "name": results_list[0]["name"]}
+        else:
+            result = {"id": results_list[0]["id"], "name": results_list[0]["name"]}
+        _import_task_update(task_id, status="completed", progress=100, result=result)
 
     except Exception as exc:
         _import_task_update(task_id, status="failed", progress=0, error=str(exc))
