@@ -1,0 +1,209 @@
+/* ── viewer.css ▸ Immersive Viewer overlay + 控制 drawer（B3）────────────
+   viewer 層恆用深色（spec §4.1 規則：不隨 data-theme），色值直接取深色
+   token 字面值。vc-panel／toast／crop overlay 的內部樣式直接重用舊版
+   /viewer/css/video-controls.css（index.html 先載入），本檔僅補：
+   1) uv-* viewer overlay；2) #vc-panel 貼 token 的少量覆寫與 button reset；
+   3) ⓘ 資訊 pane（新 UI 專屬）。 */
+
+/* ═══ Viewer overlay ═══════════════════════════════════════════════ */
+
+.uviewer {
+  position: fixed; inset: 0;
+  z-index: var(--z-viewer);
+  background: #0a0a0c;
+  color: #f2f2f4;
+  user-select: none;
+}
+.uviewer[hidden] { display: none; }
+
+/* ── 媒體舞台（chrome 疊於其上，媒體滿版） ── */
+.uv-stage { position: absolute; inset: 0; overflow: hidden; }
+.uv-wrap  { position: absolute; inset: 0; }        /* GL canvas 的 positioned ancestor */
+.uv-zoom  {                                         /* = zoomWrapper（vc-webgl 期望結構） */
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  transform-origin: center center;
+  will-change: transform;
+}
+.uv-zoom video {
+  width: 100%; height: 100%;
+  object-fit: contain; display: block;
+  transform-origin: center center;
+}
+.uv-zoom img {
+  max-width: 100%; max-height: 100%;
+  width: auto; height: auto; display: block;
+  transform-origin: center center;
+}
+
+/* ── Topbar（毛玻璃漸層，3s 自動隱藏） ── */
+.uv-topbar {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: linear-gradient(rgba(10,10,12,.82), rgba(10,10,12,0));
+  z-index: 3;
+  transition: opacity var(--dur) var(--ease);
+}
+.uv-titlebox {
+  display: flex; align-items: baseline; gap: var(--sp-2);
+  min-width: 0; flex: 1;
+}
+#uv-title {
+  font-size: var(--fs-base); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#uv-domain { font-size: var(--fs-xs); color: #a5a5ad; flex-shrink: 0; }
+.uv-counter {
+  font-size: var(--fs-sm); color: #a5a5ad;
+  font-variant-numeric: tabular-nums; flex-shrink: 0;
+}
+
+.uv-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px; height: 34px; min-width: 34px; padding: 0 var(--sp-2);
+  border: none; border-radius: var(--r-sm);
+  background: transparent; color: #d5d5dc;
+  font: inherit; font-size: var(--fs-sm); cursor: pointer;
+  transition: background var(--dur-fast), color var(--dur-fast);
+}
+.uv-btn:hover { background: rgba(255,255,255,.12); color: #fff; }
+.uv-btn.on, .uv-pill.on { background: var(--accent); color: #fff; }
+.uv-pill { border: 1px solid #46464c; border-radius: var(--r-full); }
+a.uv-btn { text-decoration: none; }
+
+/* ── 上/下導覽鈕 ── */
+.uv-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 72px; border: none; border-radius: var(--r);
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20,20,24,.45); color: #d5d5dc; cursor: pointer;
+  z-index: 2; opacity: 0;
+  transition: opacity var(--dur), background var(--dur-fast);
+}
+.uv-stage:hover .uv-nav { opacity: 1; }
+.uv-nav:hover { background: rgba(20,20,24,.8); color: #fff; }
+.uv-nav.prev { left: var(--sp-3); }
+.uv-nav.next { right: var(--sp-3); }
+
+/* ── 底部：資訊層 + 播放控制列 ── */
+.uv-bottom {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4) var(--sp-3);
+  background: linear-gradient(rgba(10,10,12,0), rgba(10,10,12,.82));
+  z-index: 3;
+  transition: opacity var(--dur) var(--ease);
+}
+.uv-caption { font-size: var(--fs-xs); color: #a5a5ad; }
+
+#uv-controls { display: flex; align-items: center; gap: var(--sp-2); }
+#uv-controls[hidden] { display: none; }
+#uv-time {
+  font-size: var(--fs-xs); color: #d5d5dc;
+  font-variant-numeric: tabular-nums; flex-shrink: 0; min-width: 88px;
+}
+#uv-prog {
+  flex: 1; height: 4px; cursor: pointer;
+  -webkit-appearance: none; appearance: none;
+  background: rgba(255,255,255,.22); border-radius: 2px; outline: none;
+}
+#uv-prog::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); cursor: pointer;
+}
+#uv-prog::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: none; cursor: pointer;
+}
+
+/* ── UI 自動隱藏（影片播放 3s 無互動） ── */
+.uviewer.ui-hidden .uv-topbar,
+.uviewer.ui-hidden .uv-bottom,
+.uviewer.ui-hidden .uv-nav { opacity: 0; pointer-events: none; }
+.uviewer.ui-hidden { cursor: none; }
+
+/* ── 提示浮層（邊界/縮放倍率/播放閃現） ── */
+.uv-flash, .uv-zoomind {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  padding: 6px 14px; border-radius: var(--r-full);
+  background: rgba(20,20,24,.85); color: #fff;
+  font-size: var(--fs-sm);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--dur);
+  z-index: 4;
+}
+.uv-flash   { top: 18%; }
+.uv-zoomind { top: 10%; }
+.uv-flash.show, .uv-zoomind.show { opacity: 1; }
+
+/* ── 快捷鍵說明中心（? 鍵 / ⌨ 鈕） ── */
+.uv-kbd {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.6); cursor: pointer;
+}
+.uv-kbd[hidden] { display: none; }
+.uv-kbd-card {
+  background: #1e1e21; border: 1px solid #313136; border-radius: var(--r-lg);
+  padding: var(--sp-5) var(--sp-6);
+  box-shadow: 0 12px 40px rgba(0,0,0,.6);
+  display: grid; grid-template-columns: auto auto; gap: var(--sp-2) var(--sp-5);
+  font-size: var(--fs-sm); color: #d5d5dc;
+  max-height: 80vh; overflow-y: auto;
+}
+.uv-kbd-card h3 { grid-column: 1 / -1; margin: 0 0 var(--sp-1); font-size: var(--fs-md); color: #fff; }
+.uv-kbd-card kbd {
+  display: inline-block; min-width: 22px; text-align: center;
+  padding: 1px 6px; border-radius: var(--r-sm);
+  background: #28282c; border: 1px solid #46464c;
+  font-family: inherit; font-size: var(--fs-xs); color: #f2f2f4;
+}
+
+/* ═══ 控制 drawer（#vc-panel）貼 token 覆寫 ════════════════════════ */
+
+/* 舊版 video-controls.css 給定面板骨架（fixed 右側滑入 / 手機 bottom-sheet
+   拖曳吸附）；此處僅以 token 對齊寬度/圓角/accent 與新 UI 字體。 */
+#vc-panel {
+  width: var(--drawer-w);
+  font-family: inherit;
+}
+#vc-panel button, #vc-toast button, #vc-crop-toolbar button {
+  border: none; font-family: inherit; cursor: pointer; color: inherit;
+  background: none; padding: 0;
+}
+#vc-panel .vc-tab-btn.active,
+#vc-panel .vc-seg-btn.active { background: var(--accent); }
+#vc-panel .vc-tabs { flex-wrap: wrap; }
+#vc-panel .vc-tab-btn { flex: 1 1 30%; }
+
+/* ── ⓘ 資訊 pane（新 UI 專屬） ── */
+.vc-info-name {
+  font-size: 15px; font-weight: 700; color: #fff;
+  word-break: break-all; margin-bottom: 12px;
+}
+.vc-info-row {
+  display: flex; gap: 10px; padding: 5px 0;
+  font-size: 13px; border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.vc-info-k { width: 62px; flex-shrink: 0; color: rgba(255,255,255,.45); }
+.vc-info-v { flex: 1; color: rgba(255,255,255,.85); word-break: break-all; }
+.vc-info-v a { color: var(--accent); text-decoration: none; }
+.vc-info-v a:hover { text-decoration: underline; }
+.vc-info-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.vc-info-tag {
+  padding: 2px 10px; border-radius: var(--r-full);
+  background: rgba(255,255,255,.1); font-size: 12px;
+  color: rgba(255,255,255,.8);
+}
+.vc-info-ro { margin-top: 10px; font-size: 12px; color: var(--warn); }
+
+/* ═══ 響應式 ═══════════════════════════════════════════════════════ */
+
+@media (max-width: 767px) {
+  .uv-nav { display: none; }                /* 手機以縱滑切換 */
+  #uv-title { font-size: var(--fs-sm); }
+  .uv-topbar .uv-pill span { display: none; }  /* pill 收斂為 icon */
+  #vc-panel { width: 100%; }
+}

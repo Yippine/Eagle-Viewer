@@ -47,6 +47,7 @@ export function parseRoute(hash = location.hash) {
       if (!parseLibId(r.params.libId)) { r.name = 'notfound'; break; }
       if      (seg[2] === 'folder'     && seg[3]) { r.name = 'folder';     r.params.folderId = seg[3]; }
       else if (seg[2] === 'collection' && seg[3]) { r.name = 'collection'; r.params.collectionId = seg[3]; }
+      else if (seg[2] === 'item'       && seg[3]) { r.name = 'lib';        r.params.itemId = seg[3]; }   // 深連結別名（規範形 = ?item=）
       else if (seg[2] === 'trash')                { r.name = 'trash'; }
       else if (seg.length <= 2)                   { r.name = 'lib'; }
       else                                        { r.name = 'notfound'; }

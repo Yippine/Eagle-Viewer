@@ -1,19 +1,39 @@
-/* ── app.js ▸ 新版 App Shell 初始化（B1）───────────────────────────────
-   職責：sprite 注入、主題、chrome 事件、SOURCES 三分組、資料夾樹、
-   路由 render dispatch、佔位 grid（資料打通證明；虛擬滾動 B2 上）。
-   SearchProvider 擴充槽（P4 spec §2.4）於此定義（P6 零改版接入）。 */
+/* ── app.js ▸ App Shell 初始化 + 路由 render dispatch（B1 骨架 + B2 接線）─
+   B2：虛擬滾動 masonry（grid.js）、toolbar chips ↔ URL（toolbar.js）、
+   ⌘K 語法搜尋（command-k.js）、桌面批次選取（selection.js）、store.js。
+   Eagle/dir = 全量 list 模式；Excire = offset/limit 無限捲動分頁。 */
 
-import { api, mediaURL } from './api.js';
+import { api } from './api.js';
 import { buildLibId, libHash, navigate, startRouter } from './router.js';
+import { store } from './store.js';
+import { adaptItem } from './items.js';
+import { initGrid } from './grid.js';
+import { renderBreadcrumb, setContentChrome, renderPlaceholderPage, hidePagePanel }
+  from './page-chrome.js';
+import { initData, refreshEagle, refreshExcire, refreshTrash, loadExcirePage,
+         updateTrashBadge } from './lib-data.js';
+import { renderSearchRoute, resetSearchView, invalidateLibCache } from './ai-search.js';
+import { initPeople, renderPeopleRoute } from './people.js';
+import { initDownloadCenter, renderDownloads } from './download-center.js';
+import { initToolbar, syncFromRoute, setFolderNameResolver, toggleFolderFilter } from './toolbar.js';
+import { initCommandK } from './command-k.js';
+import { initSelection, clearSelection } from './selection.js';
+import { initViewer, syncViewerFromRoute } from './viewer.js';
+import { initDrawer } from './vc-drawer.js';
+import { initInspector, setInspectorContext } from './inspector.js';
+import { setActionsContext } from './actions.js';
+import { initContextMenu } from './context-menu.js';
+import { initNotifications } from './notifications.js';
+import './vc-bindings.js';   // window.vc* 綁定（vc-panel inline onclick 用）
 
-/* ── App state（單檔內部狀態；正式 store.js 於 B2 併入）─────────────── */
+/* ── App 私有狀態（庫/樹結構；篩選與清單狀態一律在 store）───────────── */
 
 const state = {
   libs: [],            // [{ id, type, slug, label, extracted, readOnly, count }]
   activeLibId: null,
-  folderTree: [],      // 當前庫資料夾樹（統一 {id,name,children,total} 形）
+  vmItems: [],         // 當前庫全部 vm items（eagle/dir；excire 走分頁）
+  folderTree: [],      // 統一 {id,name,children,total} 形
   folderMap: {},       // id → { name, parentId, childrenIds }
-  items: [],           // 當前庫全部項目（eagle/dir）；excire 依路由分頁抓
   route: null,
 };
 
@@ -24,27 +44,7 @@ const h = s => String(s ?? '').replace(/[&<>"']/g,
 const icon = (name, cls = 'icon icon-sm') =>
   `<svg class="${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
-/* ── SearchProvider 擴充槽（§2.4：B1 定義契約，P6 啟用）─────────────── */
-
-const _searchProviders = new Map();
-
-export function registerSearchProvider(p) {
-  if (!p || !p.id) throw new Error('SearchProvider 需要 id');
-  _searchProviders.set(p.id, {
-    label: p.id, icon: 'search', available: () => false,
-    suggest: () => [], execute: () => ({ ids: [], provider: p.id, query: '' }),
-    ...p,
-  });
-}
-
-export function getSearchProviders() { return [..._searchProviders.values()]; }
-
-registerSearchProvider({ id: 'syntax', label: '語法', icon: 'command', available: () => true });
-registerSearchProvider({ id: 'nl', label: '自然語言', icon: 'sparkle', available: () => false });
-registerSearchProvider({ id: 'face', label: '人物', icon: 'face-scan', available: () => false });
-registerSearchProvider({ id: 'similar', label: '相似圖', icon: 'similar', available: () => false });
-
-/* ── Icon sprite 注入（外部 sprite → inline，<use href="#i-*"> 全瀏覽器安定）─ */
+/* ── Icon sprite 注入 ──────────────────────────────────────────────── */
 
 async function injectSprite() {
   try {
@@ -104,11 +104,9 @@ function wireChrome() {
   $('row-trash').addEventListener('click', () => {
     if (state.activeLibId) { closeDrawer(); navigate(`${libHash(state.activeLibId)}/trash`); }
   });
-  $('btn-sel-close').addEventListener('click', () => { $('selection-bar').hidden = true; });
 
-  // 導覽後（樹/庫列動態產生的按鈕以 delegation 處理）收抽屜
   sidebar.addEventListener('click', e => {
-    if (e.target.closest('[data-lib], [data-folder]')) closeDrawer();
+    if (e.target.closest('[data-lib], [data-folder]') && !e.ctrlKey && !e.metaKey) closeDrawer();
   });
 }
 
@@ -192,7 +190,7 @@ function normalizeTree(nodes, isExcire) {
 /** eagle：以 items 的 folders 欄位補上後代彙總計數 */
 function fillEagleCounts(tree) {
   const direct = {};
-  for (const it of state.items)
+  for (const it of state.vmItems)
     for (const fid of (it.folders || [])) direct[fid] = (direct[fid] || 0) + 1;
   const agg = node => {
     node.total = (direct[node.id] || 0) + node.children.reduce((s, c) => s + agg(c), 0);
@@ -205,12 +203,14 @@ function renderTree() {
   const root = $('folder-tree');
   const expanded = _loadExpanded();
   const curFolder = state.route?.params?.folderId || null;
+  const overlay = new Set(store.state.filters?.folders || []);
 
   const nodeHTML = n => {
     const hasKids = n.children.length > 0;
     const open = expanded.has(n.id);
+    const cls = curFolder === n.id ? ' selected' : (overlay.has(n.id) ? ' partial' : '');
     return `<li class="tree-node${open ? ' expanded' : ''}" role="none" data-node="${h(n.id)}">
-      <div class="tree-item${curFolder === n.id ? ' selected' : ''}" role="treeitem"
+      <div class="tree-item${cls}" role="treeitem"
            ${hasKids ? `aria-expanded="${open}"` : ''} data-folder="${h(n.id)}" tabindex="0">
         <span class="tree-chevron${hasKids ? '' : ' leaf'}" data-chevron>${icon('chevron-r')}</span>
         ${icon(open && hasKids ? 'folder-open' : 'folder')}
@@ -229,13 +229,16 @@ function renderTree() {
     el.addEventListener('click', e => {
       const li = el.closest('.tree-node');
       if (e.target.closest('[data-chevron]') && li.querySelector('ul')) {
-        // chevron 點擊 = 展開/收合（持久化）
-        const set = _loadExpanded();
+        const set = _loadExpanded();   // chevron = 展開/收合（持久化）
         li.classList.toggle('expanded') ? set.add(li.dataset.node) : set.delete(li.dataset.node);
         _saveExpanded(set);
         return;
       }
-      // 單擊 = 導覽（REPLACE 語意 → 路由 push；Ctrl/⌘ 疊加篩選為 B2）
+      if (e.ctrlKey || e.metaKey) {    // Ctrl/⌘+單擊 = 疊加 AND 篩選（C10）
+        toggleFolderFilter(el.dataset.folder);
+        return;
+      }
+      // 單擊 = 導覽（REPLACE 語意）
       navigate(`${libHash(state.activeLibId)}/folder/${encodeURIComponent(el.dataset.folder)}`);
     });
     el.addEventListener('keydown', e => { if (e.key === 'Enter') el.click(); });
@@ -245,11 +248,18 @@ function renderTree() {
 /* ── 庫資料載入 ────────────────────────────────────────────────────── */
 
 async function ensureLibLoaded(libId) {
-  if (state.activeLibId === libId) return;
+  if (state.activeLibId === libId) {
+    // 自搜尋/人物虛擬視圖返回：還原 allItems（虛擬視圖曾覆蓋，B5）
+    if (store.state.libType !== 'excire' && store.state.allItems !== state.vmItems)
+      store.set({ allItems: state.vmItems });
+    return;
+  }
   const lib = state.libs.find(l => l.id === libId);
   if (!lib) throw new Error(`未知的庫：${libId}`);
   state.activeLibId = libId;
-  state.items = []; state.folderTree = []; state.folderMap = {};
+  state.vmItems = []; state.folderTree = []; state.folderMap = {};
+  clearSelection();
+  store.set({ libId, libType: lib.type, allItems: [] }, 'lib-context');
   try { localStorage.setItem('ev-last-lib', libId); } catch (_) {}
 
   if (lib.type === 'excire') {
@@ -262,8 +272,10 @@ async function ensureLibLoaded(libId) {
     ]);
     if (itemsRes.status === 'fulfilled') {
       const seen = new Set();
-      state.items = (itemsRes.value.items || [])
-        .filter(i => seen.has(i.id) ? false : (seen.add(i.id), true));
+      state.vmItems = (itemsRes.value.items || [])
+        .filter(i => seen.has(i.id) ? false : (seen.add(i.id), true))
+        .map(i => adaptItem(i, lib.type));
+      store.set({ allItems: state.vmItems });
     }
     if (foldersRes.status === 'fulfilled') {
       const { tree, map } = normalizeTree(foldersRes.value.folders || [], false);
@@ -283,79 +295,54 @@ function folderWithDescendants(folderId) {
   return out;
 }
 
-/* ── 中欄渲染 ──────────────────────────────────────────────────────── */
+/* ── 中欄渲染 chrome：page-chrome.js（B5 抽出，多頁共用）────────────── */
 
-function renderBreadcrumb(parts) {
-  $('breadcrumb').innerHTML = parts.map((p, i) =>
-    (i ? `<span class="crumb-sep">${icon('chevron-r', 'icon icon-sm')}</span>` : '') +
-    (p.hash && i < parts.length - 1
-      ? `<button class="crumb" data-crumb="${h(p.hash)}">${h(p.label)}</button>`
-      : `<span class="crumb current">${h(p.label)}</span>`)
-  ).join('');
-  $('breadcrumb').querySelectorAll('[data-crumb]').forEach(el =>
-    el.addEventListener('click', () => navigate(el.dataset.crumb)));
-}
+/* ── 資料管線（lib-data.js）：寫入後同步 ────────────────────────────── */
 
-function _cardHTML(it) {
-  const isVideo = it.media_type === 'video' || it.kind === 'video';
-  const thumb = mediaURL(it.thumb);
-  return `<article class="card" data-id="${h(it.id)}">
-    <div class="card-thumb">
-      ${thumb ? `<img src="${h(thumb)}" loading="lazy" alt="${h(it.name)}"
-                    onerror="this.closest('.card').style.display='none'">` : ''}
-      ${isVideo ? `<span class="kind-badge">${icon('video')}</span>` : ''}
-    </div>
-    <div class="cbody">
-      <div class="card-title">${h(it.name)}</div>
-      ${it.domain && it.domain !== 'local' ? `<div class="card-meta">${h(it.domain)}</div>` : ''}
-    </div>
-  </article>`;
-}
-
-const GRID_CAP = 240;   // B1 佔位上限；虛擬滾動 B2 解除
-
-function renderGrid(items, total = items.length) {
-  const grid = $('grid');
-  if (!items.length) {
-    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
-      ${icon('image', 'icon')}<p class="empty-title">沒有項目</p></div>`;
-  } else {
-    grid.innerHTML = items.slice(0, GRID_CAP).map(_cardHTML).join('');
-  }
-  $('ibar-count').textContent =
-    `顯示 ${Math.min(items.length, GRID_CAP).toLocaleString()} / ${total.toLocaleString()} 筆` +
-    (items.length > GRID_CAP ? '（B1 佔位上限；虛擬滾動 B2）' : '');
-}
-
-function renderInspectorSummary(items, total) {
-  const n = k => items.filter(i => (i.media_type || i.kind) === k).length;
-  $('inspector-body').innerHTML = `<div>
-    <p style="color:var(--text2);font-size:var(--fs-sm)">當前視圖摘要</p>
-    <p>項目數：<b>${total.toLocaleString()}</b></p>
-    <p style="color:var(--text2);font-size:var(--fs-sm)">
-      影片 ${n('video').toLocaleString()} ·
-      圖片 ${(items.length - n('video')).toLocaleString()}（載入中樣本）</p>
-    <p style="color:var(--text3);font-size:var(--fs-xs)">單選/多選編輯於 B4 實作</p>
-  </div>`;
-}
-
-function renderPlaceholderPage(title, note, iconName = 'info') {
-  renderBreadcrumb([{ label: title }]);
-  $('grid').innerHTML = `<div class="empty-state" style="grid-column:1/-1">
-    ${icon(iconName, 'icon')}
-    <p class="empty-title">${h(title)}</p><p>${h(note)}</p></div>`;
-  $('ibar-count').textContent = '';
+/** actions.js/SSE patch → 'items-mutated'：重跑當前視圖（不動捲動位置） */
+function _onItemsMutated() {
+  updateTrashBadge();
+  const r = state.route;
+  if (!r) return;
+  if (r.name === 'trash') { refreshTrash({ keepScroll: true }); return; }
+  if ((r.name === 'lib' || r.name === 'folder') && store.state.libType !== 'excire')
+    refreshEagle(r, { keepScroll: true });
 }
 
 /* ── 路由 render dispatch（唯一 popstate handler 的目的地）──────────── */
 
+/** 視圖簽章（path + grid 相關 query，排除 item/drawer 浮層參數）：
+ *  簽章不變 = 只有 viewer 浮層狀態改變 → 跳過 grid 重建（§5.4 #1/#2） */
+const _VIEW_KEYS = ['type', 'star', 'tags', 'date', 'size', 'domain', 'folders', 'q', 'sort', 'dir', 'seed'];
+let _viewSig = null;
+
+function _sigOf(route) {
+  return route.path + '|' + _VIEW_KEYS.map(k => route.query.get(k) || '').join('|');
+}
+
 async function render(route) {
   state.route = route;
+  await _renderRoute(route);
+  syncViewerFromRoute(route);      // 宣告式 viewer 開/關（?item= / ?drawer=）
+}
+
+async function _renderRoute(route) {
+  if (route.name !== 'lib' && route.name !== 'folder') _viewSig = null;
+  if (route.name !== 'search') resetSearchView();
+  if (route.name !== 'downloads' && route.name !== 'people') hidePagePanel();
+
+  /* 垃圾桶模式旗標（Inspector/SelectionBar/選取語意消費）；切換時清空選取 */
+  const inTrash = route.name === 'trash';
+  document.getElementById('sec-browse')?.classList.toggle('trash-dim', inTrash);
+  if (!!store.state.trash !== inTrash) {
+    store.set({ trash: inTrash });
+    clearSelection();
+  }
 
   switch (route.name) {
     case 'home': {
       if (!state.libs.length) {
-        renderPlaceholderPage('尚未設定來源', '請以「＋ 新增來源」加入 Eagle 資源庫（dialog 於 B2 實作）', 'plus');
+        renderPlaceholderPage('尚未設定來源', '請以「＋ 新增來源」加入 Eagle 資源庫', 'plus');
         return;
       }
       const last = localStorage.getItem('ev-last-lib');
@@ -368,12 +355,16 @@ async function render(route) {
     case 'folder': {
       const { libId, folderId } = route.params;
       const lib = state.libs.find(l => l.id === libId);
-      if (!lib) { renderPlaceholderPage('找不到庫', libId, 'close'); return; }
+      if (!lib) { renderPlaceholderPage('找不到庫', libId, 'close'); _viewSig = null; return; }
+      const sig = _sigOf(route);
+      if (sig === _viewSig && state.activeLibId === libId) return;   // 僅浮層參數變動
       try { await ensureLibLoaded(libId); }
-      catch (e) { renderPlaceholderPage('載入失敗', e.message, 'close'); return; }
+      catch (e) { renderPlaceholderPage('載入失敗', e.message, 'close'); _viewSig = null; return; }
+      _viewSig = sig;
+
+      syncFromRoute(route);            // URL query → filters/sort/seed + chips
       renderTree();
 
-      // 麵包屑：庫 ▸ 夾 ▸ 子夾
       const crumbs = [{ label: lib.label, hash: libHash(libId) }];
       if (folderId) {
         const chain = [];
@@ -383,29 +374,36 @@ async function render(route) {
         crumbs.push(...chain);
       }
       renderBreadcrumb(crumbs);
+      setContentChrome(true);
 
-      if (lib.type === 'excire') {
-        const d = await api.excirePhotos(lib.slug,
-          { folder: folderId || undefined, limit: GRID_CAP });
-        renderGrid(d.items || [], d.total ?? (d.items || []).length);
-        renderInspectorSummary(d.items || [], d.total ?? 0);
-      } else {
-        let items = state.items.filter(i => !(i.tags || []).includes('archived'));
-        if (folderId) {
-          const ids = folderWithDescendants(folderId);
-          items = items.filter(i => (i.folders || []).some(f => ids.has(f)));
-        }
-        renderGrid(items, items.length);
-        renderInspectorSummary(items.slice(0, GRID_CAP), items.length);
-      }
+      if (lib.type === 'excire') refreshExcire(route, lib);
+      else refreshEagle(route);
       return;
     }
 
-    case 'trash':      renderPlaceholderPage('垃圾桶', '兩步保護垃圾桶視圖於 B4 實作', 'trash'); return;
-    case 'collection': renderPlaceholderPage('集合', 'Collections / 智慧集合於 B2/B5 實作', 'folder'); return;
-    case 'search':     renderPlaceholderPage('搜尋', '⌘K 語法模式於 B2 實作', 'search'); return;
-    case 'people':     renderPlaceholderPage('人物', '人臉搜尋將於 AI 階段（P6）啟用', 'people'); return;
-    case 'downloads':  renderPlaceholderPage('下載中心', '佇列/歷史/服務健康於 B5 實作', 'download'); return;
+    case 'trash': {
+      const { libId } = route.params;
+      const lib = state.libs.find(l => l.id === libId);
+      if (!lib) { renderPlaceholderPage('找不到庫', libId, 'close'); return; }
+      if (lib.type === 'excire') {
+        renderPlaceholderPage('垃圾桶', 'Excire 唯讀庫沒有垃圾桶', 'lock-ro'); return;
+      }
+      try { await ensureLibLoaded(libId); }
+      catch (e) { renderPlaceholderPage('載入失敗', e.message, 'close'); return; }
+      renderTree();
+      renderBreadcrumb([{ label: lib.label, hash: libHash(libId) }, { label: '垃圾桶' }]);
+      setContentChrome(false);                  // 篩選/排序不適用垃圾桶
+      refreshTrash();
+      return;
+    }
+    case 'collection': renderPlaceholderPage('集合', 'Collections / 智慧集合於 B6 實作', 'folder'); return;
+    case 'search': {
+      if (['nl', 'face'].includes(route.query.get('mode') || '')) { await renderSearchRoute(route); return; }
+      renderPlaceholderPage('搜尋', '⌘K 語法查詢已套用於庫視圖（?q= chips）；AI 搜尋走 mode=nl|face', 'search');
+      return;
+    }
+    case 'people':     await renderPeopleRoute(route); return;
+    case 'downloads':  renderDownloads(route); return;
     case 'stats':      renderPlaceholderPage('統計', '折線/TOP10/觀看記錄於 B6 實作', 'chart'); return;
     case 'settings':   renderPlaceholderPage(`設定 · ${route.params.tab}`, '偏好/同步/通知/來源分頁於 B6 實作', 'settings'); return;
     default:           renderPlaceholderPage('404', `找不到頁面：${route.path}`, 'close');
@@ -418,12 +416,42 @@ async function boot() {
   await injectSprite();
   initTheme();
   wireChrome();
-  $('btn-omni').addEventListener('click', () =>
-    renderPlaceholderPage('⌘K 搜尋指揮中心', '語法/NL/人物/相似圖模式於 B2/P6 實作', 'command'));
+  initGrid({ onNeedMore: loadExcirePage });
+  initData({ vmItems: () => state.vmItems, folderWithDescendants });
+  initToolbar();
+  initCommandK();
+  initSelection();
+  initDrawer();
+  initViewer({
+    folderName: id => state.folderMap[id]?.name || id,
+    libLabel: () => state.libs.find(l => l.id === state.activeLibId)?.label || '',
+  });
+  setFolderNameResolver(id => state.folderMap[id]?.name || id);
+
+  /* B4：Inspector / 操作 / 右鍵選單 / toast+SSE */
+  const b4ctx = {
+    folderName: id => state.folderMap[id]?.name || id,
+    folderTree: () => state.folderTree,
+    libLabel: () => state.libs.find(l => l.id === state.activeLibId)?.label || '',
+  };
+  setActionsContext(b4ctx);
+  setInspectorContext(b4ctx);
+  initInspector();
+  initContextMenu();
+  initNotifications();
+  store.on('items-mutated', _onItemsMutated);
+  store.on('grid-items', updateTrashBadge);   // 庫載入/清單更新後同步垃圾桶計數
+
+  /* B5：下載中心 + People + AI 搜尋 */
+  initPeople();
+  initDownloadCenter({ libs: () => state.libs });
+  store.on('lib-invalidate', () => {          // 下載完成跳轉：強制重載庫資料
+    state.activeLibId = null;
+    invalidateLibCache();
+  });
 
   try {
-    const cfg = await api.config();
-    if (cfg && cfg.configured === false) { /* 空來源：home 路由顯示引導卡 */ }
+    await api.config();
     await loadSources();
   } catch (e) {
     renderPlaceholderPage('無法連線後端', e.message, 'close');

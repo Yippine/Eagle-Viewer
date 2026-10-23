@@ -9,6 +9,12 @@
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/layout.css">
 <link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/content.css">
+<!-- B3：vc-panel/toast/crop 內部樣式直接重用舊版（不複製）；viewer.css 覆寫貼 token -->
+<link rel="stylesheet" href="/viewer/css/video-controls.css">
+<link rel="stylesheet" href="css/viewer.css">
+<link rel="stylesheet" href="css/inspector.css">
+<link rel="stylesheet" href="css/download.css">
 <script>
 /* 主題早期還原（避免閃白）：localStorage → prefers-color-scheme → dark */
 try {
@@ -38,7 +44,7 @@ try {
     </button>
 
     <div class="topbar-actions">
-      <button class="btn btn-ghost btn-icon" id="btn-density" aria-label="密度" title="密度（B2）">
+      <button class="btn btn-ghost btn-icon" id="btn-density" aria-label="密度" title="密度與卡片資訊">
         <svg class="icon" aria-hidden="true"><use href="#i-density"/></svg>
       </button>
       <button class="btn btn-ghost btn-icon" id="btn-theme" aria-label="切換主題">
@@ -89,10 +95,7 @@ try {
 
       <section class="side-section" id="sec-people" aria-labelledby="hd-people">
         <h2 class="side-heading" id="hd-people">People</h2>
-        <button class="side-row" data-nav="#/people" disabled aria-disabled="true" title="人臉搜尋將於 AI 階段啟用">
-          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-people"/></svg>
-          <span class="row-label">人臉搜尋將於 AI 階段啟用</span>
-        </button>
+        <div id="people-panel"><p class="side-placeholder">選擇資源庫後顯示人物</p></div>
       </section>
 
       <section class="side-section" id="sec-system" aria-labelledby="hd-system">
@@ -127,30 +130,48 @@ try {
         <div class="toolbar-row" id="toolbar-controls">
           <div id="filter-chips" role="group" aria-label="作用中篩選" style="display:flex;gap:var(--sp-2);flex-wrap:wrap"></div>
           <span class="spacer"></span>
-          <button class="btn btn-ghost btn-sm" id="btn-sort" title="排序（B2）">
+          <button class="btn btn-ghost btn-sm" id="btn-sort" title="排序">
             <svg class="icon icon-sm" aria-hidden="true"><use href="#i-sort"/></svg><span>排序</span>
           </button>
-          <button class="btn btn-ghost btn-sm btn-icon" id="btn-shuffle" aria-label="隨機" title="隨機（B2）">
+          <button class="btn btn-ghost btn-sm btn-icon" id="btn-shuffle" aria-label="隨機" title="隨機（新 seed）">
             <svg class="icon icon-sm" aria-hidden="true"><use href="#i-shuffle"/></svg>
           </button>
-          <button class="btn btn-ghost btn-sm btn-icon" id="btn-select" aria-label="選取模式" title="選取模式（B4）">
+          <button class="btn btn-ghost btn-sm btn-icon" id="btn-select" aria-label="選取模式" title="選取模式">
             <svg class="icon icon-sm" aria-hidden="true"><use href="#i-select-mode"/></svg>
           </button>
         </div>
       </div>
 
-      <div class="ibar" id="ibar"><span id="ibar-count"></span></div>
+      <div class="ibar" id="ibar">
+        <span id="ibar-count"></span>
+        <span style="flex:1"></span>
+        <span id="ibar-seed"></span>
+      </div>
 
       <div class="grid-wrap" id="grid-wrap">
         <div class="pgrid" id="grid" aria-live="polite"></div>
+        <div class="grid-loader" id="grid-loader" hidden>載入中…</div>
+        <div class="page-panel" id="page-panel" hidden></div><!-- B5：下載中心/人物總覽 -->
       </div>
 
       <div class="selection-bar" id="selection-bar" hidden>
         <span id="sel-count">已選 0</span>
         <span class="spacer" style="flex:1"></span>
-        <button class="btn btn-ghost btn-sm" disabled>封存</button>
-        <button class="btn btn-ghost btn-sm" disabled>標籤</button>
-        <button class="btn btn-ghost btn-sm" disabled>資料夾</button>
+        <button class="btn btn-ghost btn-sm" id="btn-sel-archive" title="加入垃圾桶（封存）">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash"/></svg><span>封存</span>
+        </button>
+        <button class="btn btn-ghost btn-sm" id="btn-sel-tags" title="批次編輯標籤">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-tag"/></svg><span>標籤</span>
+        </button>
+        <button class="btn btn-ghost btn-sm" id="btn-sel-folders" title="批次加入資料夾">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-folder"/></svg><span>資料夾</span>
+        </button>
+        <button class="btn btn-ghost btn-sm" id="btn-sel-restore" title="還原" hidden>
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-restore"/></svg><span>還原</span>
+        </button>
+        <button class="btn btn-danger btn-sm" id="btn-sel-delete" title="永久刪除（無法復原）" hidden>
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash"/></svg><span>永久刪除</span>
+        </button>
         <button class="btn btn-ghost btn-sm btn-icon" id="btn-sel-close" aria-label="離開選取模式">
           <svg class="icon icon-sm" aria-hidden="true"><use href="#i-close"/></svg>
         </button>
@@ -179,6 +200,256 @@ try {
     <button class="btn btn-ghost btn-icon" data-nav="#/settings/prefs" aria-label="更多"><svg class="icon" aria-hidden="true"><use href="#i-more-v"/></svg></button>
   </nav>
 </div>
+
+<!-- ══ Immersive Viewer（B3：圖片/影片統一容器）══════════════════════ -->
+<div class="uviewer" id="uviewer" hidden>
+  <div class="uv-stage" id="uv-stage">
+    <div class="uv-wrap" id="uv-wrap">
+      <div class="uv-zoom" id="uv-zoom"></div>
+    </div>
+    <button class="uv-nav prev" id="uv-prev" title="上一個 (↑)">
+      <svg class="icon" aria-hidden="true"><use href="#i-chevron-l"/></svg>
+    </button>
+    <button class="uv-nav next" id="uv-next" title="下一個 (↓)">
+      <svg class="icon" aria-hidden="true"><use href="#i-chevron-r"/></svg>
+    </button>
+    <div class="uv-zoomind" id="uv-zoomind"></div>
+    <div class="uv-flash" id="uv-flash"></div>
+  </div>
+
+  <header class="uv-topbar">
+    <button class="uv-btn" id="uv-close" title="關閉 (Esc)">
+      <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+    </button>
+    <span class="uv-counter" id="uv-counter"></span>
+    <div class="uv-titlebox"><span id="uv-title"></span><span id="uv-domain"></span></div>
+    <button class="uv-btn uv-pill" id="uv-orig" title="Excire 預覽 ↔ 原檔" hidden>原圖</button>
+    <a class="uv-btn" id="uv-eagle" title="在 Eagle 中開啟" hidden>
+      <svg class="icon" aria-hidden="true"><use href="#i-library-eagle"/></svg>
+    </a>
+    <a class="uv-btn" id="uv-link" target="_blank" rel="noopener" title="開啟原始連結" hidden>
+      <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg>
+    </a>
+    <button class="uv-btn" id="uv-kbd-btn" title="快捷鍵 (?)">
+      <svg class="icon" aria-hidden="true"><use href="#i-keyboard"/></svg>
+    </button>
+    <button class="uv-btn" id="uv-fs" title="全螢幕 (F)">
+      <svg class="icon" aria-hidden="true"><use href="#i-fullscreen"/></svg>
+    </button>
+    <button class="uv-btn uv-pill" id="uv-btn-info" title="資訊">
+      <svg class="icon icon-sm" aria-hidden="true"><use href="#i-info"/></svg><span>資訊</span>
+    </button>
+    <button class="uv-btn uv-pill" id="uv-btn-ctrl" title="控制 (C)">
+      <svg class="icon icon-sm" aria-hidden="true"><use href="#i-sliders"/></svg><span>控制</span>
+    </button>
+  </header>
+
+  <footer class="uv-bottom">
+    <div class="uv-caption" id="uv-caption"></div>
+    <div id="uv-controls" hidden>
+      <button class="uv-btn" id="uv-play" title="播放/暫停 (Space)">
+        <svg class="icon" aria-hidden="true"><use href="#i-play"/></svg>
+      </button>
+      <span id="uv-time">0:00 / –:––</span>
+      <input type="range" id="uv-prog" min="0" max="100" step="0.1" value="0" aria-label="播放進度">
+      <button class="uv-btn" id="uv-mute" title="靜音 (M)">
+        <svg class="icon" aria-hidden="true"><use href="#i-volume"/></svg>
+      </button>
+    </div>
+  </footer>
+
+  <div class="uv-kbd" id="uv-kbd" hidden>
+    <div class="uv-kbd-card">
+      <h3>快捷鍵</h3>
+      <span><kbd>←</kbd><kbd>→</kbd></span><span>影片 ±5s／圖片 上下張</span>
+      <span><kbd>↑</kbd><kbd>↓</kbd>／滾輪</span><span>上一個／下一個</span>
+      <span><kbd>Space</kbd></span><span>播放／暫停</span>
+      <span><kbd>Ctrl</kbd>+滾輪</span><span>縮放（圖片 1–8×／影片 1–4×）</span>
+      <span><kbd>C</kbd></span><span>控制 drawer</span>
+      <span><kbd>M</kbd></span><span>靜音</span>
+      <span><kbd>F</kbd></span><span>全螢幕</span>
+      <span><kbd>?</kbd></span><span>本說明</span>
+      <span><kbd>Esc</kbd></span><span>關閉（drawer → viewer 逐層）</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 控制 Drawer：vc-panel（自舊版 index.html 平移，id 保持 vc-*；
+       選色自濾鏡 tab 升為一級 tab，另增 ⓘ 資訊 pane，spec §3.2）═════ -->
+<div id="vc-panel">
+  <div class="vc-header">
+    <span class="vc-title" id="vc-title">媒體控制</span>
+    <button class="vc-close-btn" onclick="closeVcPanel()">✕</button>
+  </div>
+
+  <div class="vc-tabs">
+    <button class="vc-tab-btn"        data-tab="info"      onclick="vcSwitchTab('info')">資訊</button>
+    <button class="vc-tab-btn"        data-tab="image"     onclick="vcSwitchTab('image')" style="display:none">檢視</button>
+    <button class="vc-tab-btn active" data-tab="playback"  onclick="vcSwitchTab('playback')">播放</button>
+    <button class="vc-tab-btn"        data-tab="filters"   onclick="vcSwitchTab('filters')">濾鏡</button>
+    <button class="vc-tab-btn"        data-tab="color"     onclick="vcSwitchTab('color')">選色</button>
+    <button class="vc-tab-btn"        data-tab="transform" onclick="vcSwitchTab('transform')">幾何</button>
+  </div>
+
+  <div class="vc-content">
+
+    <!-- TAB：資訊（新 UI：Inspector 單選內容平移，vc-drawer.js 渲染） -->
+    <div class="vc-tab-pane" id="vc-pane-info"></div>
+
+    <!-- TAB：播放 -->
+    <div class="vc-tab-pane active" id="vc-pane-playback">
+      <div class="vc-section">
+        <div class="vc-section-label">↻ 播放模式</div>
+        <div class="vc-seg-ctrl">
+          <button class="vc-seg-btn active" id="vc-loop-single"   onclick="vcSetLoopMode('single')">單部循環</button>
+          <button class="vc-seg-btn"        id="vc-loop-autoplay" onclick="vcSetLoopMode('autoplay')">自動下一部</button>
+        </div>
+      </div>
+      <div class="vc-section">
+        <div class="vc-section-label">⚡ 播放速度</div>
+        <div class="vc-slider-row"><span class="vc-label">速度</span><input type="range" id="vc-speed" min="0" max="200" step="1" value="100"oninput="vcSetSpeed(Math.pow(10,+this.value/100-1))"><span class="vc-val" id="vc-speed-v">1×</span></div>
+        <button class="vc-text-btn" onclick="vcSetSpeed(1)" style="width:100%;margin-top:6px">恢復 1×</button>
+      </div>
+      <div class="vc-section">
+        <div class="vc-section-label">⟲ AB 循環</div>
+        <div class="vc-ab-points">
+          <div class="vc-ab-point"><button class="vc-point-btn" id="vc-btn-a" onclick="_vcSetA()">A</button><span class="vc-a-time vc-ab-editable" id="vc-a-time"contenteditable="true" inputmode="decimal" spellcheck="false"onfocus="_vcAbSpanFocus(this)"onblur="_vcAbSpanEdit('a',this)"onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">–</span></div>
+          <span class="vc-ab-sep">→</span>
+          <div class="vc-ab-point"><button class="vc-point-btn" id="vc-btn-b" onclick="_vcSetB()">B</button><span class="vc-b-time vc-ab-editable" id="vc-b-time"contenteditable="true" inputmode="decimal" spellcheck="false"onfocus="_vcAbSpanFocus(this)"onblur="_vcAbSpanEdit('b',this)"onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}">–</span></div>
+        </div>
+        <div class="vc-ab-row">
+          <button class="vc-toggle-btn" id="vc-ab-toggle" onclick="_vcToggleAb()">AB 關閉</button>
+          <button class="vc-text-btn" onclick="_vcClearAb()">清除</button>
+        </div>
+      </div>
+      <div class="vc-section" id="vc-ab-preset-section" style="display:none">
+        <div class="vc-section-label">🔖 AB 設定庫</div>
+        <div id="vc-ab-presets"></div>
+        <button class="vc-filter-save-btn" onclick="vcSaveAbPreset()">＋ 儲存當前 AB</button>
+      </div>
+    </div><!-- /vc-pane-playback -->
+
+    <!-- TAB：濾鏡 -->
+    <div class="vc-tab-pane" id="vc-pane-filters">
+      <div class="vc-section">
+        <div class="vc-section-header">
+          <span class="vc-section-label">◐ 色彩調整</span>
+          <button class="vc-icon-btn" onclick="vcResetFilters()" title="重置色彩">↺</button>
+        </div>
+        <div class="vc-slider-row"><span class="vc-label">亮度</span><input type="range" id="vc-brightness" min="0" max="3" step="0.05" value="1"oninput="_vcFilter('brightness',+this.value)"><span class="vc-val" id="vc-brightness-v">1.00</span></div>
+        <div class="vc-slider-row"><span class="vc-label">對比</span><input type="range" id="vc-contrast" min="0" max="3" step="0.05" value="1"oninput="_vcFilter('contrast',+this.value)"><span class="vc-val" id="vc-contrast-v">1.00</span></div>
+        <div class="vc-slider-row"><span class="vc-label">飽和</span><input type="range" id="vc-saturate" min="0" max="3" step="0.05" value="1"oninput="_vcFilter('saturate',+this.value)"><span class="vc-val" id="vc-saturate-v">1.00</span></div>
+        <div class="vc-slider-row"><span class="vc-label">色調</span><input type="range" id="vc-hue" min="0" max="360" step="1" value="0"oninput="_vcFilter('hueRotate',+this.value)"><span class="vc-val" id="vc-hue-v">0°</span></div>
+        <div class="vc-slider-row"><span class="vc-label">復古</span><input type="range" id="vc-sepia" min="0" max="100" step="1" value="0"oninput="_vcFilter('sepia',+this.value)"><span class="vc-val" id="vc-sepia-v">0%</span></div>
+        <div class="vc-slider-row"><span class="vc-label">銳化</span><input type="range" id="vc-sharpness" min="-10" max="10" step="1" value="0"oninput="_vcFilter('sharpness',+this.value)"><span class="vc-val" id="vc-sharpness-v">0</span></div>
+        <button class="vc-filter-save-btn" onclick="vcSaveFilterPreset()">＋ 儲存為濾鏡</button>
+      </div>
+      <div class="vc-section">
+        <div class="vc-section-label">🔖 濾鏡庫</div>
+        <div id="vc-filter-presets"></div>
+      </div>
+    </div><!-- /vc-pane-filters -->
+
+    <!-- TAB：選色（WebGL；自濾鏡 tab 升為一級，spec §3.2） -->
+    <div class="vc-tab-pane" id="vc-pane-color">
+      <div class="vc-section">
+        <div class="vc-sel-header-row">
+          <span class="vc-sel-section-label">🎨 選色</span>
+          <button class="vc-icon-btn vc-sel-add-btn" onclick="vcAddSelectiveColor()" title="新增色彩範圍，點圖取色">＋</button>
+        </div>
+        <div id="vc-sel-chips" class="vc-sel-chips-row"></div>
+        <div class="vc-sel-eyedropper-row" id="vc-sel-eyedropper-row" style="display:none">
+          <span class="vc-sel-pick-hint" id="vc-sel-pick-hint" style="display:none">👆 點圖取色中…</span>
+          <span id="vc-sel-swatch" class="vc-sel-swatch"></span>
+          <button id="vc-eyedropper-btn" class="vc-icon-btn vc-sel-repick-btn"
+                  onclick="vcStartEyedropper()" title="重新取色">💧</button>
+          <button class="vc-icon-btn vc-sel-clear-btn" onclick="vcClearSelectiveColor()"
+                  title="重設此色彩範圍">✕</button>
+        </div>
+        <div id="vc-sel-deltas" style="display:none">
+          <div class="vc-sel-deltas-title">調整選取色彩</div>
+          <div class="vc-slider-row"><span class="vc-label">色調</span><input type="range" id="vc-sel-hueshift" min="-180" max="180" step="1" value="0"oninput="vcSetSelectiveHue('hueShift',+this.value)"><span class="vc-val" id="vc-sel-hueshift-v">0°</span></div>
+          <div class="vc-slider-row"><span class="vc-label">選色寬度</span><input type="range" id="vc-sel-range" min="5" max="60" step="5" value="30"oninput="vcSetSelectiveHue('range',+this.value)"><span class="vc-val" id="vc-sel-range-v">±30°</span></div>
+          <div class="vc-slider-row"><span class="vc-label">亮度</span><input type="range" id="vc-sel-brightness" min="-1" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('brightness',+this.value)"><span class="vc-val" id="vc-sel-brightness-v">0.00</span></div>
+          <div class="vc-slider-row"><span class="vc-label">對比</span><input type="range" id="vc-sel-contrast" min="-1" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('contrast',+this.value)"><span class="vc-val" id="vc-sel-contrast-v">0.00</span></div>
+          <div class="vc-slider-row"><span class="vc-label">飽和</span><input type="range" id="vc-sel-saturate" min="-1" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('saturate',+this.value)"><span class="vc-val" id="vc-sel-saturate-v">0.00</span></div>
+          <div class="vc-slider-row"><span class="vc-label">復古</span><input type="range" id="vc-sel-sepia" min="0" max="1" step="0.05" value="0"oninput="vcSetSelectiveHue('sepia',+this.value)"><span class="vc-val" id="vc-sel-sepia-v">0.00</span></div>
+        </div>
+        <button class="vc-text-btn" id="vc-sel-bind-ab-btn"
+                onclick="vcBindAbToSelective()" title="將當前 A/B 時段綁定到此選色項目"
+                style="display:none;margin-top:8px">
+          ⏱ 套用此 AB 設定
+        </button>
+        <button class="vc-text-btn" id="vc-sel-unbind-ab-btn"
+                onclick="vcUnbindAbFromSelective()" title="移除時段綁定"
+                style="display:none;margin-top:8px">
+          ✕ 移除 AB 綁定
+        </button>
+      </div>
+    </div><!-- /vc-pane-color -->
+
+    <!-- TAB：幾何 -->
+    <div class="vc-tab-pane" id="vc-pane-transform">
+      <div class="vc-section">
+        <div class="vc-section-header">
+          <span class="vc-section-label">⤢ 縮放</span>
+          <button class="vc-icon-btn" onclick="vcResetTransform()" title="重置幾何">↺</button>
+        </div>
+        <div class="vc-slider-row"><span class="vc-label">水平</span><input type="range" id="vc-scalex" min="0.1" max="3" step="0.05" value="1"oninput="_vcTx('scaleX',+this.value)"><span class="vc-val" id="vc-scalex-v">1.00×</span></div>
+        <div class="vc-slider-row"><span class="vc-label">垂直</span><input type="range" id="vc-scaley" min="0.1" max="3" step="0.05" value="1"oninput="_vcTx('scaleY',+this.value)"><span class="vc-val" id="vc-scaley-v">1.00×</span></div>
+      </div>
+      <div class="vc-section">
+        <div class="vc-section-label">↔ 位移</div>
+        <div class="vc-slider-row"><span class="vc-label">X</span><input type="range" id="vc-tx" min="-500" max="500" step="1" value="0"oninput="_vcTx('translateX',+this.value)"><span class="vc-val" id="vc-tx-v">0px</span></div>
+        <div class="vc-slider-row"><span class="vc-label">Y</span><input type="range" id="vc-ty" min="-500" max="500" step="1" value="0"oninput="_vcTx('translateY',+this.value)"><span class="vc-val" id="vc-ty-v">0px</span></div>
+      </div>
+      <div class="vc-section">
+        <div class="vc-section-label">↺ 翻轉 / 旋轉</div>
+        <div class="vc-btn-group">
+          <button class="vc-geo-btn" id="vc-flip-h" onclick="_vcFlip('H')">⇔ 水平翻轉</button>
+          <button class="vc-geo-btn" id="vc-flip-v" onclick="_vcFlip('V')">⇕ 垂直翻轉</button>
+        </div>
+        <div class="vc-btn-group">
+          <button class="vc-geo-btn" onclick="_vcRotateBy(-90)">↺ -90°</button>
+          <button class="vc-geo-btn" onclick="_vcRotateBy(90)">↻ +90°</button>
+          <button class="vc-geo-btn" onclick="_vcRotateBy(180)">↻ 180°</button>
+          <button class="vc-geo-btn" onclick="_vcSetRotate(0)">⊙ 歸零</button>
+        </div>
+        <div class="vc-rotate-row">
+          <span style="font-size:11px;color:rgba(255,255,255,.3)">旋轉角度：</span>
+          <span class="vc-rotate-val" id="vc-rotate-v">0°</span>
+        </div>
+      </div>
+      <div class="vc-section">
+        <div class="vc-section-label">✂ 手動裁切</div>
+        <button class="vc-text-btn" id="vc-crop-toggle" onclick="vcToggleCropMode()" style="width:100%">✂ 開始手動裁切</button>
+      </div>
+      <div class="vc-section">
+        <div class="vc-section-label">✦ 智慧裁切</div>
+        <button class="vc-smart-crop-btn" onclick="vcSmartCrop()">✦ 偵測並裁切黑邊</button>
+        <div id="vc-transform-actions"></div>
+      </div>
+    </div><!-- /vc-pane-transform -->
+
+    <!-- TAB：檢視（圖片專屬） -->
+    <div class="vc-tab-pane" id="vc-pane-image" style="display:none">
+      <div class="vc-section">
+        <div class="vc-section-header">
+          <span class="vc-section-label">⤢ 縮放</span>
+          <button class="vc-icon-btn" onclick="vcImageFit()" title="符合視窗">⊡</button>
+        </div>
+        <div class="vc-slider-row"><button class="vc-icon-btn" onclick="vcImageZoom(-0.15)">−</button><input type="range" id="vc-img-zoom" min="1" max="8" step="0.05" value="1"oninput="vcImageZoomSet(+this.value)"><button class="vc-icon-btn" onclick="vcImageZoom(+0.15)">＋</button><span class="vc-val" id="vc-img-zoom-v">100%</span></div>
+        <div class="vc-btn-group" style="margin-top:6px">
+          <button class="vc-geo-btn" onclick="vcImageFit()">⊡ 符合視窗</button>
+          <button class="vc-geo-btn" onclick="vcImageActualSize()">⊙ 原始大小</button>
+        </div>
+      </div>
+    </div><!-- /vc-pane-image -->
+
+  </div>
+</div>
+
+<div id="vc-toast" class="vc-toast"></div>
 
 <div class="shell-backdrop" id="shell-backdrop"></div>
 <div class="toast-root" id="toast-root" aria-live="polite"></div>

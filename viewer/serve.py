@@ -8,6 +8,7 @@ Usage: python serve.py [port]   (default port: 8765)
     serve.py        — _Handler 骨架 + routing dispatch + SSE + main()
     api_routes.py   — GET endpoint handlers + views 儲存 + folder-scan 任務
     api_mutations.py— POST/PATCH/DELETE endpoint handlers
+    api_ai.py       — AI 語意/人臉搜尋 + 背景索引任務（/api/ai/*）
     media_serve.py  — 檔案串流（mime/Range/縮圖）+ Excire 媒體路由
     eagle_watch.py  — Eagle library 背景 watcher（SSE 事件來源）
 """
@@ -31,6 +32,7 @@ from eagle_watch import _eagle_watcher_started, _start_eagle_watcher
 import media_serve
 import api_routes as _r
 import api_mutations as _m
+import api_ai as _ai
 
 # ---------------------------------------------------------------------------
 # CORS / connection error constants
@@ -149,6 +151,9 @@ class _Handler(BaseHTTPRequestHandler):
 
         if up == "/api/excire/libraries" or up.startswith("/api/excire/"):
             _r.handle_excire_api(self, up); return
+
+        if up.startswith("/api/ai/"):
+            _ai.handle_ai_get(self, up); return
 
         if up.startswith(("/excire-thumb/", "/excire-preview/", "/excire-file/")):
             media_serve.handle_excire_media(self, up); return
@@ -287,6 +292,9 @@ class _Handler(BaseHTTPRequestHandler):
 
         if up == "/api/import/url":
             _m.handle_post_import_url(self); return
+
+        if up.startswith("/api/ai/"):
+            _ai.handle_ai_post(self, up); return
 
         self._err(404, "Not found")
 

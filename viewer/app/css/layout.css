@@ -146,6 +146,8 @@ body {
   flex-wrap: wrap;
 }
 .toolbar-row .spacer { flex: 1; }
+/* hidden 屬性優先於 display:flex（系統頁/垃圾桶/虛擬視圖隱藏篩選鏈，B5） */
+.toolbar-row[hidden], .ibar[hidden] { display: none; }
 
 .ibar {
   display: flex;
