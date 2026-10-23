@@ -5,7 +5,7 @@
    - #/people = 全部人物總覽頁（page-panel）；#/people/{personId} = 該人
      全部照片虛擬視圖（ai-search renderVirtualView，走同一 grid 管線）。 */
 
-import { api } from './api.js';
+import { api, mediaURL } from './api.js';
 import { store } from './store.js';
 import { navigate, parseLibId } from './router.js';
 import { h } from './items.js';
@@ -42,7 +42,7 @@ const AV = 44;              // 側欄頭像框 px（CSS .pp-avatar 同步；lg =
 function _avatarHTML(rep, size = AV) {
   const cls = 'pp-avatar' + (size > AV ? ' lg' : '');
   if (!rep?.thumb) return `<span class="${cls} empty"><svg class="icon icon-sm" aria-hidden="true"><use href="#i-people"/></svg></span>`;
-  const src = h(encodeURI(rep.thumb));
+  const src = h(mediaURL(rep.thumb.replace(/^\//, '')));
   const it = store.state.allItems.find(i => i.id === rep.item);
   const W = it?.width || 0, H = it?.height || 0;
   const [x1, y1, x2, y2] = rep.bbox || [];

@@ -16,6 +16,21 @@ export function initData(ctx) { Object.assign(_c, ctx); }
 
 /* ── Eagle / dir：全量過濾 + 排序 ───────────────────────────────────── */
 
+/** 濾鏡 preset 反查（C12）：presetIds 含任一選中 preset 的 item id 集合（OR） */
+function _presetItemIds(pids) {
+  const want = new Set(pids), out = new Set();
+  const PREFIX = 'eagle-media-filter-';
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith(PREFIX)) continue;
+    try {
+      const d = JSON.parse(localStorage.getItem(k) || '{}');
+      if ((d.presetIds || []).some(p => want.has(p))) out.add(k.slice(PREFIX.length));
+    } catch (_) {}
+  }
+  return out;
+}
+
 export function refreshEagle(route, opts = {}) {
   const f = store.state.filters, s = store.state.sort;
   let base = _c.vmItems();
@@ -23,6 +38,10 @@ export function refreshEagle(route, opts = {}) {
   if (folderId) {
     const ids = _c.folderWithDescendants(folderId);
     base = base.filter(i => (i.folders || []).some(x => ids.has(x)));
+  }
+  if (f.presets?.length) {
+    const ids = _presetItemIds(f.presets);
+    base = base.filter(i => ids.has(i.id));
   }
   const visibleTotal = base.filter(i => !(i.tags || []).includes('archived')).length;
   const folderSets = (f.folders || []).map(fid => _c.folderWithDescendants(fid));
@@ -54,12 +73,14 @@ export function updateTrashBadge() {
 
 /* ── Excire：offset/limit 分頁 ──────────────────────────────────────── */
 
-const _pg = { offset: 0, limit: 200, total: 0, busy: false, done: false, token: 0, lib: null, folderId: null };
+const _pg = { offset: 0, limit: 200, total: 0, busy: false, done: false, token: 0,
+              lib: null, folderId: null, collectionId: null };
 const EXCIRE_SORT = { date: 'date', mtime: 'date', name: 'name', star: 'stars', aesthetics: 'aesthetics' };
 
 export function refreshExcire(route, lib) {
   _pg.token++; _pg.offset = 0; _pg.total = 0; _pg.busy = false; _pg.done = false;
   _pg.lib = lib; _pg.folderId = route.params.folderId || null;
+  _pg.collectionId = route.name === 'collection' ? (route.params.collectionId || null) : null;
   store.set({ allItems: [] });
   setItems([], { total: 0, hasMore: true });
   loadExcirePage();
@@ -74,6 +95,7 @@ export async function loadExcirePage() {
     const d = await api.excirePhotos(_pg.lib.slug, {
       offset: _pg.offset, limit: _pg.limit,
       folder: _pg.folderId || undefined,
+      collection: _pg.collectionId || undefined,           // 相簿虛擬集合（E03）
       keyword: f.tags[0] || undefined,                     // 第一個標籤 → Excire AI keyword
       sort: EXCIRE_SORT[s.key] || 'date', order: s.dir,
     });

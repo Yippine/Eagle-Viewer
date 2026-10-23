@@ -15,6 +15,7 @@ Usage: python serve.py [port]   (default port: 8765)
 
 import json
 import queue
+import re
 import socket
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -132,13 +133,33 @@ class _Handler(BaseHTTPRequestHandler):
         up = self._url_path()
 
         if up == "/":
-            # P4 新舊 UI 並存：?ui=new → app/、?ui=classic（或無參數）→ 舊版
+            # P4-B6 新舊 UI 並存：預設 = 新版 /app/；?ui=classic 回舊版（逃生門）。
+            # 明確帶 ?ui= 時以 cookie 記憶選擇；無參數時依 cookie，預設 new。
             qs = self.path.split("?", 1)[1] if "?" in self.path else ""
             ui = parse_qs(qs).get("ui", [""])[0]
-            self._redirect("/app/" if ui == "new" else "/viewer/"); return
+            explicit = ui in ("new", "classic")
+            if not explicit:
+                m = re.search(r"(?:^|;\s*)ev_ui=(\w+)", self.headers.get("Cookie", ""))
+                ui = m.group(1) if m else "new"
+            target = "/viewer/" if ui == "classic" else "/app/"
+            try:
+                self.send_response(302)
+                self.send_header("Location", target)
+                if explicit:
+                    self.send_header(
+                        "Set-Cookie",
+                        f"ev_ui={ui}; Path=/; Max-Age=31536000; SameSite=Lax")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            except _CONN_ERRORS:
+                pass
+            return
 
         if up == "/api/browse":
             _r.handle_browse(self); return
+
+        if up == "/api/browse-dir":
+            _r.handle_browse_dir(self); return
 
         if up == "/api/config":
             _r.handle_config(self); return

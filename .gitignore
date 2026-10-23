@@ -218,15 +218,29 @@ logs/
 *.pid
 
 # --- BEGIN AI-CORE MANAGED (gitignore-sync) ---
+# ============================================================
+# AI Core .gitignore 模板
+# 維護：.claude/skills/gitignore-sync/references/gitignore.template
+# ============================================================
 
-# ── Claude Code：完全忽略 ────────────────────────────────
+# ── Claude Code：保留設定與技能，忽略執行狀態 ──────────────
 .claude/
 
 # ── AI Core：忽略任務執行與對話狀態 ────────────────────────
 .ai-core/tasks/
 .ai-core/sessions/
+.ai-core/chat/
+
+# ── AI Core self/：AI 自我狀態分級版控 ────────────────────
+# SOUL.md(憲法級)+RELATIONS.json(慢變·感情成長史) 入版控；
+# STATE.json(每 turn settle)+events.jsonl(append-only 高頻留痕) 為 runtime，不入版控。
+.ai-core/self/STATE.json
+.ai-core/self/events.jsonl
+.ai-core/self/decay-report.md
+.ai-core/self/DEPTH.json
 
 # ── AI Core Entity Cache ────────────────────────────────────
+.ai-core/.cache/
 .ai-core/projects/*/.cache/
 .ai-core/repos/*/.cache/
 
@@ -254,7 +268,14 @@ logs/
 *.xmind
 
 # ── 暫存檔 ──────────────────────────────────────────────────
+tmp/
 .tmp_xmind*/
+
+# ── AI Core Secrets（本機環境變數，永不進版控）──────────────
+.ai-core/config/.env
+
+# ── docs-archive ImportLog（runtime 狀態，不入版控）─────────
+.ai-core/.import-log
 # --- END AI-CORE MANAGED ---
 
 # ── Eagle Tags Sync Diff ──────────────────────────────────────
@@ -266,19 +287,7 @@ logs/
 # ============================================================
 
 # ── Claude Code：保留設定與技能，忽略執行狀態 ──────────────
-.claude/*
-!.claude/settings.json
-!.claude/statusline.sh
-!.claude/output-styles/
-!.claude/skills/
-!.claude/hooks/
-!.claude/scripts/
-!.claude/trigger-map.md
-.claude/hooks/__pycache__/
-.claude/hooks/*.log
-.claude/hooks/state-*.json
-.claude/hooks/memory-review-state.json
-.claude/skills/.health-scan.state.json
+.claude/
 
 # ── AI Core：忽略任務執行與對話狀態 ────────────────────────
 .ai-core/tasks/
@@ -317,3 +326,9 @@ logs/
 
 # ── AI Core Secrets（本機環境變數，永不進版控）──────────────
 .ai-core/config/.env
+
+.ai-core/graph-dirty.list
+.ai-core/graph-dirty.lock
+
+# ── 平台登入 cookie（等同密碼，永不進版控；見 config/cookies/README.md）──
+config/cookies/*.txt

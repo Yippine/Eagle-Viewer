@@ -4,8 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d0d0f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Eagle Viewer">
 <title>Eagle Viewer</title>
+<link rel="manifest" href="/viewer/manifest.json">
 <link rel="icon" href="/viewer/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/viewer/icon.svg">
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/layout.css">
 <link rel="stylesheet" href="css/components.css">
@@ -15,12 +20,13 @@
 <link rel="stylesheet" href="css/viewer.css">
 <link rel="stylesheet" href="css/inspector.css">
 <link rel="stylesheet" href="css/download.css">
+<link rel="stylesheet" href="css/pages.css">
 <script>
-/* 主題早期還原（避免閃白）：localStorage → prefers-color-scheme → dark */
+/* 主題早期還原（避免閃白）：pref（深/淺/跟隨系統）→ 解析後套用 */
 try {
-  var t = localStorage.getItem('ev-theme');
-  if (!t && window.matchMedia('(prefers-color-scheme: light)').matches) t = 'light';
-  if (t) document.documentElement.dataset.theme = t;
+  var p = localStorage.getItem('ev-theme-pref') || localStorage.getItem('ev-theme') || 'dark';
+  if (p === 'system') p = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  document.documentElement.dataset.theme = p === 'light' ? 'light' : 'dark';
 } catch (e) {}
 </script>
 </head>
@@ -50,7 +56,7 @@ try {
       <button class="btn btn-ghost btn-icon" id="btn-theme" aria-label="切換主題">
         <svg class="icon" aria-hidden="true"><use href="#i-theme"/></svg>
       </button>
-      <button class="btn btn-ghost btn-icon" id="btn-notifs" aria-label="通知" title="通知（B6）" style="position:relative">
+      <button class="btn btn-ghost btn-icon" id="btn-notifs" aria-label="通知" title="通知" style="position:relative">
         <svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg>
         <span class="badge err" id="notif-badge" hidden style="position:absolute;top:2px;right:2px"></span>
       </button>
@@ -74,7 +80,7 @@ try {
         <div id="sources-eagle"  role="group" aria-label="Eagle 庫群"></div>
         <div id="sources-excire" role="group" aria-label="Excire 庫群"></div>
         <div id="sources-dir"    role="group" aria-label="Folder 來源"></div>
-        <button class="side-row" id="btn-add-source" title="新增來源（dialog B2）">
+        <button class="side-row" id="btn-add-source" title="新增來源（設定 · 來源）">
           <svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"/></svg>
           <span class="row-label">新增來源</span>
         </button>
@@ -83,14 +89,30 @@ try {
       <section class="side-section" id="sec-browse" aria-labelledby="hd-browse">
         <h2 class="side-heading" id="hd-browse">
           Browse
-          <svg class="icon icon-sm" aria-hidden="true" style="margin-left:auto"><use href="#i-search"/></svg>
+          <span class="side-hd-acts">
+            <button class="btn btn-ghost btn-icon btn-sm" id="btn-tree-mode" aria-label="展開模式"></button>
+            <button class="btn btn-ghost btn-icon btn-sm" id="btn-tree-search" aria-label="樹內搜尋" title="樹內搜尋">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-search"/></svg>
+            </button>
+          </span>
         </h2>
+        <div class="tree-search-row" id="tree-search-row" hidden>
+          <input class="insp-input" id="tree-search-input" placeholder="搜尋資料夾…" aria-label="樹內搜尋">
+        </div>
         <ul class="tree" id="folder-tree" role="tree" aria-label="資料夾樹"></ul>
       </section>
 
       <section class="side-section" id="sec-collections" aria-labelledby="hd-collections">
-        <h2 class="side-heading" id="hd-collections">Collections</h2>
-        <p class="side-placeholder">智慧集合／濾鏡集（B2 實作）</p>
+        <h2 class="side-heading" id="hd-collections">
+          Collections
+          <span class="side-hd-acts">
+            <button class="btn btn-ghost btn-icon btn-sm" id="btn-save-coll"
+              aria-label="儲存目前篩選為智慧集合" title="儲存目前篩選為智慧集合">
+              <svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"/></svg>
+            </button>
+          </span>
+        </h2>
+        <div id="collections-body"></div>
       </section>
 
       <section class="side-section" id="sec-people" aria-labelledby="hd-people">
@@ -197,7 +219,7 @@ try {
     <button class="btn btn-ghost btn-icon" id="tab-browse" aria-label="瀏覽"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg></button>
     <button class="btn btn-ghost btn-icon" data-nav="#/downloads" aria-label="新增"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
     <button class="btn btn-ghost btn-icon" data-nav="#/downloads" aria-label="下載"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg></button>
-    <button class="btn btn-ghost btn-icon" data-nav="#/settings/prefs" aria-label="更多"><svg class="icon" aria-hidden="true"><use href="#i-more-v"/></svg></button>
+    <button class="btn btn-ghost btn-icon" id="tab-more" aria-label="更多"><svg class="icon" aria-hidden="true"><use href="#i-more-v"/></svg></button>
   </nav>
 </div>
 
@@ -230,6 +252,9 @@ try {
     <a class="uv-btn" id="uv-link" target="_blank" rel="noopener" title="開啟原始連結" hidden>
       <svg class="icon" aria-hidden="true"><use href="#i-external"/></svg>
     </a>
+    <button class="uv-btn" id="uv-tags" title="標籤（點擊以標籤搜尋）" hidden>
+      <svg class="icon" aria-hidden="true"><use href="#i-tag"/></svg>
+    </button>
     <button class="uv-btn" id="uv-kbd-btn" title="快捷鍵 (?)">
       <svg class="icon" aria-hidden="true"><use href="#i-keyboard"/></svg>
     </button>

@@ -12,7 +12,7 @@ const TYPE_OPTS = [['all', '全部'], ['image', '圖片'], ['video', '影片'], 
 const DATE_OPTS = [['', '任意時間'], ['today', '今天'], ['7d', '7 天內'], ['30d', '30 天內'], ['365d', '一年內']];
 const SIZE_OPTS = [['', '任意尺寸'], ['s', '小（<1MP）'], ['m', '中（1–4MP）'], ['l', '大（4–12MP）'], ['xl', '特大（>12MP）']];
 const DIM_LABEL = { type: '型別', star: '星等', tags: '標籤', date: '日期', size: '尺寸' };
-const ESC_ORDER = ['q', 'folders', 'tags', 'domains', 'size', 'date', 'star', 'type'];   // Escape 逐層
+const ESC_ORDER = ['q', 'presets', 'folders', 'tags', 'domains', 'size', 'date', 'star', 'type'];   // Escape 逐層
 const MAX_SEEDS_KEY = 'eagle-pref-max-seeds';
 
 let _folderName = id => id;      // app.js 注入（chips 顯示資料夾名）
@@ -58,6 +58,7 @@ export function syncFromRoute(route) {
   f.size    = q.get('size') || '';
   f.domains = (q.get('domain') || '').split(',').filter(Boolean);
   f.folders = (q.get('folders') || '').split(',').map(s => s.replace(/^\+/, '')).filter(Boolean);
+  f.presets = (q.get('presets') || '').split('|').filter(Boolean);
   const key = q.get('sort') || 'shuffle';
   const dir = q.get('dir') === 'asc' ? 'asc' : 'desc';
   const seed = q.get('seed') ? (parseInt(q.get('seed'), 10) >>> 0) : null;
@@ -79,6 +80,7 @@ function _serialize() {
   if (f.size)           p.set('size', f.size);
   if (f.domains.length) p.set('domain', f.domains.join(','));
   if (f.folders.length) p.set('folders', f.folders.map(x => '+' + x).join(','));
+  if (f.presets.length) p.set('presets', f.presets.join('|'));
   if (f.q)              p.set('q', f.q);
   if (s.key !== 'shuffle' || s.dir !== 'desc') { p.set('sort', s.key); p.set('dir', s.dir); }
   if (s.key === 'shuffle' && store.state.seed != null) p.set('seed', String(store.state.seed));
@@ -113,6 +115,23 @@ export function toggleFolderFilter(id) {
   });
 }
 
+/** 濾鏡集點擊 → 切換 preset 篩選（OR 疊加，C12；collections.js 呼叫） */
+export function togglePresetFilter(id) {
+  _patch(f => {
+    const i = f.presets.indexOf(id);
+    i >= 0 ? f.presets.splice(i, 1) : f.presets.push(id);
+  });
+}
+
+/** presetId → 顯示名（chips 用；刪除的 preset 仍以 id 前 6 碼顯示） */
+function _presetName(id) {
+  try {
+    const p = (JSON.parse(localStorage.getItem('eagle-filter-presets') || '[]'))
+      .find(x => x.id === id);
+    return p ? p.name : `preset ${String(id).slice(0, 6)}`;
+  } catch (_) { return String(id).slice(0, 6); }
+}
+
 /* ── Chips 渲染 ─────────────────────────────────────────────────────── */
 
 export function renderChips() {
@@ -131,16 +150,19 @@ export function renderChips() {
     : TYPE_OPTS.find(o => o[0] === f.type)?.[1] || f.type));
   chips.push(dim('star', f.star > 0, f.star > 0 ? `★${f.star}+` : '星等'));
   chips.push(dim('tags', f.tags.length > 0, f.tags.length ? `標籤 ${f.tags.length}` : '標籤'));
+  chips.push(dim('domains', f.domains.length > 0,
+    f.domains.length ? `網域 ${f.domains.length}` : '網域'));
   chips.push(dim('date', !!f.date, DATE_OPTS.find(o => o[0] === f.date)?.[1] || '日期'));
   chips.push(dim('size', !!f.size, SIZE_OPTS.find(o => o[0] === f.size)?.[1] || '尺寸'));
 
   for (const t of f.tags)     chips.push(val('tags', t, t, '🏷 '));
   for (const d of f.domains)  chips.push(val('domains', d, d, '🌐 '));
   for (const id of f.folders) chips.push(val('folders', id, _folderName(id), '📁 '));
+  for (const id of f.presets) chips.push(val('presets', id, _presetName(id), '🎛 '));
   if (f.q) chips.push(val('q', f.q, f.q, '🔍 '));
 
   const any = f.type !== 'all' || f.star > 0 || f.tags.length || f.date || f.size
-    || f.domains.length || f.folders.length || f.q;
+    || f.domains.length || f.folders.length || f.presets.length || f.q;
   if (any) chips.push(`<button class="chip" data-clear-all title="清除全部篩選">✕ 全清</button>`);
 
   box.innerHTML = chips.join('');
@@ -155,7 +177,7 @@ export function renderChips() {
 function _remove(k, v) {
   _patch(f => {
     if (k === 'q') f.q = '';
-    else if (k === 'tags' || k === 'domains' || k === 'folders')
+    else if (['tags', 'domains', 'folders', 'presets'].includes(k))
       f[k] = f[k].filter(x => x !== v);
   });
 }
@@ -164,7 +186,7 @@ function _escapePop() {
   const f = store.state.filters;
   for (const k of ESC_ORDER) {
     if (k === 'q' && f.q) return _patch(x => { x.q = ''; });
-    if (['folders', 'tags', 'domains'].includes(k) && f[k].length)
+    if (['presets', 'folders', 'tags', 'domains'].includes(k) && f[k].length)
       return _patch(x => { x[k] = x[k].slice(0, -1); });
     if (k === 'size' && f.size) return _patch(x => { x.size = ''; });
     if (k === 'date' && f.date) return _patch(x => { x.date = ''; });
@@ -209,29 +231,38 @@ function _dimMenu(anchor, dim) {
     html = DATE_OPTS.map(([v, l]) => _mi(v, l, f.date === v)).join('');
   } else if (dim === 'size') {
     html = SIZE_OPTS.map(([v, l]) => _mi(v, l, f.size === v)).join('');
-  } else if (dim === 'tags') {
+  } else if (dim === 'tags' || dim === 'domains') {
+    /* 多選清單（標籤 AND / 網域 OR，C09）：搜尋 + 計數 + toggle 不關選單 */
+    const field = dim, isTags = dim === 'tags';
     const cnt = new Map();
-    for (const i of all) for (const t of (i.tags || []))
-      if (t !== 'archived') cnt.set(t, (cnt.get(t) || 0) + 1);
-    const tags = [...cnt.entries()].sort((a, b) => b[1] - a[1]);
-    html = `<input class="menu-search" placeholder="搜尋標籤…">` +
-      `<div class="menu-list">` + tags.slice(0, 40).map(([t, c]) =>
-        _mi(t, t, f.tags.includes(t), `<span class="menu-count">${c}</span>`)).join('') + `</div>`;
+    for (const i of all) {
+      if (isTags) {
+        for (const t of (i.tags || [])) if (t !== 'archived') cnt.set(t, (cnt.get(t) || 0) + 1);
+      } else if (i.domain && i.domain !== 'local') {
+        cnt.set(i.domain, (cnt.get(i.domain) || 0) + 1);
+      }
+    }
+    const entries = [...cnt.entries()].sort((a, b) => b[1] - a[1]);
+    const row = ([t, c]) => _mi(t, t, f[field].includes(t), `<span class="menu-count">${c}</span>`);
+    html = `<input class="menu-search" placeholder="${isTags ? '搜尋標籤…' : '搜尋網域…'}">` +
+      `<div class="menu-list">${entries.slice(0, 40).map(row).join('')
+        || `<div class="side-placeholder">此庫沒有${isTags ? '標籤' : '網域'}</div>`}</div>`;
     const m = _openMenu(anchor, html);
     const listEl = m.querySelector('.menu-list');
-    m.querySelector('.menu-search').addEventListener('input', e => {
-      const kw = e.target.value.toLowerCase();
-      listEl.innerHTML = tags.filter(([t]) => t.toLowerCase().includes(kw)).slice(0, 40)
-        .map(([t, c]) => _mi(t, t, f.tags.includes(t), `<span class="menu-count">${c}</span>`)).join('');
-    });
+    const renderList = () => {
+      const kw = m.querySelector('.menu-search').value.toLowerCase();
+      listEl.innerHTML = entries.filter(([t]) => t.toLowerCase().includes(kw))
+        .slice(0, 40).map(row).join('');
+    };
+    m.querySelector('.menu-search').addEventListener('input', renderList);
     m.addEventListener('click', e => {
       const it = e.target.closest('.menu-item');
       if (!it) return;
-      closeMenu();
       _patch(x => {
-        const i = x.tags.indexOf(it.dataset.v);
-        i >= 0 ? x.tags.splice(i, 1) : x.tags.push(it.dataset.v);
+        const i = x[field].indexOf(it.dataset.v);
+        i >= 0 ? x[field].splice(i, 1) : x[field].push(it.dataset.v);
       });
+      it.classList.toggle('on');                    // 多選：選單保持開啟
     });
     return;
   }

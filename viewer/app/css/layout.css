@@ -314,4 +314,10 @@ body {
   .pgrid { grid-template-columns: repeat(2, 1fr); }
   .toolbar-row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .topbar .searchbox .kbd-hint { display: none; }
+
+  /* 手機頂列精簡（spec §6.3 ①：☰ 搜尋 🔔 + Inspector）；
+     密度/主題/設定移往設定頁與「⋯ 更多」 */
+  .topbar { gap: var(--sp-2); padding: 0 var(--sp-2); }
+  .topbar .logo span { display: none; }
+  #btn-density, #btn-theme, #btn-settings { display: none; }
 }

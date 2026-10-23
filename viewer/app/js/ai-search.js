@@ -12,7 +12,7 @@ import { store } from './store.js';
 import { parseLibId, parseRoute } from './router.js';
 import { adaptItem } from './items.js';
 import { setItems, showMessage } from './grid.js';
-import { renderBreadcrumb, setContentChrome } from './page-chrome.js';
+import { renderBreadcrumb, setContentChrome, hidePagePanel } from './page-chrome.js';
 import { openAiStatusPanel } from './ai-status.js';
 
 /* ── 能力快取（⌘K provider available() 為同步 → 先 ensure 再讀）─────── */
@@ -34,11 +34,12 @@ export async function ensureAiStatus(force = false) {
 /** 同步能力旗標（status 未載入時全 false） */
 export function aiCaps() {
   const libs = Object.values(_st?.libs || {});
+  const anyClip = libs.some(l => (l.clip?.indexed || 0) > 0);
   return {
     loaded: !!_st,
-    nl:   !!(_st?.onnxruntime && _st?.clip_model_ready &&
-             libs.some(l => (l.clip?.indexed || 0) > 0)),
+    nl:   !!(_st?.onnxruntime && _st?.clip_model_ready && anyClip),
     face: !!(_st?.onnxruntime && libs.some(l => (l.faces?.faces || 0) > 0)),
+    similar: anyClip,       // B6：以圖找圖直接用既有向量（免 onnx 文字塔）
   };
 }
 
@@ -104,6 +105,7 @@ export async function adaptHits(hits) {
 export function renderVirtualView(vms, { crumbs, note = '' } = {}) {
   if (crumbs) renderBreadcrumb(crumbs);
   setContentChrome(false);
+  hidePagePanel();
   document.getElementById('ibar').hidden = false;   // 顯示 n 筆計數
   document.getElementById('ibar-seed').innerHTML = '';   // 清掉庫視圖殘留 seed 導覽
   if (store.state.selection.size) {                 // 舊選取不屬於虛擬視圖
@@ -122,7 +124,7 @@ let _retryTimer = 0;
 
 export function resetSearchView() { _sig = null; clearTimeout(_retryTimer); }
 
-const MODE_LABEL = { nl: '語意搜尋', face: '以臉搜尋' };
+const MODE_LABEL = { nl: '語意搜尋', face: '以臉搜尋', similar: '相似圖' };
 
 export async function renderSearchRoute(route) {
   const q     = route.query.get('q') || '';
@@ -136,18 +138,23 @@ export async function renderSearchRoute(route) {
 
   const lib = scope !== 'all' ? parseLibId(scope) : null;
   const scopeLabel = lib ? `庫：${lib.slug}` : '全部庫';
-  const title = mode === 'face' ? '以臉搜尋' : `「${q}」`;
+  const title = mode === 'face' ? '以臉搜尋' : mode === 'similar' ? '相似圖' : `「${q}」`;
   const crumbs = [{ label: '搜尋結果' },
                   { label: `${title} · ${MODE_LABEL[mode] || mode} · ${scopeLabel}` }];
   renderBreadcrumb(crumbs);
   setContentChrome(false);
-  showMessage('sparkle', 'AI 搜尋中…', mode === 'nl' ? `正在以語意比對「${q}」` : '正在比對人臉向量');
+  showMessage('sparkle', 'AI 搜尋中…',
+    mode === 'nl' ? `正在以語意比對「${q}」`
+      : mode === 'similar' ? '正在以 CLIP 向量比對相似圖' : '正在比對人臉向量');
 
   let r;
   try {
     if (mode === 'face') {
       if (!lib || !src) { _fail('查詢不完整', '以臉搜尋需要來源項目（於 grid 選取後從 ⌘K 啟動）'); return; }
       r = await api.aiFacesSearch(lib.slug, src, { topk: 60 });
+    } else if (mode === 'similar') {
+      if (!lib || !src) { _fail('查詢不完整', '相似圖搜尋需要來源項目（於 grid 選取後從 ⌘K 啟動）'); return; }
+      r = await api.aiSimilar(lib.slug, src, { topk: 60, all: route.query.get('all') === '1' });
     } else {
       if (!q) { _fail('缺少查詢字串', '請由 ⌘K 輸入自然語言描述'); return; }
       r = await api.aiSearch(q, { lib: lib?.slug, topk: 60 });

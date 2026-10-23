@@ -12,6 +12,7 @@ import hashlib
 import re
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from urllib.parse import quote, unquote
 
@@ -108,11 +109,10 @@ class ExcireLibrary:
         self.backend_db = self.root / "backend.db"
         self.thumb_dir = self.root / "thumbnails.exfoto"
         self.preview_dir = self.root / "previews.exfoto"
-        self._lock = threading.Lock()                 # 同一連線跨執行緒序列化
-        self._local_con = None
-        self._backend_con = None
+        self._lock = threading.Lock()                 # per-query 連線序列化（避免 DrvFS race）
         self._folder_cache = None                     # collectionId → folder dict
         self._aesthetics_cache = None                 # photo_id → score
+        self._busy_until = 0.0                        # Excire Foto 獨佔鎖定中 → 此刻前跳過查詢
 
     # ── availability ────────────────────────────────────────────────────────
     @property
@@ -123,41 +123,66 @@ class ExcireLibrary:
     def ai_available(self) -> bool:
         return self.backend_db.exists()
 
-    # ── read-only connections（快取 + 優雅降級）─────────────────────────────
+    # ── read-only connections（查完即關，不快取 handle）────────────────────
+    # 不可長期持有連線：Windows 端 Excire Foto 需要對這些 .db 檔取得鎖，
+    # 快取連線會讓檔案 handle 隨伺服器存活而永不釋放，導致 Excire 端無法開啟。
     @staticmethod
     def _connect_ro(db_path: Path):
+        # timeout=0.5：Excire Foto 對開啟中的庫持獨佔鎖，等待無意義，
+        # 快速失敗讓 status/瀏覽請求不被鎖住的庫拖垮（預設 5s × 重試會疊到數十秒）
         con = sqlite3.connect(
-            f"file:{quote(str(db_path))}?mode=ro", uri=True, check_same_thread=False)
+            f"file:{quote(str(db_path))}?mode=ro", uri=True,
+            check_same_thread=False, timeout=0.5)
         con.row_factory = sqlite3.Row
         return con
 
-    def _local(self):
-        if self._local_con is None and self.available:
-            self._local_con = self._connect_ro(self.local_db)
-        return self._local_con
+    def _mark_busy_if_locked(self, e) -> None:
+        # 僅對「鎖定中」做 30s 負快取；DrvFS 偶發 I/O error 不列入，保留原重試語意
+        if "locked" in str(e).lower() or "busy" in str(e).lower():
+            self._busy_until = time.monotonic() + 30
 
-    def _backend(self):
-        if self._backend_con is None and self.ai_available:
-            self._backend_con = self._connect_ro(self.backend_db)
-        return self._backend_con
-
-    def _q_local(self, sql, params=()):
+    def _query(self, db_path: Path, gate: bool, label: str, sql, params=()):
+        # DrvFS（/mnt/c）上 SQLite 偶發 disk I/O error（尤其 Windows 側 Excire
+        # 同時開啟時）→ 重連重試一次，仍失敗回空結果，不讓例外炸掉 request
+        if not gate:
+            return []
+        if time.monotonic() < self._busy_until:
+            return []
         with self._lock:
-            con = self._local()
-            if con is None:
-                return []
-            return con.execute(sql, params).fetchall()
-
-    def _q_backend(self, sql, params=()):
-        """backend.db 查詢；DB 缺失或查詢失敗（TSJH 分析未完）→ 空結果容忍。"""
-        with self._lock:
-            con = self._backend()
-            if con is None:
+            try:
+                con = self._connect_ro(db_path)
+            except sqlite3.Error as e:
+                self._mark_busy_if_locked(e)
+                print(f"[excire] {self.name} {label} connect failed: {e}")
                 return []
             try:
-                return con.execute(sql, params).fetchall()
-            except sqlite3.Error:
-                return []
+                try:
+                    return con.execute(sql, params).fetchall()
+                except sqlite3.OperationalError:
+                    con.close()
+                    try:
+                        con = self._connect_ro(db_path)
+                    except sqlite3.Error as e:
+                        self._mark_busy_if_locked(e)
+                        print(f"[excire] {self.name} {label} reconnect failed: {e}")
+                        return []
+                    try:
+                        return con.execute(sql, params).fetchall()
+                    except sqlite3.Error as e:
+                        self._mark_busy_if_locked(e)
+                        print(f"[excire] {self.name} {label} query failed after retry: {e}")
+                        return []
+                except sqlite3.Error:
+                    return []
+            finally:
+                con.close()
+
+    def _q_local(self, sql, params=()):
+        return self._query(self.local_db, self.available, "local", sql, params)
+
+    def _q_backend(self, sql, params=()):
+        """backend.db 查詢；DB 缺失或查詢失敗（TSJH 分析未完/DrvFS I/O）→ 空結果容忍。"""
+        return self._query(self.backend_db, self.ai_available, "backend", sql, params)
 
     # ── folders ──────────────────────────────────────────────────────────────
     def _folder_map(self) -> dict:

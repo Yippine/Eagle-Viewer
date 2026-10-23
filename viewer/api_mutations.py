@@ -276,11 +276,14 @@ def handle_post_import_upload(h):
     if not parts:
         h._err(400, "multipart 解析失敗，請確認上傳格式"); return
     file_bytes, file_name = parts.get("file", (b"", None))
-    lib  = parts.get("lib",  (b"",))[0].decode("utf-8", errors="replace").strip()
-    name = parts.get("name", (b"",))[0].decode("utf-8", errors="replace").strip()
+    lib    = parts.get("lib",    (b"",))[0].decode("utf-8", errors="replace").strip()
+    name   = parts.get("name",   (b"",))[0].decode("utf-8", errors="replace").strip()
+    folder = parts.get("folder", (b"",))[0].decode("utf-8", errors="replace").strip()
     if not file_bytes or not file_name or not lib:
         h._err(400, "Missing required fields: file, lib"); return
-    r = _create_eagle_item_from_file(lib, "", file_name, file_bytes, custom_name=name)
+    if folder and folder not in _build_folder_map(lib):
+        h._err(400, f"Unknown folder_id: {folder}"); return
+    r = _create_eagle_item_from_file(lib, folder, file_name, file_bytes, custom_name=name)
     if not r["ok"]:
         h._err(500, r.get("error", "Upload failed")); return
     _sse_broadcast(lib, {"type": "item_created", "id": r["id"], "lib": lib})
@@ -290,12 +293,15 @@ def handle_post_import_upload(h):
 def handle_post_import_url(h):
     b = h._read_json()
     if b is None: return
-    url  = str(b.get("url",  "")).strip()
-    lib  = str(b.get("lib",  "")).strip()
-    name = str(b.get("name", "")).strip()
+    url       = str(b.get("url",       "")).strip()
+    lib       = str(b.get("lib",       "")).strip()
+    name      = str(b.get("name",      "")).strip()
+    folder_id = str(b.get("folder_id", "")).strip()
     if not url or not lib:
         h._err(400, "Missing field: url or lib"); return
-    task_id = start_import_url(url, lib, name=name)
+    if folder_id and folder_id not in _build_folder_map(lib):
+        h._err(400, f"Unknown folder_id: {folder_id}"); return
+    task_id = start_import_url(url, lib, folder_id=folder_id, name=name)
     h._json(200, {"ok": True, "task_id": task_id})
 
 

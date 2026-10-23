@@ -19,6 +19,7 @@ const _icon = n => `<svg class="icon icon-sm" aria-hidden="true"><use href="#i-$
 const TYPE_LABEL = { image: '圖片', video: '影片', gif: '動圖', bookmark: '書籤', other: '其他' };
 
 const _facesCache = new Map();   // itemId → faces[]
+const _metaCache = new Map();    // itemId → { tags, exif }（E04/E07）
 
 /* ── 初始化 ─────────────────────────────────────────────────────────── */
 
@@ -176,7 +177,10 @@ function _renderSingle(body, it) {
   </div>`;
 
   _wireSingle(body, it, ro);
-  if (it.source === 'excire' && it.photoId != null) _loadFaces(body, it);
+  if (it.source === 'excire' && it.photoId != null) {
+    _loadFaces(body, it);
+    _loadExcireMeta(body, it);
+  }
 }
 
 /** Excire 專屬唯讀區塊（E04/E06/E07） */
@@ -188,8 +192,74 @@ function _excireBlock(it) {
       <span class="insp-k">Excire 星等</span><span class="insp-v">${it.star ? '★'.repeat(Math.min(it.star, 5)) : '—'}</span>
       <span class="insp-k">人臉</span><span class="insp-v" data-face-count>偵測中…</span>
     </div>
+    <div data-ai-conf hidden>
+      <div class="insp-label">AI 標籤信心度</div>
+      <div class="insp-conf" data-ai-conf-list></div>
+    </div>
+    <div data-exif hidden>
+      <div class="insp-label">EXIF</div>
+      <div class="insp-info" data-exif-table></div>
+    </div>
     <div class="insp-label">相簿路徑</div>
     <div class="insp-folders">${(it.folders || []).map(f => `<span class="chip">${_icon('folder')}${h(f)}</span>`).join('') || '<span class="insp-note">—</span>'}</div>`;
+}
+
+/* ── Excire meta：per-tag confidence 條 + EXIF 表（E04/E07）──────────── */
+
+function _fmtExif(k, v) {
+  switch (k) {
+    case 'ExposureTime': {
+      const n = parseFloat(v);
+      if (!isFinite(n) || n <= 0) return String(v);
+      return n < 1 ? `1/${Math.round(1 / n)}s` : `${n}s`;
+    }
+    case 'FNumber':          return `f/${v}`;
+    case 'FocalLengthMM':    return `${v}mm`;
+    case 'FocalLength35MM':  return `${v}mm（等效）`;
+    case 'CreationDate':     return String(v).replace('T', ' ');
+    default:                 return String(v);
+  }
+}
+
+const _EXIF_LABEL = {
+  Camera: '相機', Lens: '鏡頭', ExposureTime: '快門', FNumber: '光圈',
+  Iso: 'ISO', FocalLengthMM: '焦距', FocalLength35MM: '35mm 焦距',
+  FlashFired: '閃光燈', CreationDate: '拍攝時間',
+  Latitude: '緯度', Longitude: '經度', Altitude: '海拔',
+};
+
+async function _loadExcireMeta(body, it) {
+  const lib = parseLibId(store.state.libId || '');
+  if (!lib) return;
+  let meta = _metaCache.get(it.id);
+  if (!meta) {
+    try {
+      meta = await api.excirePhotoMeta(lib.slug, it.photoId);
+      _metaCache.set(it.id, meta);
+    } catch (_) { meta = { tags: [], exif: {} }; }
+  }
+  if (body.querySelector('.insp-item')?.dataset.id !== it.id) return;   // 選取已變
+
+  const confBox = body.querySelector('[data-ai-conf]');
+  if (confBox && (meta.tags || []).length) {
+    confBox.hidden = false;
+    confBox.querySelector('[data-ai-conf-list]').innerHTML = meta.tags.map(t => `
+      <button class="conf-row" data-conf-tag="${h(t.keyword)}" title="以「${h(t.keyword)}」搜尋">
+        <span class="conf-name">${h(t.keyword)}</span>
+        <span class="insp-meter"><span style="width:${Math.round(t.confidence * 100)}%"></span></span>
+        <span class="conf-val">${Math.round(t.confidence * 100)}%</span>
+      </button>`).join('');
+    confBox.querySelectorAll('[data-conf-tag]').forEach(el => el.addEventListener('click', () =>
+      setQuery(serializeTerms([{ field: 'tag', value: el.dataset.confTag, exclude: false }]))));
+  }
+
+  const exifBox = body.querySelector('[data-exif]');
+  const entries = Object.entries(meta.exif || {}).filter(([k]) => _EXIF_LABEL[k]);
+  if (exifBox && entries.length) {
+    exifBox.hidden = false;
+    exifBox.querySelector('[data-exif-table]').innerHTML = entries.map(([k, v]) =>
+      `<span class="insp-k">${_EXIF_LABEL[k]}</span><span class="insp-v">${h(_fmtExif(k, v))}</span>`).join('');
+  }
 }
 
 function _wireSingle(body, it, ro) {

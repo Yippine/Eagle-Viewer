@@ -7,6 +7,7 @@
 import json
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, unquote
 
@@ -144,6 +145,37 @@ def handle_browse(h):
     h._json(200, {"ok": True, "path": chosen} if chosen else {"ok": False, "path": ""})
 
 
+def handle_browse_dir(h):
+    """GET /api/browse-dir?path= — 伺服器端目錄清單（web 新增來源用，取代 tkinter）。
+    path 空 = 根層（WSL /mnt/* 磁碟或 /）。回 {ok, path, parent, dirs:[{name,path}]}。"""
+    from pathlib import Path as _P
+    from config import _win_to_posix
+    qs = h.path.split("?", 1)[1] if "?" in h.path else ""
+    raw = unquote(parse_qs(qs).get("path", [""])[0]).strip()
+    try:
+        if not raw:
+            mnt = _P("/mnt")
+            roots = ([d for d in sorted(mnt.iterdir()) if d.is_dir() and len(d.name) == 1]
+                     if mnt.exists() else [])
+            base = roots if roots else [_P("/")]
+            h._json(200, {"ok": True, "path": "", "parent": None,
+                          "dirs": [{"name": str(d), "path": str(d)} for d in base]})
+            return
+        p = _P(_win_to_posix(raw))
+        if not p.is_dir():
+            h._json(400, {"ok": False, "error": f"不是目錄：{raw}"}); return
+        dirs = sorted((d for d in p.iterdir()
+                       if d.is_dir() and not d.name.startswith((".", "$"))),
+                      key=lambda d: d.name.lower())[:200]
+        parent = str(p.parent) if p != p.parent else None
+        h._json(200, {"ok": True, "path": str(p), "parent": parent,
+                      "dirs": [{"name": d.name, "path": str(d)} for d in dirs]})
+    except PermissionError:
+        h._json(403, {"ok": False, "error": "沒有權限讀取此目錄"})
+    except Exception as e:
+        h._json(500, {"ok": False, "error": str(e)})
+
+
 def handle_config(h):
     h._json(200, {"configured": bool(LIBRARY_PATHS),
                   "libraries": [str(p) for p in LIBRARY_PATHS.values()]})
@@ -249,19 +281,28 @@ def handle_services_health(h):
     except ImportError:
         h._json(200, {"ok": False, "error": "requests not installed"}); return
 
+    from concurrent.futures import ThreadPoolExecutor
+
     from api_import import _COBALT_API, _EVIL_OCTAL_API, _XHS_API
     checks = {
         "cobalt":    ("GET",  f"{_COBALT_API}/"),
         "evil0ctal": ("GET",  f"{_EVIL_OCTAL_API}/docs"),
         "xhs":       ("GET",  f"{_XHS_API}/docs"),
     }
-    results = {}
-    for svc, (method, url) in checks.items():
+
+    def _check(svc, method, url):
         try:
             r = _req.request(method, url, timeout=2)
-            results[svc] = {"ok": True, "status": r.status_code}
+            return svc, {"ok": True, "status": r.status_code}
         except Exception as e:
-            results[svc] = {"ok": False, "error": str(e)[:120]}
+            return svc, {"ok": False, "error": str(e)[:120]}
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=len(checks)) as pool:
+        futures = [pool.submit(_check, svc, method, url) for svc, (method, url) in checks.items()]
+        for fut in futures:
+            svc, res = fut.result()
+            results[svc] = res
     h._json(200, {"ok": True, "services": results})
 
 
@@ -271,6 +312,20 @@ def handle_services_health(h):
 
 def handle_excire_api(h, up: str):
     """GET /api/excire/... — Excire 唯讀 API（庫清單/照片/資料夾/相簿/標籤/人臉）"""
+    try:
+        _handle_excire_api(h, up)
+    except Exception as e:
+        # DrvFS/SQLite 偶發 I/O 例外不可炸掉連線（瀏覽器端會變 ERR_EMPTY_RESPONSE）
+        print(f"[excire-api] {up} failed: {e}")
+        m = re.match(r"^/api/excire/([^/]+)/", up)
+        lib = get_excire_library(m.group(1)) if m else None
+        if lib is not None and time.monotonic() < lib._busy_until:
+            h._err(503, "庫正被 Excire Foto 使用中，請稍後再試或關閉 Excire Foto")
+        else:
+            h._err(503, "Excire 查詢暫時失敗，請重試")
+
+
+def _handle_excire_api(h, up: str):
     if up == "/api/excire/libraries":
         h._json(200, list_excire_libraries()); return
 
@@ -306,6 +361,17 @@ def handle_excire_api(h, up: str):
         if action == "keywords":
             h._json(200, {"ok": True, "keywords": lib.keywords(),
                           "ai_available": lib.ai_available}); return
+
+    m = re.match(r"^/api/excire/([^/]+)/photo/(\d+)/meta$", up)
+    if m:
+        lib = get_excire_library(m.group(1))
+        if lib is None:
+            h._err(404, f"Excire 資源庫未設定：{m.group(1)}"); return
+        if not lib.available:
+            h._err(503, f"Excire 資源庫無法使用（DB 不存在）：{m.group(1)}"); return
+        from excire_meta import photo_meta            # B7：E04/E07（獨立模組）
+        pid = int(m.group(2))
+        h._json(200, {"ok": True, "photo_id": pid, **photo_meta(lib, pid)}); return
 
     m = re.match(r"^/api/excire/([^/]+)/faces/(\d+)$", up)
     if m:

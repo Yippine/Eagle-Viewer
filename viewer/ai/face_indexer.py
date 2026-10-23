@@ -86,13 +86,29 @@ def list_face_items(lib: str) -> list:
 # 索引持久化
 # ---------------------------------------------------------------------------
 
+_vec_cache: dict = {}   # str(vec_f) → (mtime_ns, size, vecs)；重建後 mtime 變更即失效
+
+
+def _load_npy_cached(vec_f: Path):
+    # 非 mmap：np.load 讀完即關檔，Windows 上 os.replace 不會 [WinError 5]；
+    # 快取避免熱路徑（status 輪詢/每次查詢）全量重讀。race 最壞情況為重複載入一次，無害。
+    st = vec_f.stat()
+    hit = _vec_cache.get(str(vec_f))
+    if hit and hit[0] == st.st_mtime_ns and hit[1] == st.st_size:
+        return hit[2]
+    vecs = np.load(vec_f)
+    vecs.flags.writeable = False        # 共享快取，禁止呼叫端原地改寫
+    _vec_cache[str(vec_f)] = (st.st_mtime_ns, st.st_size, vecs)
+    return vecs
+
+
 def load_face_index(lib: str):
     """→ (vectors float32 (M,512), meta list[dict])；無索引 → (None, [])。"""
     d = ai_index_dir(lib)
     vec_f, meta_f = d / "faces.npy", d / "faces_meta.json"
     if not vec_f.exists() or not meta_f.exists():
         return None, []
-    vecs = np.load(vec_f, mmap_mode="r")
+    vecs = _load_npy_cached(vec_f)
     meta = json.loads(meta_f.read_text(encoding="utf-8"))
     if vecs.shape[0] != len(meta):       # 寫入中斷 → 取交集長度保守處理
         n = min(vecs.shape[0], len(meta))

@@ -12,13 +12,14 @@
 import { store } from './store.js';
 import { mediaURL } from './api.js';
 import { navigate, parseRoute, parseLibId } from './router.js';
-import { h } from './items.js';
+import { h, serializeTerms } from './items.js';
 import { vcInitVid, vcInitMedia, vcSetMediaType, vcAbTimeUpdate,
          vcRegisterAutoplayNext, vcRegisterImageZoom, vcRegisterImageNav,
          vcApplyTransform, vcSyncGlCanvas, vcSyncPanel, vcCancelCrop }
   from '../../viewer/js/video-controls.js';
 import { openDrawer, closeDrawer, toggleDrawer, isDrawerOpen,
          syncDrawerFromQuery, setDrawerInfo } from './vc-drawer.js';
+import { initViewerTouch } from './viewer-touch.js';
 
 const V = {
   open: false, pushed: false, items: [], idx: -1,
@@ -97,6 +98,7 @@ function _requestClose() {
 function _teardown() {
   _commitTrack();
   vcCancelCrop();
+  _closeTagsPop();
   if (V.media?.tagName === 'VIDEO') { V.media.pause(); V.media.src = ''; }
   $('uv-zoom').innerHTML = '';
   V.media = null; V.open = false; V.pushed = false;
@@ -152,6 +154,8 @@ function _load() {
   const linkBtn = $('uv-link');
   linkBtn.hidden = !it.url;
   if (it.url) linkBtn.href = it.url;
+  _closeTagsPop();
+  $('uv-tags').hidden = !(it.tags || []).some(t => t !== 'archived');   // C31/C34 標籤搜尋鈕
   setDrawerInfo(it, { libLabel: _resolvers.libLabel(), folderNames: folders });
 
   V.kind = it.mediaType === 'video' ? 'video' : 'image';
@@ -164,6 +168,7 @@ function _load() {
 function _buildVideo(it, zoom) {
   const vid = document.createElement('video');
   vid.playsInline = true; vid.autoplay = true; vid.preload = 'auto';
+  vid.fetchPriority = 'high';
   vid.src = mediaURL(it.file);
   if (it.thumb) vid.poster = mediaURL(it.thumb);
   zoom.appendChild(vid);
@@ -185,6 +190,7 @@ function _buildImage(it, zoom) {
   vcSyncPanel();
   const img = document.createElement('img');
   img.alt = '';
+  img.fetchPriority = 'high';
   img.src = mediaURL(it.source === 'excire' ? (it.preview || it.file) : (it.file || it.thumb));
   img.addEventListener('mousedown', _izDown);
   img.addEventListener('dblclick', e => { e.stopPropagation(); V.iz = { ...V.iz, s: 1, px: 0, py: 0 }; _izApply(); });
@@ -256,6 +262,16 @@ vcRegisterAutoplayNext(() => { if (V.open) _nav(1); });
 
 /* ── 影片 Ctrl+滾輪縮放（游標焦點 1–4×，zoomWrapper transform）───────── */
 
+/** 影片縮放（絕對倍率，捏合手勢用；置中縮放） */
+function _vzSet(s) {
+  const zoom = $('uv-zoom');
+  V.vz.s = Math.max(1, Math.min(4, s));
+  if (V.vz.s <= 1.005) V.vz = { s: 1, tx: 0, ty: 0 };
+  zoom.style.transform = V.vz.s === 1 ? '' :
+    `translate(${V.vz.tx.toFixed(1)}px,${V.vz.ty.toFixed(1)}px) scale(${V.vz.s.toFixed(3)})`;
+  _zoomInd(V.vz.s);
+}
+
 function _vzWheel(e) {
   const zoom = $('uv-zoom');
   const old = V.vz.s;
@@ -311,6 +327,33 @@ function _commitTrack() {
     }).catch(() => {});
   }
   V.sessionDur = 0; V.playStart = null;
+}
+
+/* ── 標籤搜尋（C31/C34：頂列 🏷 → chips popover → 以標籤搜尋並關閉）──── */
+
+function _closeTagsPop() { document.getElementById('uv-tags-pop')?.remove(); }
+
+function _toggleTagsPop() {
+  if (document.getElementById('uv-tags-pop')) { _closeTagsPop(); return; }
+  const it = V.items[V.idx];
+  const tags = (it?.tags || []).filter(t => t !== 'archived');
+  if (!tags.length) return;
+  const pop = document.createElement('div');
+  pop.id = 'uv-tags-pop';
+  pop.className = 'uv-tags-pop';
+  pop.innerHTML = `<p class="uv-tags-hint">點標籤 = 關閉並以該標籤搜尋</p>` +
+    tags.map(t => `<button class="chip" data-t="${h(t)}">🏷 ${h(t)}</button>`).join('');
+  $('uviewer').appendChild(pop);
+  pop.addEventListener('click', e => {
+    const b = e.target.closest('[data-t]');
+    if (!b) return;
+    _closeTagsPop();
+    const libId = store.state.libId;
+    if (!libId) return;
+    const q = serializeTerms([{ field: 'tag', value: b.dataset.t, exclude: false }]);
+    // 導覽至庫根 + q（新 hash 無 ?item= → render 宣告式關閉 viewer）
+    navigate(`#/lib/${encodeURIComponent(libId)}?q=${encodeURIComponent(q)}`);
+  });
 }
 
 /* ── UI 提示 ─────────────────────────────────────────────────────────── */
@@ -389,6 +432,7 @@ export function initViewer(resolvers = {}) {
   $('uv-mute').addEventListener('click', _toggleMute);
   $('uv-fs').addEventListener('click', _toggleFs);
   $('uv-orig').addEventListener('click', _toggleOriginal);
+  $('uv-tags').addEventListener('click', _toggleTagsPop);
   $('uv-kbd-btn').addEventListener('click', () => { $('uv-kbd').hidden = !$('uv-kbd').hidden; });
   $('uv-kbd').addEventListener('click', () => { $('uv-kbd').hidden = true; });
   $('uv-btn-info').addEventListener('click', () => toggleDrawer('info'));
@@ -429,19 +473,18 @@ export function initViewer(resolvers = {}) {
     if (V.kind === 'video' && e.target === V.media) { clearTimeout(V.dblTimer); _toggleFs(); }
   });
 
-  /* 觸控 swipe（結構預留：縱滑切換；橫滑 = 影片 ±30s seek） */
-  stage.addEventListener('touchstart', e => {
-    if (e.touches.length === 1) V.touch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  }, { passive: true });
-  stage.addEventListener('touchend', e => {
-    if (!V.touch) return;
-    const dx = e.changedTouches[0].clientX - V.touch.x;
-    const dy = e.changedTouches[0].clientY - V.touch.y;
-    V.touch = null;
-    if (Math.abs(dy) > 70 && Math.abs(dy) > Math.abs(dx) * 1.5) _nav(dy < 0 ? 1 : -1);
-    else if (V.kind === 'video' && Math.abs(dx) > 70) _seekBy(dx > 0 ? 30 : -30);
-  }, { passive: true });
-  stage.addEventListener('touchcancel', () => { V.touch = null; }, { passive: true });
+  /* 行動輸入層（C33：縱滑/橫拖 seek/邊緣返回/捏合/清屏/雙擊播暫） */
+  initViewerTouch(stage, {
+    isOpen: () => V.open,
+    kind: () => V.kind,
+    nav: _nav,
+    seekBy: _seekBy,
+    requestClose: _requestClose,
+    togglePlay: _togglePlay,
+    toggleUi: () => { $('uviewer').classList.toggle('ui-hidden'); clearTimeout(V.uiTimer); },
+    getZoom: () => (V.kind === 'video' ? V.vz.s : V.iz.s),
+    zoomTo: s => { V.kind === 'video' ? _vzSet(s) : _izZoom(0, s); },
+  });
 
   document.addEventListener('mousemove', e => {
     if (V.open) { _izMove(e); _resetUITimer(); }

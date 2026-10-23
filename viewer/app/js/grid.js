@@ -54,7 +54,7 @@ export function setItems(list, opts = {}) {
   _render();
   _updateIbar();
   if (!items.length && !hasMore) {
-    showMessage('image', '沒有項目', '調整篩選條件或切換資料夾');
+    _showEmpty();
   } else {
     _clearMessage();
   }
@@ -71,7 +71,7 @@ export function appendItems(list, opts = {}) {
   _layout(from);
   _render();
   _updateIbar();
-  if (!items.length && !hasMore) showMessage('image', '沒有項目', '調整篩選條件或切換資料夾');
+  if (!items.length && !hasMore) _showEmpty();
 }
 
 export function setLoading(v) {
@@ -81,6 +81,16 @@ export function setLoading(v) {
 
 export function getPositions() { return pos; }
 export function getWrap() { return wrap; }
+
+/* 空狀態客製（app.js 註冊：篩選無結果時提供「改用 AI 語意搜尋」CTA） */
+let _emptyProvider = null;
+export function setEmptyStateProvider(fn) { _emptyProvider = fn; }
+
+function _showEmpty() {
+  const es = _emptyProvider?.();
+  if (es) showMessage(es.icon || 'image', es.title || '沒有項目', es.note || '', es.actionHTML || '');
+  else showMessage('image', '沒有項目', '調整篩選條件或切換資料夾');
+}
 
 /** 空狀態 / 錯誤 / 佔位頁訊息（佔用 grid 區域） */
 export function showMessage(iconName, title, note = '', actionHTML = '') {
@@ -214,7 +224,7 @@ function _cardEl(it, idx) {
   el.style.cssText = `transform:translate(${p.x}px,${p.y}px);width:${p.w}px`;
   el.innerHTML = `
     <div class="card-thumb" style="height:${p.th}px">
-      ${thumb ? `<img src="${h(thumb)}" alt="" decoding="async" onerror="this.hidden=true">`
+      ${thumb ? `<img src="${h(thumb)}" alt="" decoding="async" loading="lazy" fetchpriority="low" onerror="this.hidden=true">`
               : `<div class="no-thumb">${_icon(it.mediaType === 'bookmark' ? 'bookmark' : 'image')}</div>`}
       ${kindBadge}${durBadge}${starBadge}${scoreBadge}${ovBar}
       <span class="sel-box" data-selbox title="選取">${_icon('check')}</span>

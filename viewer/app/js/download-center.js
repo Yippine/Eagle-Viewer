@@ -6,8 +6,8 @@
      「檢視」一鍵跳轉 grid 定位（lib-invalidate 重載 + ?item= 開啟 viewer）
    - 檔案上傳：面板按鈕/拖放 + 全域拖放（任何頁拖入檔案 → 導向本頁上傳）
    - 服務健康：/api/services/health 燈號
-   註：後端 /api/import/url、/api/import/upload 目前忽略 folder_id（缺口，
-   見報告）；本面板仍送出 folder_id 以待後端補上。 */
+   B6：後端 /api/import/url、/api/import/upload 已支援 folder_id/folder，
+   下載與上傳皆寫入所選資料夾（metadata.json folders + 資料夾 tags）。 */
 
 import { api } from './api.js';
 import { store } from './store.js';
@@ -22,7 +22,50 @@ const _icon = n => `<svg class="icon icon-sm" aria-hidden="true"><use href="#i-$
 
 let _ctx = { libs: () => [] };            // app.js 注入（可寫入庫 = eagle）
 let _seq = 0;
-const T = { tasks: [], timer: 0 };        // 任務（session 內存活；新→舊）
+const T = { tasks: [], timer: 0 };        // 任務（localStorage 持久化，C59；新→舊）
+
+/* ── 任務歷史持久化（C59：跨重啟保留；上限 50）─────────────────────── */
+
+const HIST_KEY = 'ev-dl-tasks';
+
+function _persist() {
+  try {
+    localStorage.setItem(HIST_KEY, JSON.stringify(T.tasks.slice(0, 50).map(t => ({
+      key: t.key, kind: t.kind, url: t.url, lib: t.lib, folder: t.folder || '',
+      engine: t.engine, status: t.status, progress: t.progress,
+      taskId: t.taskId, error: t.error, result: t.result, at: t.at,
+    }))));
+  } catch (_) {}
+}
+
+async function _restoreHistory() {
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); } catch (_) {}
+  if (!Array.isArray(saved) || !saved.length) return;
+  T.tasks = saved;
+  _seq = saved.length;
+  saved.forEach((t, i) => { t.key = `r${i}`; });
+  /* 重啟時仍在途的任務：上傳無法續傳 → 中斷；URL 任務向後端補問一次狀態 */
+  let anyRunning = false;
+  for (const t of T.tasks) {
+    if (t.kind === 'upload' && t.status === 'uploading') {
+      t.status = 'failed'; t.error = '重新整理中斷';
+    } else if (t.kind === 'url' && ['pending', 'running'].includes(t.status)) {
+      if (!t.taskId) { t.status = 'failed'; t.error = '重新整理中斷'; continue; }
+      try {
+        const s = await api.importStatus(t.taskId);
+        t.status = s.status || t.status;
+        t.progress = s.progress ?? t.progress;
+        t.error = s.error || null;
+        t.result = s.result || t.result;
+        if (['pending', 'running'].includes(t.status)) anyRunning = true;
+      } catch (_) { t.status = 'failed'; t.error = '任務已不存在（伺服器重啟）'; }
+    }
+  }
+  _persist();
+  _renderTasks(); _updateBadge();
+  if (anyRunning) _startPoll();
+}
 
 /* ── 引擎路由（鏡射後端 api_import._classify_platform）──────────────── */
 
@@ -47,6 +90,7 @@ const _isUrl = s => /^https?:\/\/\S+$/i.test(s);
 
 export function initDownloadCenter(ctx = {}) {
   Object.assign(_ctx, ctx);
+  _restoreHistory();                      // C59：任務歷史跨重啟
   document.addEventListener('dragover', e => {
     if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault();
   });
@@ -89,7 +133,7 @@ export function renderDownloads(route) {
   panel.innerHTML = `
   <div class="dl-page">
     <section class="dl-card">
-      <h3 class="dl-title">${_icon('download')} URL 下載 <span class="dl-health" id="dl-health"></span></h3>
+      <h3 class="dl-title">${_icon('download')} URL 下載 <span class="dl-health" id="dl-health">檢查中…</span></h3>
       <textarea id="dl-urls" class="dl-textarea" rows="4" spellcheck="false"
         placeholder="貼上網址，每行一筆（x.com / 抖音 / 小紅書 / LINE VOOM / YouTube…）">${h(prefill)}</textarea>
       <div class="dl-lines" id="dl-lines"></div>
@@ -272,17 +316,18 @@ function _startPoll() {
 
 function _queueUploads(files) {
   const lib = $('dl-lib')?.value || _defaultLib();
+  const folder = $('dl-folder')?.value || '';
   if (!lib) { toast('沒有可寫入的 Eagle 資源庫', { err: true }); return; }
   for (const f of files) {
     if (f.size > 2 * 1024 * 1024 * 1024) {
       toast(`${f.name} 超過 2GB 上限`, { err: true });
       continue;
     }
-    _uploadOne(f, lib);
+    _uploadOne(f, lib, folder);
   }
 }
 
-function _uploadOne(file, lib) {
+function _uploadOne(file, lib, folder = '') {
   const task = {
     key: `t${++_seq}`, kind: 'upload', url: file.name, lib,
     engine: null, status: 'uploading', progress: 0,
@@ -294,6 +339,7 @@ function _uploadOne(file, lib) {
   const fd = new FormData();
   fd.append('file', file, file.name);
   fd.append('lib', lib);
+  if (folder) fd.append('folder', folder);       // B6：後端已支援指定資料夾
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/import/upload');
   xhr.upload.addEventListener('progress', e => {
@@ -330,6 +376,7 @@ const STATUS_LABEL = {
 };
 
 function _renderTasks() {
+  _persist();                             // 任務任何變動即落地（C59）
   const box = $('dl-tasks');
   if (!box) { _updateBadge(); return; }
   if (!T.tasks.length) {

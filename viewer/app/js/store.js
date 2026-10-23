@@ -67,6 +67,7 @@ export function defaultFilters() {
     size: '',         // '' | 's' | 'm' | 'l' | 'xl'（百萬像素分級）
     domains: [],      // OR 網域
     folders: [],      // 疊加 AND 資料夾 id（URL: folders=+id1,+id2）
+    presets: [],      // OR 濾鏡 preset id（URL: presets=p1|p2，C12）
   };
 }
 

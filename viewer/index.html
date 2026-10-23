@@ -16,6 +16,15 @@
 </head>
 <body>
 
+<!-- P4-B6：新版 UI 試用提示列（舊版唯一允許的改動；可關閉並記憶） -->
+<div id="new-ui-banner" style="display:none;align-items:center;gap:10px;padding:7px 14px;background:#0a84ff;color:#fff;font-size:14px">
+  <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">✨ 全新三欄介面已推出（⌘K 搜尋、AI 語意搜尋、統一 Viewer）</span>
+  <a href="/?ui=new" style="color:#fff;font-weight:700;text-decoration:underline;white-space:nowrap">試用新版 UI</a>
+  <button onclick="try{localStorage.setItem('ev-classic-banner','0')}catch(e){};this.parentNode.style.display='none'"
+          style="background:none;border:0;color:#fff;font-size:16px;cursor:pointer;padding:0 4px;line-height:1" title="關閉">✕</button>
+</div>
+<script>try{if(localStorage.getItem('ev-classic-banner')!=='0')document.getElementById('new-ui-banner').style.display='flex';}catch(e){}</script>
+
 <!-- ═══════════════════════════════════ STICKY TOP ZONE（header + filters）══ -->
 <div id="sticky-top">
 

@@ -103,6 +103,10 @@ export function popEphemeral() {
   if (_ephemerals.length) history.back();   // → popstate handler 出棧並呼叫 onClose
 }
 
+/** 即將導覽他處時丟棄 guard（不 history.back()，避免與 hash 導覽競態；
+ *  代價 = 殘留一層同 URL entry，back 多按一次無害） */
+export function discardEphemerals() { _ephemerals.length = 0; }
+
 /* ── 啟動：唯一 popstate handler ───────────────────────────────────── */
 
 export function startRouter(render) {

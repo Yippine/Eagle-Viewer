@@ -3,6 +3,7 @@
 端點（serve.py dispatch 掛接 /api/ai/*）：
     GET  /api/ai/status              各庫 clip/faces 索引狀態 + 模型/引擎就緒度
     GET  /api/ai/search              ?q=...[&lib=...][&topk=40] 語意搜尋（lib 省略＝跨庫）
+    GET  /api/ai/similar             ?lib=...&item=...[&topk=40][&all=1] 以圖找圖
     GET  /api/ai/faces/persons       ?lib=... 人物聚類清單（person_id/臉數/代表臉）
     GET  /api/ai/faces/search        ?lib=...&item=...[&face=N][&topk=40][&all=1] 以臉找臉
     POST /api/ai/index               {lib: 庫名|"all", kind: clip|faces|both} 背景索引
@@ -341,6 +342,10 @@ def _handle_search(h):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/ai/similar（image-to-image）→ api_ai_similar.py（500 行紀律）
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # GET /api/ai/faces/persons
 # ---------------------------------------------------------------------------
 
@@ -541,6 +546,9 @@ def handle_ai_get(h, up: str):
         _handle_status(h); return
     if up == "/api/ai/search":
         _handle_search(h); return
+    if up == "/api/ai/similar":
+        from api_ai_similar import handle_similar
+        handle_similar(h); return
     if up == "/api/ai/faces/persons":
         _handle_faces_persons(h); return
     if up == "/api/ai/faces/search":

@@ -18,6 +18,7 @@ import { parseLibId } from './router.js';
  * @returns {{ el, update(msg), close() }}
  */
 export function toast(msg, opts = {}) {
+  if (!opts.sticky) _record(msg, !!opts.err);      // 通知紀錄（🔔 drawer / 設定頁）
   const root = document.getElementById('toast-root');
   if (!root) return { el: null, update() {}, close() {} };
   const t = document.createElement('div');
@@ -73,6 +74,88 @@ export function removeLocal(ids) {
   if (selChanged) store.emit('selection');
 }
 
+/* ── 通知日誌（C61：三類分類 + localStorage 持久化跨重啟補追 + 🔔 drawer）─ */
+
+const LOG_KEY = 'ev-notif-log';
+const CAT_LABEL = { download: '下載', ai: 'AI', system: '系統' };
+let _log = [];              // [{ ts, msg, err, cat }]
+let _unread = 0;
+
+try {
+  const saved = JSON.parse(localStorage.getItem(LOG_KEY) || 'null');
+  if (saved && Array.isArray(saved.log)) {
+    _log = saved.log.slice(-100);
+    _unread = Math.min(_log.length, saved.unread | 0);
+  }
+} catch (_) {}
+
+function _persistLog() {
+  try { localStorage.setItem(LOG_KEY, JSON.stringify({ log: _log, unread: _unread })); }
+  catch (_) {}
+}
+
+/** 訊息 → 三類分類（download / ai / system） */
+function _catOf(msg) {
+  if (/下載|上傳|匯入/.test(msg)) return 'download';
+  if (/^AI\s|索引/.test(msg)) return 'ai';
+  return 'system';
+}
+
+export function getNotifLog() { return _log; }
+export function clearNotifLog() { _log.length = 0; _unread = 0; _syncBadge(); _persistLog(); }
+export function notifCatLabel(cat) { return CAT_LABEL[cat] || '系統'; }
+
+function _record(msg, err = false) {
+  _log.push({ ts: Date.now(), msg, err, cat: _catOf(msg) });
+  if (_log.length > 100) _log.shift();
+  _unread++;
+  _syncBadge();
+  _persistLog();
+}
+
+function _syncBadge() {
+  const b = document.getElementById('notif-badge');
+  if (!b) return;
+  b.hidden = !_unread;
+  b.textContent = _unread > 99 ? '99+' : String(_unread);
+}
+
+const _esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+/** 通知列 HTML（drawer / 設定頁共用；cat 過濾） */
+export function notifRowsHTML(cat = 'all') {
+  const rows = [..._log].reverse().filter(n => cat === 'all' || (n.cat || 'system') === cat);
+  if (!rows.length) return '<p class="insp-note" style="padding:12px">尚無通知；即時事件以 toast 顯示</p>';
+  return rows.map(n => `<div class="notif-row${n.err ? ' err' : ''}">
+      <span class="notif-time">${new Date(n.ts).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+      <span class="notif-cat cat-${n.cat || 'system'}">${CAT_LABEL[n.cat] || '系統'}</span>
+      <span>${_esc(n.msg)}</span></div>`).join('');
+}
+
+/** 頂列 🔔：右側 drawer 快速檢視（spec §1.2 ⑤）；開啟即標示已讀 */
+export function openNotifDrawer() {
+  document.querySelector('.notif-drawer')?.remove();
+  _unread = 0; _syncBadge(); _persistLog();
+  const d = document.createElement('div');
+  d.className = 'notif-drawer';
+  const catBtn = (c, l) => `<button class="chip${c === 'all' ? ' active' : ''}" data-nd-cat="${c}">${l}</button>`;
+  d.innerHTML = `<div class="notif-drawer-hd"><b>通知</b>
+      <button class="btn btn-ghost btn-sm" data-nd-clear ${_log.length ? '' : 'disabled'}>清除</button>
+      <button class="btn btn-ghost btn-sm btn-icon" data-nd-close aria-label="關閉">✕</button></div>
+    <div class="notif-cats">${catBtn('all', '全部')}${catBtn('system', '系統')}${catBtn('download', '下載')}${catBtn('ai', 'AI')}</div>
+    <div class="notif-list">${notifRowsHTML()}</div>`;
+  document.body.appendChild(d);
+  const close = () => { d.remove(); document.removeEventListener('mousedown', onDoc, true); };
+  const onDoc = e => { if (!d.contains(e.target)) close(); };
+  document.addEventListener('mousedown', onDoc, true);
+  d.querySelector('[data-nd-close]').addEventListener('click', close);
+  d.querySelector('[data-nd-clear]').addEventListener('click', () => { clearNotifLog(); close(); });
+  d.querySelectorAll('[data-nd-cat]').forEach(b => b.addEventListener('click', () => {
+    d.querySelectorAll('[data-nd-cat]').forEach(x => x.classList.toggle('active', x === b));
+    d.querySelector('.notif-list').innerHTML = notifRowsHTML(b.dataset.ndCat);
+  }));
+}
+
 /* ── SSE ────────────────────────────────────────────────────────────── */
 
 let _src = null;
@@ -80,6 +163,7 @@ let _sseLib = null;         // 目前連線的 lib slug
 let _aiToast = null;        // ai-index-progress 進度 toast（覆用單一）
 
 export function initNotifications() {
+  _syncBadge();                    // 持久化補追：重啟後還原未讀 badge（C61）
   store.on('lib-context', _reconnect);
   _reconnect();
 }

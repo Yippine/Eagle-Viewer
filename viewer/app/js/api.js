@@ -76,6 +76,9 @@ export const api = {
   /** GET /api/excire/{lib}/faces/{photoId} → { ok, faces:[{cx,cy,w,h,angle}] } */
   excireFaces: (lib, photoId) => _json(`/api/excire/${enc(lib)}/faces/${enc(photoId)}`),
 
+  /** GET /api/excire/{lib}/photo/{pid}/meta → { ok, tags:[{keyword,confidence}], exif }（B7：E04/E07） */
+  excirePhotoMeta: (lib, photoId) => _json(`/api/excire/${enc(lib)}/photo/${enc(photoId)}/meta`),
+
   /* ── Item 寫入（B4；後端 api_mutations.py 既有端點）──────────────── */
 
   /** PATCH /api/item/{star|tags|folders|rename|annotation|url|move} */
@@ -104,6 +107,11 @@ export const api = {
   aiSearch: (q, { lib, topk } = {}) => _jsonStatus(
     `/api/ai/search?q=${enc(q)}${lib ? `&lib=${enc(lib)}` : ''}${topk ? `&topk=${topk}` : ''}`),
 
+  /** GET /api/ai/similar?lib=&item=[&topk=][&all=1] → { status, body }（B6 相似圖） */
+  aiSimilar: (lib, item, { topk, all } = {}) => _jsonStatus(
+    `/api/ai/similar?lib=${enc(lib)}&item=${enc(item)}` +
+    `${topk ? `&topk=${topk}` : ''}${all ? '&all=1' : ''}`),
+
   /** GET /api/ai/faces/persons?lib=… → { ok, clustered, persons } */
   aiFacesPersons: lib => _jsonStatus(`/api/ai/faces/persons?lib=${enc(lib)}`),
 
@@ -125,6 +133,34 @@ export const api = {
 
   /** GET /api/import/status/{taskId} → { ok, status, progress, result?, error? } */
   importStatus: taskId => _json(`/api/import/status/${enc(taskId)}`),
+
+  /* ── 統計（B6：沿用舊版 views 端點）───────────────────────────── */
+
+  /** GET /api/views?lib= → { itemId: {views, history, name, …} } */
+  views: lib => _json(`/api/views?lib=${enc(lib)}`),
+
+  /** POST /api/delete-view {id, t, lib} — 刪除單筆觀看紀錄 */
+  deleteView: (lib, id, t) => _json('/api/delete-view', _POST_JSON({ id, t, lib })),
+
+  /** POST /api/clear-views {lib} — 清除全部觀看紀錄 */
+  clearViews: lib => _json('/api/clear-views', _POST_JSON({ lib })),
+
+  /* ── 設定（B6：來源管理 + 標籤同步）──────────────────────────── */
+
+  /** GET /api/browse-dir?path= → { ok, path, parent, dirs }（伺服器端目錄清單） */
+  browseDir: path => _json(`/api/browse-dir${path ? `?path=${enc(path)}` : ''}`),
+
+  /** POST /api/config {library_path} — 新增 Eagle 資源庫 */
+  addLibrary: p => _json('/api/config', _POST_JSON({ library_path: p })),
+
+  /** POST /api/folder-config {folder_path} — 新增 Folder 來源 */
+  addFolderSource: p => _json('/api/folder-config', _POST_JSON({ folder_path: p })),
+
+  /** GET /api/{tags-sync|items-tags-sync}/diff?lib= → diff 預覽 */
+  tagsSyncDiff: (kind, lib) => _json(`/api/${kind}/diff?lib=${enc(lib)}`),
+
+  /** POST /api/{tags-sync|items-tags-sync}/apply {lib} → 套用 */
+  tagsSyncApply: (kind, lib) => _json(`/api/${kind}/apply`, _POST_JSON({ lib })),
 
   /* ── 系統 ──────────────────────────────────────────────────────── */
 

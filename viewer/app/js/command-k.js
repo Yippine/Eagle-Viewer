@@ -67,9 +67,19 @@ registerSearchProvider({
   },
 });
 registerSearchProvider({
-  id: 'similar', label: '相似圖', icon: 'similar',
-  available: () => false,
-  tip: () => '後端尚未提供 image-to-image 端點（P6 缺口）',
+  id: 'similar', label: '相似圖（以選取項）', icon: 'similar',
+  available: () => aiCaps().similar,
+  tip: () => aiCaps().loaded ? '需先建立語意索引（People 區／AI 狀態面板）' : 'AI 狀態載入中…',
+  execute: () => {
+    const sel = [...store.state.selection];
+    const libId = store.state.libId;
+    if (sel.length !== 1 || !libId) {
+      toast('請先在 grid 選取 1 個項目，再找相似圖', { err: true });
+      return null;
+    }
+    navigate(`#/search?mode=similar&scope=${encodeURIComponent(libId)}&src=${encodeURIComponent(sel[0])}`);
+    return { provider: 'similar', query: sel[0] };
+  },
 });
 
 const P6_TIP = 'AI 搜尋將於後續版本啟用';
@@ -80,6 +90,23 @@ let _root = null, _input = null, _chipsEl = null, _sugsEl = null;
 let _chips = [];        // 結構化 terms [{field,value,exclude}]
 let _mode = 'syntax';
 let _sugIdx = -1;
+
+/* 自然語言偵測：無 chips、無欄位語法、非 URL 的自由詞（含 CJK 或多詞）
+   → Enter 預設走 AI 語意搜尋（建議清單保留「僅篩選」出口） */
+const _FIELD_RE = /(^|\s)-?[^\s:]+:\S/;
+function _looksNatural(q) {
+  if (!q || _chips.length) return false;
+  if (_FIELD_RE.test(q) || /^https?:\/\//i.test(q)) return false;
+  return /[぀-ヿ一-鿿]/.test(q) || q.trim().split(/\s+/).length >= 2;
+}
+
+function _saveMode() { try { localStorage.setItem('ev-ck-mode', _mode); } catch (_) {} }
+function _restoreMode() {
+  try {
+    const saved = localStorage.getItem('ev-ck-mode');
+    if (saved && _providers.get(saved)?.available()) _mode = saved;
+  } catch (_) {}
+}
 const FIELD_TIPS = { name: '名稱', tag: '標籤', domain: '網域', url: '網址', kind: '類型', id: '編號' };
 const _icon = n => `<svg class="icon icon-sm" aria-hidden="true"><use href="#i-${n}"/></svg>`;
 
@@ -105,12 +132,17 @@ export function openPalette() {
   _chips = terms.filter(t => t.field !== '*');
   _input.value = serializeTerms(terms.filter(t => t.field === '*'));
   _root.classList.add('show');
+  _restoreMode();
   _renderModes();
   _renderChips();
   _suggest();
   _input.focus();
-  // AI 能力非同步刷新 → 模式列點亮（30s 快取）
-  ensureAiStatus().then(() => { if (_isOpen()) _renderModes(); });
+  // AI 能力非同步刷新 → 模式列點亮 + 恢復上次模式（30s 快取）
+  ensureAiStatus().then(() => {
+    if (!_isOpen()) return;
+    _restoreMode();
+    _renderModes(); _suggest();
+  });
 }
 
 /* ── DOM ────────────────────────────────────────────────────────────── */
@@ -165,11 +197,19 @@ const _PLACEHOLDER = {
   syntax: '搜尋、tag:標籤、-domain:x.com、"完整詞"…',
   nl: '以自然語言描述想找的畫面（例：教室裡穿制服的男生）…',
   face: '以目前 grid 選取項的臉搜尋（Enter 執行）',
+  similar: '以目前 grid 選取項找相似圖（Enter 執行）',
 };
 
 function _renderModes() {
   const box = _root.querySelector('#ck-modes');
-  if (!_providers.get(_mode)?.available()) _mode = 'syntax';   // 能力消失回退
+  if (!_providers.get(_mode)?.available()) {
+    // 能力消失回退：狀態已載入才提示（避免載入期誤報），不再靜默切換
+    if (_mode !== 'syntax' && aiCaps().loaded) {
+      const p = _providers.get(_mode);
+      toast(`「${p?.label || _mode}」暫不可用，已切回語法篩選`, { err: true });
+    }
+    _mode = 'syntax';
+  }
   const scopeChip = _mode === 'nl'
     ? `<button class="chip mode-chip scope-chip${_scopeAll || !searchScope() ? ' active' : ''}"
          data-scope-toggle title="搜尋範圍（跟隨當前庫路由 / 全部庫）">
@@ -186,6 +226,7 @@ function _renderModes() {
     const p = _providers.get(el.dataset.mode);
     if (!p?.available()) return;                    // 灰態佔位
     _mode = el.dataset.mode;
+    _saveMode();
     _input.placeholder = _PLACEHOLDER[_mode] || _PLACEHOLDER.syntax;
     _renderModes(); _suggest(); _input.focus();
   }));
@@ -233,8 +274,22 @@ function _suggest() {
       <div class="sug-item disabled">輸入描述後 Enter 搜尋（結果附相似度分數）</div>`);
     if (_mode === 'face') groups.push(`<div class="sug-group">人物</div>
       <div class="sug-item disabled">以目前選取的 1 個項目找相同的臉（Enter 執行）</div>`);
+    if (_mode === 'similar') groups.push(`<div class="sug-group">相似圖</div>
+      <div class="sug-item disabled">以目前選取的 1 個項目找構圖/內容相似的圖（Enter 執行）</div>`);
     _sugsEl.innerHTML = groups.join('');
     return;
+  }
+
+  // 自由詞判定為自然語言且 AI 可用 → 置頂建議（Enter 預設即走 AI，此處是明示 + 「僅篩選」出口）
+  const full = raw.trim();
+  if (_looksNatural(full) && !aiCaps().loaded) {
+    // 首次 status 載入中：完成後補渲染（loaded=true 後不會再進此分支）
+    ensureAiStatus().then(() => { if (_isOpen()) _suggest(); });
+  }
+  if (_looksNatural(full) && aiCaps().nl) {
+    groups.push(`<div class="sug-group">AI 語意搜尋（Enter 預設）</div>` +
+      _sug({ act: 'nl', q: full }, `以 AI 語意搜尋「${full}」`, '', _icon('sparkle')) +
+      _sug({ act: 'filter', q: full }, '僅篩選檔名/標籤（不使用 AI）', '', _icon('filter')));
   }
 
   const m = token.match(/^(-?)([^\s:]+):(.*)$/);
@@ -293,6 +348,13 @@ function _applySuggestion(d) {
   } else if (d.act === 'history') {
     _input.value = d.q; _chips = [];
     _renderChips(); _commit();
+  } else if (d.act === 'nl') {
+    _saveHistory(d.q);
+    if (_providers.get('nl').execute(d.q) !== null) closePalette();
+  } else if (d.act === 'filter') {
+    _saveHistory(d.q);
+    _providers.get('syntax').execute(d.q);
+    closePalette();
   } else if (d.act === 'download') {
     closePalette();
     navigate(`#/downloads?url=${encodeURIComponent(d.q)}`);
@@ -301,13 +363,24 @@ function _applySuggestion(d) {
 
 /* ── 執行（Enter → 虛擬集合 = ?q= 進路由，走同一 grid 管線）─────────── */
 
-function _commit() {
+async function _commit() {
   // 語法 = chips 序列化 + 自由詞；AI 模式 = 原始輸入（不解析語法，§2.4）
   const q = _mode === 'syntax'
     ? (serializeTerms(_chips) + ' ' + _input.value.trim()).trim()
     : _input.value.trim();
-  if (_mode !== 'face') _saveHistory(q);
-  const p = _providers.get(_mode) || _providers.get('syntax');
+  if (_mode === 'syntax' || _mode === 'nl') _saveHistory(q);
+  let mode = _mode;
+  if (mode === 'syntax' && _looksNatural(q)) {
+    if (!aiCaps().loaded) await ensureAiStatus();  // 首次載入中：等能力確認再決定路徑
+    if (aiCaps().nl) {
+      // 自由詞 = 自然語言 → 自動走語意搜尋（「僅篩選」可由建議清單選）
+      mode = 'nl';
+    } else if (aiCaps().loaded) {
+      // AI 不可用時明講，不讓使用者誤以為在做語意搜尋
+      toast('此範圍語意索引未就緒，僅做檔名/標籤篩選（AI 狀態面板可建立索引）', { err: true });
+    }
+  }
+  const p = _providers.get(mode) || _providers.get('syntax');
   const res = p.execute(q);
   if (res !== null) closePalette();       // null = 前置條件不足（palette 保持開啟）
 }

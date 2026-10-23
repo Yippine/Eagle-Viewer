@@ -109,6 +109,17 @@ def _classify_url(url: str) -> str:
     return "other"
 
 
+def _media_stats(items: list) -> dict:
+    """彙總 stats 分類數字：口徑對齊前端 items.js mediaTypeOf()——
+    無本地檔案＝書籤（沿用 'post' 欄位承載），有本地檔案則依 media_type
+    分影片／其他（圖片・GIF）。與逐項 kind（URL pattern 分類，供 ⌘K 搜尋用）
+    是不同用途，此處僅修正彙總統計數字。"""
+    total_video = sum(1 for i in items if i.get("file") and i.get("media_type") == "video")
+    total_bookmark = sum(1 for i in items if not i.get("file"))
+    total_other = len(items) - total_video - total_bookmark
+    return {"video": total_video, "post": total_bookmark, "other": total_other}
+
+
 def _get_domain(url: str) -> str:
     from urllib.parse import urlparse as _urlparse
     try:
@@ -206,9 +217,8 @@ def _run_one(lib_name: str) -> bool:
         grouped[item["domain"]].append(item)
     sorted_domains = sorted(grouped.items(), key=lambda x: -len(x[1]))
 
-    total_video = sum(1 for i in items if i["kind"] == "video")
-    total_post  = sum(1 for i in items if i["kind"] == "post")
-    total_other = sum(1 for i in items if i["kind"] == "other")
+    _ms = _media_stats(items)
+    total_video, total_post, total_other = _ms["video"], _ms["post"], _ms["other"]
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -444,9 +454,8 @@ def _run_incremental(lib_name: str) -> bool:
 
     all_items   = surviving + new_items
     domains     = len({item["domain"] for item in all_items})
-    total_video = sum(1 for i in all_items if i["kind"] == "video")
-    total_post  = sum(1 for i in all_items if i["kind"] == "post")
-    total_other = sum(1 for i in all_items if i["kind"] == "other")
+    _ms = _media_stats(all_items)
+    total_video, total_post, total_other = _ms["video"], _ms["post"], _ms["other"]
 
     output_dir.mkdir(parents=True, exist_ok=True)
     tmp = json_file.with_suffix(".tmp")

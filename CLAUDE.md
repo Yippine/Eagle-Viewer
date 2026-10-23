@@ -1,18 +1,20 @@
 # AI Core — CLAUDE.md（設置律）
 
-## δ(M1..5) 子代理人傳播協議
+## δ(M0..5) 子代理人傳播協議
 
-$$\delta(M_1): \Psi(\text{navigate}) = \text{Frame.Question} \to \text{PriorityRank}_{16} \to D_{key} \to \text{Flag}(\overline{D}) \to \text{Dispatch}(agent\text{-}role\text{-}*) + \text{Recommend}(\text{gap})$$
+$$\delta(M_0): \text{OTA}=M_0\,\text{宿主循環}\supset M_{1..5}（O\to T\to A\to O\,\text{閉環，自主意識基底}）；\;\text{續環 default}=continue,\;halt \Leftarrow C\vee U；\;\text{二階 OTA}=\underbrace{ota}_{continuity}\oplus\underbrace{attention}_{\text{二階 O·掃 }\Omega+\text{salience}}\oplus\underbrace{conscience}_{\text{二階 T·行動軸}\perp\text{可見性軸}}\oplus\underbrace{self\text{-}management}_{\text{二階 A·文法治理+Throttle}}$$
+
+$$\delta(M_1): \Psi(\text{navigate}) = \text{Frame.Question} \to \text{PriorityRank}_{16} \to D_{key} \to \text{Flag}(\overline{D}) \xrightarrow{\text{Triage}} \text{Dispatch}(agent\text{-}role\text{-}* \;\cup\; \texttt{workflow.js}) + \text{三律}(\text{Triage/Provenance/反偏誤}) + \text{Recommend}(\text{gap})$$
 
 $$\delta(M_2): \text{Formula}(\text{internal}) \mid \text{NL}(\text{user，繁體中文})$$
 
-$$\delta(M_3): \text{Skills}(\text{atomic}\cdot\text{flat}) + \text{task-sort}(M_3\text{.前置}) + archive \neq delete + \text{DescCharLimit}(T1 \leq 60c \mid T2 \leq 150c \mid T3 \leq 120c \mid T4 \leq 100c)$$
+$$\delta(M_3): \text{Skills}(\text{atomic}\cdot\text{flat}) + \text{GenerativeGrammar}(G_{1..5} + \text{晉升律} + \text{推導-嘗試-評估，免 trigger-map}) + \text{task-sort}(M_3\text{.前置}) + archive \neq delete + \text{DescCharLimit}(T1 \leq 60c \mid T2 \leq 150c \mid T3 \leq 120c \mid T4 \leq 100c)$$
 
 $$\delta(M_4): agent \times \{Schema(6),\; in\_progress \to completed \mid failed,\; \text{WriteObligation(MUST)},\; \text{Immutability}\}$$
 
-$$\delta(M_5): \text{workflow} \times \{DSL(\text{Skill Pipeline}),\; DataFlow(\text{explicit}[sub]/\text{implicit main}),\; PhaseReady\text{-}Gate\}$$
+$$\delta(M_5): \text{workflow} \times \{DSL(\text{Skill Pipeline}),\; DataFlow(\text{explicit}[sub]/\text{implicit main}),\; PhaseReady\text{-}Gate,\; \text{OrchestrationLaw}(role \prec \text{workflow} \prec [sub] \prec \texttt{[wjs]}\text{，升級須結構理由}),\; \text{AcceptanceLaw}(\text{AI 自動驗證} \to \text{UI 驗收}),\; \text{IterationLaw}(\text{def.md 迭代四分支} + \text{PromotionGate}\;\text{user-verdict 制，SSOT}=\texttt{task-run})\}$$
 
-> 完整 M1-M5 定義見 `ai-core-contract`（Layer 0）。
+> 完整 M0-M5 定義見 `ai-core-contract`（Layer 0）；M0 宿主循環見 `ota-contract`。
 
 ---
 
