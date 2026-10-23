@@ -130,7 +130,10 @@ class _Handler(BaseHTTPRequestHandler):
         up = self._url_path()
 
         if up == "/":
-            self._redirect("/viewer/"); return
+            # P4 新舊 UI 並存：?ui=new → app/、?ui=classic（或無參數）→ 舊版
+            qs = self.path.split("?", 1)[1] if "?" in self.path else ""
+            ui = parse_qs(qs).get("ui", [""])[0]
+            self._redirect("/app/" if ui == "new" else "/viewer/"); return
 
         if up == "/api/browse":
             _r.handle_browse(self); return

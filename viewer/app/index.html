@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d0f">
+<title>Eagle Viewer</title>
+<link rel="icon" href="/viewer/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/components.css">
+<script>
+/* 主題早期還原（避免閃白）：localStorage → prefers-color-scheme → dark */
+try {
+  var t = localStorage.getItem('ev-theme');
+  if (!t && window.matchMedia('(prefers-color-scheme: light)').matches) t = 'light';
+  if (t) document.documentElement.dataset.theme = t;
+} catch (e) {}
+</script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── TopBar ─────────────────────────────────────────────────── -->
+  <header class="topbar" role="banner">
+    <button class="btn btn-ghost btn-icon" id="btn-rail" aria-label="切換側欄" aria-expanded="true">
+      <svg class="icon" aria-hidden="true"><use href="#i-menu"/></svg>
+    </button>
+    <div class="logo">
+      <svg class="icon" aria-hidden="true"><use href="#i-library-eagle"/></svg>
+      <span>Eagle Viewer</span>
+    </div>
+
+    <button class="searchbox" id="btn-omni" aria-label="搜尋指揮中心（⌘K）">
+      <svg class="icon icon-sm" aria-hidden="true"><use href="#i-search"/></svg>
+      <span>搜尋、tag:、描述、人物…</span>
+      <span class="kbd-hint">⌘K</span>
+    </button>
+
+    <div class="topbar-actions">
+      <button class="btn btn-ghost btn-icon" id="btn-density" aria-label="密度" title="密度（B2）">
+        <svg class="icon" aria-hidden="true"><use href="#i-density"/></svg>
+      </button>
+      <button class="btn btn-ghost btn-icon" id="btn-theme" aria-label="切換主題">
+        <svg class="icon" aria-hidden="true"><use href="#i-theme"/></svg>
+      </button>
+      <button class="btn btn-ghost btn-icon" id="btn-notifs" aria-label="通知" title="通知（B6）" style="position:relative">
+        <svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg>
+        <span class="badge err" id="notif-badge" hidden style="position:absolute;top:2px;right:2px"></span>
+      </button>
+      <button class="btn btn-ghost btn-icon" id="btn-settings" aria-label="設定">
+        <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>
+      </button>
+      <button class="btn btn-ghost btn-icon" id="btn-inspector" aria-label="切換 Inspector" aria-expanded="true">
+        <svg class="icon" aria-hidden="true"><use href="#i-inspector"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── 三欄工作區 ─────────────────────────────────────────────── -->
+  <div class="shell" id="shell">
+
+    <!-- 左欄：來源與導覽 -->
+    <nav class="sidebar" id="sidebar" aria-label="來源與導覽">
+
+      <section class="side-section" id="sec-sources" aria-labelledby="hd-sources">
+        <h2 class="side-heading" id="hd-sources">Sources</h2>
+        <div id="sources-eagle"  role="group" aria-label="Eagle 庫群"></div>
+        <div id="sources-excire" role="group" aria-label="Excire 庫群"></div>
+        <div id="sources-dir"    role="group" aria-label="Folder 來源"></div>
+        <button class="side-row" id="btn-add-source" title="新增來源（dialog B2）">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-plus"/></svg>
+          <span class="row-label">新增來源</span>
+        </button>
+      </section>
+
+      <section class="side-section" id="sec-browse" aria-labelledby="hd-browse">
+        <h2 class="side-heading" id="hd-browse">
+          Browse
+          <svg class="icon icon-sm" aria-hidden="true" style="margin-left:auto"><use href="#i-search"/></svg>
+        </h2>
+        <ul class="tree" id="folder-tree" role="tree" aria-label="資料夾樹"></ul>
+      </section>
+
+      <section class="side-section" id="sec-collections" aria-labelledby="hd-collections">
+        <h2 class="side-heading" id="hd-collections">Collections</h2>
+        <p class="side-placeholder">智慧集合／濾鏡集（B2 實作）</p>
+      </section>
+
+      <section class="side-section" id="sec-people" aria-labelledby="hd-people">
+        <h2 class="side-heading" id="hd-people">People</h2>
+        <button class="side-row" data-nav="#/people" disabled aria-disabled="true" title="人臉搜尋將於 AI 階段啟用">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-people"/></svg>
+          <span class="row-label">人臉搜尋將於 AI 階段啟用</span>
+        </button>
+      </section>
+
+      <section class="side-section" id="sec-system" aria-labelledby="hd-system">
+        <h2 class="side-heading" id="hd-system">System</h2>
+        <button class="side-row" data-nav="#/downloads">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-download"/></svg>
+          <span class="row-label">下載中心</span>
+          <span class="badge" id="dl-badge" hidden></span>
+        </button>
+        <button class="side-row" id="row-trash">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-trash"/></svg>
+          <span class="row-label">垃圾桶</span>
+          <span class="badge" id="trash-badge" hidden></span>
+        </button>
+        <button class="side-row" data-nav="#/stats">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-chart"/></svg>
+          <span class="row-label">統計</span>
+        </button>
+        <button class="side-row" data-nav="#/settings/prefs">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-settings"/></svg>
+          <span class="row-label">設定</span>
+        </button>
+      </section>
+    </nav>
+
+    <!-- 中欄：內容 -->
+    <main class="content" id="content" aria-label="內容">
+      <div class="toolbar" id="toolbar">
+        <div class="toolbar-row">
+          <nav class="breadcrumb" id="breadcrumb" aria-label="麵包屑"></nav>
+        </div>
+        <div class="toolbar-row" id="toolbar-controls">
+          <div id="filter-chips" role="group" aria-label="作用中篩選" style="display:flex;gap:var(--sp-2);flex-wrap:wrap"></div>
+          <span class="spacer"></span>
+          <button class="btn btn-ghost btn-sm" id="btn-sort" title="排序（B2）">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-sort"/></svg><span>排序</span>
+          </button>
+          <button class="btn btn-ghost btn-sm btn-icon" id="btn-shuffle" aria-label="隨機" title="隨機（B2）">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-shuffle"/></svg>
+          </button>
+          <button class="btn btn-ghost btn-sm btn-icon" id="btn-select" aria-label="選取模式" title="選取模式（B4）">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-select-mode"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="ibar" id="ibar"><span id="ibar-count"></span></div>
+
+      <div class="grid-wrap" id="grid-wrap">
+        <div class="pgrid" id="grid" aria-live="polite"></div>
+      </div>
+
+      <div class="selection-bar" id="selection-bar" hidden>
+        <span id="sel-count">已選 0</span>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn btn-ghost btn-sm" disabled>封存</button>
+        <button class="btn btn-ghost btn-sm" disabled>標籤</button>
+        <button class="btn btn-ghost btn-sm" disabled>資料夾</button>
+        <button class="btn btn-ghost btn-sm btn-icon" id="btn-sel-close" aria-label="離開選取模式">
+          <svg class="icon icon-sm" aria-hidden="true"><use href="#i-close"/></svg>
+        </button>
+      </div>
+    </main>
+
+    <!-- 右欄：Inspector -->
+    <aside class="inspector" id="inspector" aria-label="Inspector">
+      <h2>Inspector</h2>
+      <div id="inspector-body">
+        <div class="empty-state">
+          <svg class="icon" aria-hidden="true"><use href="#i-info"/></svg>
+          <p class="empty-title">尚未選取項目</p>
+          <p>選取項目後在此檢視與編輯（B4）</p>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- 手機底部 tab（行為 B6） -->
+  <nav class="tabbar" id="tabbar" aria-label="行動導覽">
+    <button class="btn btn-ghost btn-icon" data-nav="#/" aria-label="首頁"><svg class="icon" aria-hidden="true"><use href="#i-image"/></svg></button>
+    <button class="btn btn-ghost btn-icon" id="tab-browse" aria-label="瀏覽"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg></button>
+    <button class="btn btn-ghost btn-icon" data-nav="#/downloads" aria-label="新增"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
+    <button class="btn btn-ghost btn-icon" data-nav="#/downloads" aria-label="下載"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg></button>
+    <button class="btn btn-ghost btn-icon" data-nav="#/settings/prefs" aria-label="更多"><svg class="icon" aria-hidden="true"><use href="#i-more-v"/></svg></button>
+  </nav>
+</div>
+
+<div class="shell-backdrop" id="shell-backdrop"></div>
+<div class="toast-root" id="toast-root" aria-live="polite"></div>
+<div id="sprite-root" hidden></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

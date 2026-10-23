@@ -1,0 +1,355 @@
+/* ── components.css ▸ 基礎元件起手式（B1）───────────────────────────────
+   btn / chip / tree / card / drawer / dialog / toast / badge /
+   breadcrumb / empty-state / skeleton / kbd。規格：P4 spec §4.3 */
+
+/* ── Icon ──────────────────────────────────────────────────────────── */
+
+.icon {
+  width: 20px; height: 20px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: middle;
+}
+.icon-sm { width: 16px; height: 16px; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  clip: rect(0 0 0 0); overflow: hidden; white-space: nowrap;
+}
+
+/* ── Button ────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  height: 34px;
+  padding: 0 var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: var(--bg3);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease);
+}
+.btn:hover { background: var(--border); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); }
+
+.btn-ghost { background: transparent; color: var(--text2); }
+.btn-ghost:hover { background: var(--bg3); color: var(--text); }
+
+.btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover { background: var(--danger); color: #fff; }
+
+.btn-icon { width: 34px; padding: 0; }
+.btn-sm { height: 28px; padding: 0 var(--sp-3); font-size: var(--fs-xs); }
+.btn-sm.btn-icon { width: 28px; padding: 0; }
+
+.btn.loading { pointer-events: none; opacity: .7; }
+
+/* ── Chip ──────────────────────────────────────────────────────────── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 26px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--tag-bg);
+  color: var(--text2);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.chip:hover { border-color: var(--border-strong); color: var(--text); }
+.chip.active, .chip-filter {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.chip .chip-x { display: inline-flex; margin-right: -4px; opacity: .7; }
+.chip .chip-x:hover { opacity: 1; }
+.chip .chip-count { color: var(--text3); font-variant-numeric: tabular-nums; }
+
+/* ── Tree ──────────────────────────────────────────────────────────── */
+
+.tree { list-style: none; margin: 0; padding: 0; font-size: var(--fs-sm); }
+.tree ul { list-style: none; margin: 0; padding-left: var(--sp-4); }
+
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: 30px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-sm);
+  color: var(--text2);
+  cursor: pointer;
+  user-select: none;
+}
+.tree-item:hover { background: var(--bg3); color: var(--text); }
+.tree-item.selected { background: var(--accent-bg); color: var(--accent); }
+.tree-item.partial  { color: var(--accent); }
+.tree-item .row-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-chevron {
+  display: inline-flex;
+  width: 18px; height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  color: var(--text3);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.tree-chevron.leaf { visibility: hidden; }
+.tree-node.expanded > .tree-item .tree-chevron { transform: rotate(90deg); }
+.tree-node > ul { display: none; }
+.tree-node.expanded > ul { display: block; }
+
+.count-pill {
+  padding: 1px 7px;
+  border-radius: var(--r-full);
+  background: var(--bg3);
+  color: var(--text3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.tree-item.selected .count-pill { background: var(--accent-bg); color: var(--accent); }
+
+/* Sidebar 通用列（庫列 / SYSTEM 列）*/
+.side-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+.side-row:hover { background: var(--bg3); color: var(--text); }
+.side-row.selected { background: var(--accent-bg); color: var(--accent); }
+.side-row .row-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-row .mark-unindexed { color: var(--warn); }
+.side-placeholder { padding: var(--sp-2); color: var(--text3); font-size: var(--fs-xs); }
+
+/* ── Card（媒體卡骨架；虛擬滾動 B2）───────────────────────────────── */
+
+.card {
+  border-radius: var(--r);
+  background: var(--card);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.card:hover { border-color: var(--border-strong); box-shadow: var(--sh-sm); }
+.card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+.card-thumb {
+  position: relative;
+  width: 100%;
+  background: var(--bg3);
+}
+.card-thumb img { display: block; width: 100%; height: auto; }
+.card-thumb .kind-badge {
+  position: absolute;
+  top: var(--sp-2); right: var(--sp-2);
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--r-sm);
+  background: rgba(0,0,0,.55);
+  color: #fff;
+}
+
+.cbody { padding: var(--sp-2) var(--sp-3); }
+.cbody .card-title {
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cbody .card-meta { font-size: var(--fs-xs); color: var(--text3); }
+
+/* ── Drawer（右側滑入容器）────────────────────────────────────────── */
+
+.drawer {
+  position: fixed;
+  top: 0; bottom: 0; right: 0;
+  width: var(--drawer-w);
+  max-width: 92vw;
+  background: var(--bg1);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--sh-lg);
+  transform: translateX(100%);
+  transition: transform var(--dur) var(--ease-out);
+  z-index: var(--z-drawer);
+  overflow-y: auto;
+}
+.drawer.open { transform: translateX(0); }
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--backdrop);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur) var(--ease);
+  z-index: calc(var(--z-drawer) - 1);
+}
+.backdrop.show { opacity: 1; pointer-events: auto; }
+
+/* ── Dialog（置中 modal；取代 prompt/confirm）─────────────────────── */
+
+dialog.dlg {
+  width: min(440px, calc(100vw - 32px));
+  padding: var(--sp-5);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg2);
+  color: var(--text);
+  box-shadow: var(--sh-lg);
+}
+dialog.dlg::backdrop { background: var(--backdrop); }
+.dlg-title { margin: 0 0 var(--sp-3); font-size: var(--fs-md); font-weight: 600; }
+.dlg-body  { margin: 0 0 var(--sp-4); color: var(--text2); font-size: var(--fs-sm); }
+.dlg-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); }
+
+/* ── Toast（底部滑入 + action 槽）────────────────────────────────── */
+
+.toast-root {
+  position: fixed;
+  left: 50%;
+  bottom: var(--sp-6);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  z-index: var(--z-toast);
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--bg2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  box-shadow: var(--sh);
+  pointer-events: auto;
+  animation: toast-in var(--dur-slow) var(--ease-out);
+}
+.toast.err { border-color: var(--danger); }
+.toast .toast-action { color: var(--accent); cursor: pointer; font-weight: 600; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(12px); } }
+
+/* ── Badge ─────────────────────────────────────────────────────────── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.badge.err { background: var(--danger); }
+.badge.dot { min-width: 8px; width: 8px; height: 8px; padding: 0; }
+.badge[hidden] { display: none; }
+
+/* ── Breadcrumb ────────────────────────────────────────────────────── */
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--text2);
+  min-width: 0;
+  overflow: hidden;
+}
+.breadcrumb .crumb {
+  border: 0; background: none; padding: 2px 4px;
+  border-radius: var(--r-sm);
+  color: inherit; font: inherit; cursor: pointer;
+  white-space: nowrap;
+}
+.breadcrumb .crumb:hover { background: var(--bg3); color: var(--text); }
+.breadcrumb .crumb.current { color: var(--text); font-weight: 600; cursor: default; }
+.breadcrumb .crumb-sep { color: var(--text3); }
+
+/* ── Empty state / Skeleton ────────────────────────────────────────── */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-8);
+  text-align: center;
+  color: var(--text3);
+}
+.empty-state .icon { width: 44px; height: 44px; stroke-width: 1.25; }
+.empty-state .empty-title { font-size: var(--fs-md); color: var(--text2); }
+
+.skeleton {
+  border-radius: var(--r);
+  background: linear-gradient(100deg, var(--bg2) 40%, var(--bg3) 50%, var(--bg2) 60%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ── kbd ───────────────────────────────────────────────────────────── */
+
+kbd, .kbd-hint {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--r-sm);
+  background: var(--bg3);
+  color: var(--text3);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+}

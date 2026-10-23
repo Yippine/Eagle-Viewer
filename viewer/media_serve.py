@@ -48,6 +48,14 @@ def _guess_mime(path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 def translate_path(url_path: str):
+    if url_path == "/app" or url_path.startswith("/app/"):
+        rel = url_path[len("/app/"):] if url_path.startswith("/app/") else ""
+        app_root = (VIEWER_DIR / "app").resolve()
+        fs = (app_root / (rel or "index.html")).resolve()
+        if not str(fs).startswith(str(app_root)):
+            return None, None
+        return fs, _guess_mime(fs)
+
     if url_path == "/viewer" or url_path.startswith("/viewer/"):
         rel = url_path[len("/viewer/"):] if url_path.startswith("/viewer/") else ""
         fs  = (VIEWER_DIR / (rel or "index.html")).resolve()

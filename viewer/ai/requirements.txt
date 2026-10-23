@@ -1,0 +1,14 @@
+# viewer/ai —— AI 語意搜尋的額外依賴（viewer 本體維持 stdlib-only）
+#
+# 必要（唯一新增的執行期依賴；numpy / pillow 專案雙側環境已具備）：
+#   pip install --user onnxruntime
+#   （Debian/Ubuntu 的 WSL 遇 PEP 668 時加 --break-system-packages；
+#     Windows 側如欲用 RTX 5080 GPU 加速，改裝 onnxruntime-directml）
+onnxruntime>=1.20
+
+# 非執行期依賴：模型下載走 stdlib urllib（model_setup.py 內建斷點續傳），
+# 不需要 huggingface_hub / transformers / torch。
+#
+# P6-I3 人臉 pipeline（face_setup/engine/indexer/cluster/search）亦僅用
+# onnxruntime + numpy + PIL——SCRFD anchor 解碼/NMS/DBSCAN 純 numpy、
+# 對齊 warp 用 PIL AFFINE，不引入 opencv / scikit-learn / insightface 套件。

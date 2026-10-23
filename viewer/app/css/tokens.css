@@ -1,0 +1,59 @@
+/* ── tokens.css ▸ P4 Design Token 系統（深色優先雙主題）─────────────────
+   規格：P4-ui-redesign-spec §4.1。data-theme 切換；viewer 層恆用 dark。 */
+
+:root, [data-theme="dark"] {
+  /* 色彩 — 層級面 */
+  --bg0: #0d0d0f;  --bg1: #161618;  --bg2: #1e1e21;  --bg3: #28282c;
+  --card: var(--bg2);
+  --hdr-bg: rgba(22,22,24,.88);          /* 毛玻璃 backdrop-filter:blur(20px) */
+  --border: #313136;  --border-strong: #46464c;
+  /* 色彩 — 文字 */
+  --text: #f2f2f4;  --text2: #a5a5ad;  --text3: #6c6c74;
+  /* 色彩 — 語意 */
+  --accent: #0a84ff;  --accent-hover: #3d9bff;  --accent-bg: rgba(10,132,255,.16);
+  --danger: #ff453a;  --warn: #ffd60a;  --ok: #32d74b;
+  --tag-bg: var(--bg3);  --backdrop: rgba(0,0,0,.55);
+  /* 陰影（深色以邊線+微陰影為主） */
+  --sh-sm: 0 1px 3px rgba(0,0,0,.4);
+  --sh:    0 4px 16px rgba(0,0,0,.5);
+  --sh-lg: 0 12px 40px rgba(0,0,0,.6);
+}
+
+[data-theme="light"] {
+  --bg0: #e9e9ee; --bg1: #f2f2f7; --bg2: #ffffff; --bg3: #f2f2f7;
+  --hdr-bg: rgba(255,255,255,.93);
+  --border: #e5e5ea; --border-strong: #d1d1d6;
+  --text: #1c1c1e; --text2: #636366; --text3: #aeaeb2;
+  --accent: #007aff; --accent-hover: #2b8fff; --accent-bg: rgba(0,122,255,.10);
+  --danger: #ff3b30; --warn: #ffcc00; --ok: #34c759;
+  --tag-bg: #f2f2f7; --backdrop: rgba(0,0,0,.4);
+  --sh-sm: 0 1px 3px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
+  --sh:    0 4px 16px rgba(0,0,0,.08);
+  --sh-lg: 0 12px 40px rgba(0,0,0,.14);
+}
+
+:root {
+  /* 字階（body 16px；現行 18px 降一級換資訊密度） */
+  --fs-xs: 12px; --fs-sm: 13px; --fs-base: 15px; --fs-md: 16px;
+  --fs-lg: 18px; --fs-xl: 22px; --fs-2xl: 28px;
+  --lh: 1.5; --lh-tight: 1.25;
+  /* 間距（4px 基準） */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
+  /* 圓角 */
+  --r-sm: 6px; --r: 10px; --r-lg: 14px; --r-full: 999px;
+  /* 動效 */
+  --dur-fast: 120ms; --dur: 200ms; --dur-slow: 320ms;
+  --ease: cubic-bezier(.25,.1,.25,1); --ease-out: cubic-bezier(.16,1,.3,1);
+  /* 版面 */
+  --rail-w: 240px; --rail-w-min: 56px; --inspector-w: 300px; --drawer-w: 320px;
+  --gap: 12px; --col: 5;
+  /* z-index 尺度 */
+  --z-rail: 100; --z-topbar: 200; --z-drawer: 300; --z-viewer: 400;
+  --z-sheet: 500; --z-dialog: 600; --z-toast: 700;
+}
+
+/* 減少動態偏好：動效歸零 */
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur: 0ms; --dur-slow: 0ms; }
+}
